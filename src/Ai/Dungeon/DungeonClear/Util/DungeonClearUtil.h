@@ -16,6 +16,7 @@ class Player;
 class Unit;
 class Creature;
 class InstanceScript;
+class PlayerbotAI;
 struct DungeonBossInfo;
 
 class DungeonClearUtil
@@ -120,6 +121,9 @@ public:
     // next-boss probe to consult authoritative encounter state before
     // falling back to spawn-store creature scanning.
     static InstanceScript* GetInstanceScript(Player* bot);
+
+    // Send a structured addon message with prefix "DC" to all real players in the bot's group.
+    static void SendAddonMessage(PlayerbotAI* botAI, std::string const& msg);
 };
 
 #endif

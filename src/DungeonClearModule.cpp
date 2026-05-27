@@ -19,9 +19,24 @@
  *     The per-class lists are PUBLIC statics, so we touch them directly; only
  *     the base lists are private, reached via AiObjectContextAccess.h.
  *
- *  2. PlayerScript — on login, apply the "dungeon clear chat" strategy to a
- *     bot's non-combat engine so it hears party-chat keywords (`dc on`, …).
- *     The `.dc` slash command (DungeonClearCommand.cpp) works without this.
+ *  2. PlayerScript — on login, apply the single "dungeon clear" strategy to a
+ *     bot's non-combat engine. It bundles the party-chat keyword listener
+ *     (`dc on`, …), the driving advance/engage/stall ladder, and the
+ *     follow-tank trigger. Resident on ALL bots but inert unless that bot's own
+ *     "dungeon clear enabled" flag is set — every driving trigger and the
+ *     multiplier gate on the flag, and follow-tank no-ops on the tank itself.
+ *     Keeping it on every bot (mirroring the AiFactory add stock playerbots
+ *     used to carry) is what lets non-tank party bots redirect their follow
+ *     target to the tank while a tank has DC enabled, and revert to the player
+ *     when it's off — driven purely by the tank's flag (see
+ *     DungeonClearPartyTankValue / DungeonClearFollowTankTrigger).
+ *
+ *     This login hook is a zero-config convenience for bots present at login.
+ *     The reliable universal path — and the ONLY one that reaches a self-bot
+ *     created mid-session via `.playerbots bot self` — is the playerbots config
+ *     `NonCombatStrategies = "+dungeon clear"`, applied when each bot's engines
+ *     are built. The `.dc` slash command (DungeonClearCommand.cpp) needs
+ *     neither, since it dispatches the action directly.
  */
 
 #include "ScriptMgr.h"
@@ -117,15 +132,18 @@ public:
             return;
 
         // Only bots (and self-bot players) have a PlayerbotAI. Give them the
-        // chat-keyword listener on the non-combat engine. Harmless if the
-        // contexts aren't registered yet — ChangeStrategy is a no-op for an
-        // unknown name, and the bot will pick it up once they are.
+        // single "dungeon clear" strategy on the non-combat engine. Harmless if
+        // the contexts aren't registered yet — ChangeStrategy is a no-op for an
+        // unknown name. Inert on a bot whose own "dungeon clear enabled" flag is
+        // false (the tank flips it via `dc on`), so installing it on every bot
+        // is safe: non-tank followers run only the follow-tank trigger, and only
+        // while a party tank has DC enabled.
         PlayerbotAI* botAI = GET_PLAYERBOT_AI(player);
         if (!botAI)
             return;
 
-        if (!botAI->HasStrategy("dungeon clear chat", BOT_STATE_NON_COMBAT))
-            botAI->ChangeStrategy("+dungeon clear chat", BOT_STATE_NON_COMBAT);
+        if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
+            botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
     }
 };
 

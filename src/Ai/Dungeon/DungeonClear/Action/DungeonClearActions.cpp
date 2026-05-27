@@ -216,6 +216,7 @@ namespace
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         ctx->GetValue<bool>("dungeon clear enabled")->Set(false);
+        ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
@@ -231,7 +232,8 @@ namespace
         ctx->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
         ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
-        botAI->SayToParty(reason);
+        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
+        botAI->DoSpecificAction("dc status", Event(), true);
     }
 
     // Mode stays enabled. Sets a stall reason that the fallback trigger uses
@@ -247,7 +249,8 @@ namespace
         if (lastSaid != reason)
         {
             lastSaid = reason;
-            botAI->SayToParty(reason);
+            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
+            botAI->DoSpecificAction("dc status", Event(), true);
         }
     }
 
@@ -754,7 +757,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             rebuildAttempts = 0;
             if (DC_ALLOW_RECOVERY_MOVES && TryFarFromPolyRecovery(bot))
             {
-                botAI->SayToParty("Repathing around " + next->name + " — nudging onto the navmesh.");
+                DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
                 return true;
             }
             StallDungeonClear(botAI,
@@ -1313,7 +1316,7 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     if (lastAnnounced != target->GetGUID())
     {
         context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(target->GetGUID());
-        botAI->SayToParty("Clearing path — pulling " + std::string(target->GetName()) + ".");
+        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tClearing path \xe2\x80\x94 pulling " + std::string(target->GetName()) + ".");
     }
 
     // Don't clear the stall reason here — only a successful Advance does that.
@@ -1349,7 +1352,7 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
         }
     }
 
-    DisableDungeonClear(botAI, deadName + " died — dungeon clear disabled. Type 'dc on' when ready to resume.");
+    DisableDungeonClear(botAI, deadName + " died \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.");
     return true;
 }
 

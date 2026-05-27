@@ -60,10 +60,21 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear follow tank",
         { NextAction("dungeon clear follow tank", 25.0f) }));
 
-    // Chat keyword triggers live in the sibling `dungeon clear chat`
-    // strategy. That strategy is registered on the combat, non-combat, and
-    // dead engines so `dc off` is processed mid-pull instead of being held
-    // until the bot returns to non-combat.
+    // Chat-keyword triggers (`dc on/off/skip/status/bosses` + long aliases).
+    // Folded in here so there is a single "dungeon clear" strategy: one name to
+    // apply (via config or the login hook), which is what lets self-bots —
+    // built from config when `.playerbots bot self` is toggled — pick up the
+    // whole feature, keyword listener included. ChatCommandTrigger latches its
+    // fired flag until an engine checks it, so a `dc off` typed mid-combat still
+    // fires the moment the bot next ticks the non-combat engine.
+    constexpr float chatRel = 100.0f;
+    triggers.push_back(new TriggerNode("dc on",             { NextAction("dc on",     chatRel) }));
+    triggers.push_back(new TriggerNode("dungeon clear on",  { NextAction("dc on",     chatRel) }));
+    triggers.push_back(new TriggerNode("dc off",            { NextAction("dc off",    chatRel) }));
+    triggers.push_back(new TriggerNode("dungeon clear off", { NextAction("dc off",    chatRel) }));
+    triggers.push_back(new TriggerNode("dc skip",           { NextAction("dc skip",   chatRel) }));
+    triggers.push_back(new TriggerNode("dc status",         { NextAction("dc status", chatRel) }));
+    triggers.push_back(new TriggerNode("dc bosses",         { NextAction("dc bosses", chatRel) }));
 }
 
 void DungeonClearStrategy::InitMultipliers(std::vector<Multiplier*>& multipliers)

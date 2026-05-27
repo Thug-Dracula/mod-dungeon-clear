@@ -175,6 +175,18 @@ public:
     }
 };
 
+// Boss entry representing a manually selected boss override.
+// 0 means no override active; normal automatic progression runs.
+class DungeonClearSelectedBossValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearSelectedBossValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear selected boss")
+    {
+    }
+};
+
+
 // Boss entry that the cached `dungeon clear long path` was built for.
 // 0 means "no cached path" — Advance/triggers rebuild on next tick.
 // Boss-change, dc-skip, and dc-on all clear this to force a fresh build.

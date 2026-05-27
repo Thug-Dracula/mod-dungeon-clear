@@ -3,7 +3,7 @@
  *
  * Slash command `.dc on|off|skip|status|bosses`. A convenience entry point that
  * works with zero config (unlike the chat keywords, which need the
- * "dungeon clear chat" strategy applied — see DungeonClearModule.cpp).
+ * "dungeon clear" strategy applied — see DungeonClearModule.cpp).
  *
  * Each subcommand dispatches the matching DungeonClear action ("dc on", …) to
  * the issuing player's tank bot(s) via PlayerbotAI::DoSpecificAction. The
@@ -18,45 +18,13 @@
 #include "Group.h"
 #include "Player.h"
 
-#include "Event.h"
-#include "Playerbots.h"
-#include "PlayerbotAI.h"
+#include "DungeonClearDispatch.h"
 
 using namespace Acore::ChatCommands;
 
 namespace
 {
-    // Dispatch "dc <sub>" to every tank bot in the issuer's group. Returns the
-    // number of bots that handled it; 0 means "no tank bot found".
-    uint32 DispatchToTankBots(Player* issuer, std::string const& action)
-    {
-        if (!issuer)
-            return 0;
-
-        Group* group = issuer->GetGroup();
-        if (!group)
-            return 0;
-
-        uint32 dispatched = 0;
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-        {
-            Player* member = ref->GetSource();
-            if (!member)
-                continue;
-
-            PlayerbotAI* botAI = GET_PLAYERBOT_AI(member);
-            if (!botAI)
-                continue;
-            if (!PlayerbotAI::IsTank(member))
-                continue;
-
-            botAI->DoSpecificAction(action, Event("dc", "", issuer));
-            ++dispatched;
-        }
-        return dispatched;
-    }
-
-    bool RunDcCommand(ChatHandler* handler, std::string const& action)
+    bool RunDcCommand(ChatHandler* handler, std::string const& action, std::string const& param = "")
     {
         Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
@@ -65,7 +33,7 @@ namespace
             return true;
         }
 
-        if (!DispatchToTankBots(issuer, action))
+        if (!DungeonClearDispatch::DispatchToTankBots(issuer, action, param))
             handler->SendSysMessage("No tank bot found in your group.");
 
         return true;
@@ -86,6 +54,7 @@ public:
             { "skip",   HandleSkip,   SEC_PLAYER, Console::No },
             { "status", HandleStatus, SEC_PLAYER, Console::No },
             { "bosses", HandleBosses, SEC_PLAYER, Console::No },
+            { "go",     HandleGo,     SEC_PLAYER, Console::No },
         };
         static ChatCommandTable root = { { "dc", dcTable } };
         return root;
@@ -94,8 +63,9 @@ public:
     static bool HandleOn(ChatHandler* handler)     { return RunDcCommand(handler, "dc on"); }
     static bool HandleOff(ChatHandler* handler)    { return RunDcCommand(handler, "dc off"); }
     static bool HandleSkip(ChatHandler* handler)   { return RunDcCommand(handler, "dc skip"); }
-    static bool HandleStatus(ChatHandler* handler) { return RunDcCommand(handler, "dc status"); }
-    static bool HandleBosses(ChatHandler* handler) { return RunDcCommand(handler, "dc bosses"); }
+    static bool HandleStatus(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc status", param ? *param : ""); }
+    static bool HandleBosses(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc bosses", param ? *param : ""); }
+    static bool HandleGo(ChatHandler* handler, Tail targetBoss) { return RunDcCommand(handler, "dc go", std::string(targetBoss)); }
 };
 
 void AddSC_dungeon_clear_command()

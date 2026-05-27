@@ -30,6 +30,7 @@ public:
         creators["dc skip"] = &DungeonClearActionContext::dc_skip;
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
+        creators["dc go"] = &DungeonClearActionContext::dc_go;
     }
 
 private:
@@ -47,6 +48,7 @@ private:
     static Action* dc_skip(PlayerbotAI* ai) { return new DcSkipAction(ai); }
     static Action* dc_status(PlayerbotAI* ai) { return new DcStatusAction(ai); }
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
+    static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }
 };
 
 #endif

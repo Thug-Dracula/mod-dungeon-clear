@@ -21,6 +21,9 @@
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
+#include "PlayerbotAI.h"
+#include "Chat.h"
+#include "ServerFacade.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 
@@ -471,3 +474,21 @@ bool DungeonClearUtil::IsAnyPartyMemberLooting(Player* bot)
     }
     return false;
 }
+
+void DungeonClearUtil::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)
+{
+    Player* bot = botAI->GetBot();
+    if (!bot || !bot->GetGroup())
+        return;
+
+    std::string const payload = "DC\t" + msg;
+
+    WorldPacket data;
+    ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, payload.c_str(),
+                                 LANG_ADDON, CHAT_TAG_NONE,
+                                 bot->GetGUID(), bot->GetName());
+
+    for (Player* receiver : botAI->GetRealPlayersInGroup())
+        ServerFacade::instance().SendPacket(receiver, &data);
+}
+

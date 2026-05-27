@@ -137,6 +137,39 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
 
+    // Check if there is a manually selected boss target override
+    uint32 const selectedEntry = AI_VALUE(uint32, "dungeon clear selected boss");
+    if (selectedEntry != 0)
+    {
+        for (DungeonBossInfo const& info : bosses)
+        {
+            if (info.entry == selectedEntry)
+            {
+                bool invalid = false;
+                if (info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+                    invalid = true;
+
+                if (!invalid)
+                {
+                    BossLiveState const state = CheckBossLive(map, info.entry);
+                    if (state.present && !state.alive)
+                        invalid = true;
+                }
+
+                if (invalid)
+                {
+                    // Already dead/completed: clear override and drop back to automatic
+                    context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
+                    break;
+                }
+
+                // Force return this boss and update sticky
+                context->GetValue<uint32>("dungeon clear sticky boss")->Set(info.entry);
+                return info;
+            }
+        }
+    }
+
     // Partition the uncleared bosses by liveness instead of returning the
     // first one in DBC encounter order. `alive` bosses can be fought right
     // now; `missing` bosses have no spawn on the map yet (far grid not loaded,

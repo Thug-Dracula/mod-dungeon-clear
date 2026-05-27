@@ -8,7 +8,6 @@
 
 #include "NamedObjectContext.h"
 #include "Strategy.h"
-#include "Ai/Dungeon/DungeonClear/Strategy/DungeonClearChatStrategy.h"
 #include "Ai/Dungeon/DungeonClear/Strategy/DungeonClearStrategy.h"
 
 class DungeonClearStrategyContext : public NamedObjectContext<Strategy>
@@ -16,13 +15,13 @@ class DungeonClearStrategyContext : public NamedObjectContext<Strategy>
 public:
     DungeonClearStrategyContext() : NamedObjectContext<Strategy>(false, false)
     {
+        // Single consolidated strategy: chat keywords + driving ladder +
+        // follow-tank. The former separate "dungeon clear chat" was folded in.
         creators["dungeon clear"] = &DungeonClearStrategyContext::dungeon_clear;
-        creators["dungeon clear chat"] = &DungeonClearStrategyContext::dungeon_clear_chat;
     }
 
 private:
     static Strategy* dungeon_clear(PlayerbotAI* ai) { return new DungeonClearStrategy(ai); }
-    static Strategy* dungeon_clear_chat(PlayerbotAI* ai) { return new DungeonClearChatStrategy(ai); }
 };
 
 #endif

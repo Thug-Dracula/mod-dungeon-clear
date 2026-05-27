@@ -37,13 +37,19 @@ Both input methods control the same behaviour — drive the **tank** bot:
 
 - The command must be issued by a real player in the bot's group; `.dc on`
   requires being inside a dungeon and acts on the group's tank bot.
-- **Chat keywords need one of:** the auto-apply login hook (enabled by this
-  module — verify it fires for your bots), or, as a guaranteed fallback, add
-  this to your deployed `playerbots.conf`:
+- **Chat keywords + follow-tank need the `dungeon clear` strategy applied.** The
+  module's login hook applies it automatically to bots present at login, but the
+  reliable universal path — and the **only** one that reaches a self-bot created
+  mid-session via `.playerbots bot self` — is the playerbots config. Add this to
+  your deployed `playerbots.conf` (both fields, so player-bots, random bots and
+  self-bots are all covered):
   ```
-  AiPlayerbot.NonCombatStrategies = "+dungeon clear chat"
+  AiPlayerbot.NonCombatStrategies       = "+dungeon clear"
+  AiPlayerbot.RandomBotNonCombatStrategies = "+dungeon clear"
   ```
-  The `.dc` slash command always works regardless.
+  The `.dc` slash command always works regardless. Non-tank party bots follow
+  the tank only while the tank has dungeon clear enabled, then revert to the
+  player automatically.
 
 ## How it integrates
 
@@ -52,7 +58,7 @@ mod-playerbots exposes no extension API, so this module:
 1. Appends its four `DungeonClear*Context` factories into the engine's shared
    context registries on the first world tick (see `src/AiObjectContextAccess.h`
    and `src/DungeonClearModule.cpp`).
-2. Registers a `.dc` command and a login hook for the chat strategy.
+2. Registers a `.dc` command and a login hook for the `dungeon clear` strategy.
 
 It touches **no** playerbots file. The trade-off: it couples to playerbots'
 internal class shape, so an upstream rename of those registries would surface as

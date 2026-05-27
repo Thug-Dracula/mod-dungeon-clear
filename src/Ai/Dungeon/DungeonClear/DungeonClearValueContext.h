@@ -28,6 +28,7 @@ public:
         creators["dungeon clear stuck count"] = &DungeonClearValueContext::dungeon_clear_stuck_count;
         creators["dungeon clear last target entry"] = &DungeonClearValueContext::dungeon_clear_last_target_entry;
         creators["dungeon clear sticky boss"] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
+        creators["dungeon clear selected boss"] = &DungeonClearValueContext::dungeon_clear_selected_boss;
         creators["dungeon clear stall reason"] = &DungeonClearValueContext::dungeon_clear_stall_reason;
         creators["dungeon clear last said reason"] = &DungeonClearValueContext::dungeon_clear_last_said_reason;
         creators["dungeon clear fallback target"] = &DungeonClearValueContext::dungeon_clear_fallback_target;
@@ -57,6 +58,7 @@ private:
     static UntypedValue* dungeon_clear_stuck_count(PlayerbotAI* ai) { return new DungeonClearStuckCountValue(ai); }
     static UntypedValue* dungeon_clear_last_target_entry(PlayerbotAI* ai) { return new DungeonClearLastTargetEntryValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
+    static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }
     static UntypedValue* dungeon_clear_stall_reason(PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); }
     static UntypedValue* dungeon_clear_last_said_reason(PlayerbotAI* ai) { return new DungeonClearLastSaidReasonValue(ai); }
     static UntypedValue* dungeon_clear_fallback_target(PlayerbotAI* ai) { return new DungeonClearFallbackTargetValue(ai); }

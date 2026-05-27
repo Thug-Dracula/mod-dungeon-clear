@@ -45,4 +45,11 @@ public:
     bool Execute(Event event) override;
 };
 
+class DcGoAction : public Action
+{
+public:
+    DcGoAction(PlayerbotAI* botAI) : Action(botAI, "dc go") {}
+    bool Execute(Event event) override;
+};
+
 #endif
