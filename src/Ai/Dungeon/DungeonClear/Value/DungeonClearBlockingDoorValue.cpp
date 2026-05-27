@@ -61,28 +61,60 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     if (!path.reachable || path.segments.empty())
         return ObjectGuid::Empty;
 
-    // Build a series of 2D segments anchored on the bot's current position
-    // and clipped to DOOR_LOOK_AHEAD yards along the polyline. Anything past
-    // the look-ahead doesn't count — by the time the bot walks there, the
-    // value will re-evaluate.
+    // Build a series of 2D segments tracing the actual walked route, anchored
+    // on the bot's current position and clipped to DOOR_LOOK_AHEAD yards along
+    // the polyline. Anything past the look-ahead doesn't count — by the time
+    // the bot walks there, the value will re-evaluate.
+    //
+    // CRITICAL: chain the per-segment `polyline` points, NOT the segment
+    // endpoints (`seg.ex/ey`). The primary producer (LongRangePathfinder)
+    // emits the ENTIRE winding route as a single PathSegment whose ex/ey is
+    // only the final endpoint (the boss) — so chaining endpoints collapses the
+    // corridor to a straight bee-line from the bot to the boss. A bee-line
+    // sweeps through rooms the real path never enters and flags any closed door
+    // that happens to lie near that straight line, even one nowhere on the
+    // route. The polyline is the real smoothed corridor geometry.
     float prevX = bot->GetPositionX();
     float prevY = bot->GetPositionY();
     float accumulated = 0.0f;
 
     struct Seg { float ax, ay, bx, by; };
     std::vector<Seg> segments;
-    segments.reserve(path.segments.size());
 
-    for (PathSegment const& seg : path.segments)
+    bool reachedLookAhead = false;
+    for (PathSegment const& pathSeg : path.segments)
     {
-        float const dx = seg.ex - prevX;
-        float const dy = seg.ey - prevY;
-        float const len = std::sqrt(dx * dx + dy * dy);
-        segments.push_back(Seg{prevX, prevY, seg.ex, seg.ey});
-        accumulated += len;
-        prevX = seg.ex;
-        prevY = seg.ey;
-        if (accumulated >= DOOR_LOOK_AHEAD)
+        // Anchored segments collapse to a single polyline point; non-anchored
+        // segments carry the full smoothed corridor. Fall back to the endpoint
+        // only if a segment somehow has no polyline at all.
+        if (pathSeg.polyline.empty())
+        {
+            float const dx = pathSeg.ex - prevX;
+            float const dy = pathSeg.ey - prevY;
+            segments.push_back(Seg{prevX, prevY, pathSeg.ex, pathSeg.ey});
+            accumulated += std::sqrt(dx * dx + dy * dy);
+            prevX = pathSeg.ex;
+            prevY = pathSeg.ey;
+            if (accumulated >= DOOR_LOOK_AHEAD)
+                break;
+            continue;
+        }
+
+        for (G3D::Vector3 const& pt : pathSeg.polyline)
+        {
+            float const dx = pt.x - prevX;
+            float const dy = pt.y - prevY;
+            segments.push_back(Seg{prevX, prevY, pt.x, pt.y});
+            accumulated += std::sqrt(dx * dx + dy * dy);
+            prevX = pt.x;
+            prevY = pt.y;
+            if (accumulated >= DOOR_LOOK_AHEAD)
+            {
+                reachedLookAhead = true;
+                break;
+            }
+        }
+        if (reachedLookAhead)
             break;
     }
     if (segments.empty())
