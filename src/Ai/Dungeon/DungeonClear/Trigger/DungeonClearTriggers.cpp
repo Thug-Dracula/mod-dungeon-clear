@@ -47,7 +47,14 @@ namespace
     constexpr float DC_REST_MIN_MP_PCT = 75.0f;
     constexpr float DC_PARTY_MAX_SPREAD = 40.0f;
 
-    bool IsEnabled(AiObjectContext* context) { return AI_VALUE(bool, "dungeon clear enabled"); }
+    // DC must be enabled AND not paused for the driving ladder to fire. Pause
+    // is a soft stop: `enabled` (and all boss progress) stays set, but every
+    // trigger here goes inert so the tank holds exactly as it would under
+    // `dc off`. See DungeonClearPausedValue.
+    bool IsEnabled(AiObjectContext* context)
+    {
+        return AI_VALUE(bool, "dungeon clear enabled") && !AI_VALUE(bool, "dungeon clear paused");
+    }
 
     // Distance from the bot to the boss's LIVE creature position when it is
     // loaded on the map, else to its static DB spawn coords. The advance action

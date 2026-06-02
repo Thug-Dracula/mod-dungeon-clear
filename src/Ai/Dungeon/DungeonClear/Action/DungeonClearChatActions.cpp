@@ -140,6 +140,7 @@ bool DcOnAction::Execute(Event event)
 
     // Reset transient state and enable.
     context->GetValue<bool>("dungeon clear enabled")->Set(true);
+    context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
@@ -185,6 +186,7 @@ bool DcOffAction::Execute(Event event)
         return true;
 
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
+    context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
@@ -305,7 +307,15 @@ bool DcStatusAction::Execute(Event event)
 
     // Calculate dynamic state for addon UI
     std::string stateStr = "off";
-    if (enabled)
+    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    if (enabled && paused)
+    {
+        // Paused takes precedence over every running sub-state — the addon
+        // paints this state yellow. `enabled` stays 1 so the addon keeps
+        // polling and can see the eventual resume.
+        stateStr = "paused";
+    }
+    else if (enabled)
     {
         if (bot->IsInCombat())
         {
@@ -506,6 +516,10 @@ bool DcGoAction::Execute(Event event)
 
     context->GetValue<uint32>("dungeon clear selected boss")->Set(matched->entry);
 
+    // Explicitly targeting a boss is a "go now" intent — clear any pause so the
+    // tank actually starts moving toward it instead of holding.
+    context->GetValue<bool>("dungeon clear paused")->Set(false);
+
     context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
     context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
@@ -528,6 +542,89 @@ bool DcGoAction::Execute(Event event)
 
     DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tTargeting boss: " + matched->name + ". Navigating...");
 
+    botAI->DoSpecificAction("dc status", event, true);
+    return true;
+}
+
+bool DcPauseAction::Execute(Event event)
+{
+    if (!IsAuthorized(bot, event))
+    {
+        botAI->TellError("Not authorized to pause dungeon clear");
+        return false;
+    }
+
+    // Followers have nothing to toggle: their follow-tank trigger reacts to the
+    // tank's paused flag via DungeonClearPartyTankValue. Stay quiet.
+    if (!PlayerbotAI::IsTank(bot))
+        return true;
+
+    if (!AI_VALUE(bool, "dungeon clear enabled"))
+    {
+        botAI->TellError("Dungeon clear is not enabled.");
+        return false;
+    }
+
+    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+
+    if (!paused)
+    {
+        // Pause: hold in place. The driving ladder, the multiplier, and the
+        // follow-tank party-tank lookup all gate on this flag, so the tank
+        // stops navigating and followers peel off — exactly like dc off — but
+        // all boss progress is preserved for resume.
+        context->GetValue<bool>("dungeon clear paused")->Set(true);
+
+        // Stop the in-flight advance spline so it doesn't coast to its
+        // endpoint. Only when out of combat: mid-fight the combat engine owns
+        // movement and we want the current fight to finish before holding.
+        if (bot && !bot->IsInCombat())
+        {
+            if (bot->isMoving())
+                bot->StopMoving();
+            if (MotionMaster* mm = bot->GetMotionMaster())
+                mm->Clear();
+        }
+
+        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tDungeon clear paused.");
+        botAI->DoSpecificAction("dc status", event, true);
+        return true;
+    }
+
+    // Resume on the same boss. Refuse if anyone is dead (mirrors dc on) so we
+    // don't unpause straight into a wipe.
+    if (AnyPartyMemberDead(bot))
+    {
+        botAI->TellError(FirstDeadName(bot) + " is dead — rez and try again.");
+        return false;
+    }
+
+    // Rebuild the transient navigation cache so Advance starts fresh from the
+    // bot's current position. Boss progress (selected boss, skipped set, sticky
+    // boss) is deliberately left intact — that's the whole point of resume vs.
+    // a fresh dc on.
+    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
+    context->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
+    context->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
+    context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
+    context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
+    context->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
+    context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
+    context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+    context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
+    context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+    context->GetValue<Position&>("dungeon clear last position")->Get() = Position();
+    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
+    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+    context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
+    context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
+    context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+
+    context->GetValue<bool>("dungeon clear paused")->Set(false);
+
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::string const target = next.has_value() ? next->name : "the next boss";
+    DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tResumed. Heading to " + target + ".");
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

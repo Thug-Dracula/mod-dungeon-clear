@@ -23,6 +23,21 @@ public:
     DungeonClearEnabledValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, "dungeon clear enabled") {}
 };
 
+// Pause flag layered on top of `dungeon clear enabled`. When true, every
+// driving gate (the trigger ladder's IsEnabled, the multiplier, the
+// follow-tank party-tank lookup, the blocking-door scan) goes inert so the
+// tank behaves exactly as it does under `dc off` — it stops navigating,
+// releases its followers, and lets stock wandering resume. Unlike `dc off`,
+// `enabled` and all progress state (selected boss, skipped set, sticky boss)
+// are preserved, so toggling pause back off resumes on the same boss. Always
+// reset to false alongside `enabled` (dc on / dc off / death / cleared) so a
+// fresh run can never start paused.
+class DungeonClearPausedValue : public ManualSetValue<bool>
+{
+public:
+    DungeonClearPausedValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, "dungeon clear paused") {}
+};
+
 class DungeonClearSkippedValue : public ManualSetValue<std::unordered_set<uint32>&>
 {
 public:

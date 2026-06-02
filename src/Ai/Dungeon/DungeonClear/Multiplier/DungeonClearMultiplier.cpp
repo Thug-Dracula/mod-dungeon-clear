@@ -12,7 +12,9 @@ float DungeonClearMultiplier::GetValue(Action* action)
 {
     if (!action)
         return 1.0f;
-    if (!botAI || !AI_VALUE(bool, "dungeon clear enabled"))
+    // While paused, behave as if DC were off: don't suppress wandering, so the
+    // tank reverts to stock non-combat behavior just like under `dc off`.
+    if (!botAI || !AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
         return 1.0f;
 
     std::string const& name = action->getName();

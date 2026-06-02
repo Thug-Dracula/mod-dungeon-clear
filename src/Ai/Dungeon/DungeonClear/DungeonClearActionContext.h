@@ -29,6 +29,7 @@ public:
         creators["dc on"] = &DungeonClearActionContext::dc_on;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
         creators["dc skip"] = &DungeonClearActionContext::dc_skip;
+        creators["dc pause"] = &DungeonClearActionContext::dc_pause;
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
         creators["dc go"] = &DungeonClearActionContext::dc_go;
@@ -53,6 +54,7 @@ private:
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }
     static Action* dc_skip(PlayerbotAI* ai) { return new DcSkipAction(ai); }
+    static Action* dc_pause(PlayerbotAI* ai) { return new DcPauseAction(ai); }
     static Action* dc_status(PlayerbotAI* ai) { return new DcStatusAction(ai); }
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
     static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }

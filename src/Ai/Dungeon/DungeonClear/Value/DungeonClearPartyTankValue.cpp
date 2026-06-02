@@ -35,7 +35,11 @@ Player* DungeonClearPartyTankValue::Calculate()
         if (!tankAI)
             continue;
 
-        if (tankAI->GetAiObjectContext()->GetValue<bool>("dungeon clear enabled")->Get())
+        // A paused tank counts as "no DC tank" so followers stop following it
+        // and revert to the player — matching the tank's own paused behavior.
+        AiObjectContext* tankCtx = tankAI->GetAiObjectContext();
+        if (tankCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
+            !tankCtx->GetValue<bool>("dungeon clear paused")->Get())
             return member;
     }
     return nullptr;

@@ -73,6 +73,9 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode("dc off",            { NextAction("dc off",    chatRel) }));
     triggers.push_back(new TriggerNode("dungeon clear off", { NextAction("dc off",    chatRel) }));
     triggers.push_back(new TriggerNode("dc skip",           { NextAction("dc skip",   chatRel) }));
+    // Single toggle: pauses when running, resumes when paused.
+    triggers.push_back(new TriggerNode("dc pause",            { NextAction("dc pause", chatRel) }));
+    triggers.push_back(new TriggerNode("dungeon clear pause", { NextAction("dc pause", chatRel) }));
     triggers.push_back(new TriggerNode("dc status",         { NextAction("dc status", chatRel) }));
     triggers.push_back(new TriggerNode("dc bosses",         { NextAction("dc bosses", chatRel) }));
 }

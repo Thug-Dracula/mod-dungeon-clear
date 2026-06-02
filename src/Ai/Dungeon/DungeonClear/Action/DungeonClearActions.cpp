@@ -247,6 +247,7 @@ namespace
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         ctx->GetValue<bool>("dungeon clear enabled")->Set(false);
+        ctx->GetValue<bool>("dungeon clear paused")->Set(false);
         ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);

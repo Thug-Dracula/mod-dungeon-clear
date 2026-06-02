@@ -49,7 +49,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
 {
     if (!bot || !bot->IsInWorld())
         return ObjectGuid::Empty;
-    if (!AI_VALUE(bool, "dungeon clear enabled"))
+    if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
         return ObjectGuid::Empty;
 
     Map* map = bot->GetMap();

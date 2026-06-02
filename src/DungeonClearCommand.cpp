@@ -52,6 +52,7 @@ public:
             { "on",     HandleOn,     SEC_PLAYER, Console::No },
             { "off",    HandleOff,    SEC_PLAYER, Console::No },
             { "skip",   HandleSkip,   SEC_PLAYER, Console::No },
+            { "pause",  HandlePause,  SEC_PLAYER, Console::No },
             { "status", HandleStatus, SEC_PLAYER, Console::No },
             { "bosses", HandleBosses, SEC_PLAYER, Console::No },
             { "go",     HandleGo,     SEC_PLAYER, Console::No },
@@ -63,6 +64,7 @@ public:
     static bool HandleOn(ChatHandler* handler)     { return RunDcCommand(handler, "dc on"); }
     static bool HandleOff(ChatHandler* handler)    { return RunDcCommand(handler, "dc off"); }
     static bool HandleSkip(ChatHandler* handler)   { return RunDcCommand(handler, "dc skip"); }
+    static bool HandlePause(ChatHandler* handler)  { return RunDcCommand(handler, "dc pause"); }
     static bool HandleStatus(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc status", param ? *param : ""); }
     static bool HandleBosses(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc bosses", param ? *param : ""); }
     static bool HandleGo(ChatHandler* handler, Tail targetBoss) { return RunDcCommand(handler, "dc go", std::string(targetBoss)); }

@@ -97,6 +97,7 @@ public:
         if (subCmd == "on")         action = "dc on";
         else if (subCmd == "off")   action = "dc off";
         else if (subCmd == "skip")  action = "dc skip";
+        else if (subCmd == "pause") action = "dc pause";
         else if (subCmd == "status") action = "dc status";
         else if (subCmd == "bosses") action = "dc bosses";
         else if (subCmd == "go")    action = "dc go";

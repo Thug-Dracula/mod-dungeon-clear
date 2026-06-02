@@ -31,6 +31,17 @@ public:
     bool Execute(Event event) override;
 };
 
+// Toggles the `dungeon clear paused` flag. When running (and not paused) it
+// pauses — the tank stops navigating and behaves like `dc off` while keeping
+// all boss/skip progress. When already paused it resumes on the same boss
+// (refusing if a party member is dead, like `dc on`).
+class DcPauseAction : public Action
+{
+public:
+    DcPauseAction(PlayerbotAI* botAI) : Action(botAI, "dc pause") {}
+    bool Execute(Event event) override;
+};
+
 class DcStatusAction : public Action
 {
 public:
