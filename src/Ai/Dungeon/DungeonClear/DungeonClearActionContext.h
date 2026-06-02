@@ -10,6 +10,7 @@
 #include "NamedObjectContext.h"
 #include "Ai/Dungeon/DungeonClear/Action/DungeonClearActions.h"
 #include "Ai/Dungeon/DungeonClear/Action/DungeonClearChatActions.h"
+#include "Ai/Dungeon/DungeonClear/Action/StayDeadAction.h"
 
 class DungeonClearActionContext : public NamedObjectContext<Action>
 {
@@ -31,6 +32,12 @@ public:
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
         creators["dc go"] = &DungeonClearActionContext::dc_go;
+
+        // Override mod-playerbots' "auto release" so dead bots stay dead instead
+        // of releasing to the graveyard. Gated by DungeonClear.PreventBotRelease;
+        // inert (defers to stock) when that flag is off. Last-registration-wins,
+        // so this replaces the playerbots creator for every bot of this class.
+        creators["auto release"] = &DungeonClearActionContext::auto_release;
     }
 
 private:
@@ -49,6 +56,8 @@ private:
     static Action* dc_status(PlayerbotAI* ai) { return new DcStatusAction(ai); }
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
     static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }
+
+    static Action* auto_release(PlayerbotAI* ai) { return new DungeonClearStayDeadAction(ai); }
 };
 
 #endif

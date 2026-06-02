@@ -18,5 +18,5 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
 # New files added: DungeonClearDispatch.h, DungeonClearAddonHook.cpp,
-# Data/DungeonWingRegistry.{h,cpp}
+# Data/DungeonWingRegistry.{h,cpp}, Action/StayDeadAction.{h,cpp}
 # (this comment bumps mtime to force CMake re-glob on next build)

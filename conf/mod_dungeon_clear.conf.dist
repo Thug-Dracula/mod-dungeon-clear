@@ -4,11 +4,32 @@
 # mod-dungeon-clear configuration
 ########################################
 #
-# This module has no behavioural settings — dungeon clearing is controlled at
-# runtime with the `.dc on|off|skip|status|bosses` command or the in-party chat
-# keywords (`dc on`, `dungeon clear on`, …).
+# Dungeon clearing itself is controlled at runtime with the
+# `.dc on|off|skip|status|bosses` command or the in-party chat keywords
+# (`dc on`, `dungeon clear on`, …) — those need no config.
 #
-# The only settings here are for the dedicated DungeonClear log channel
+# Behavioural settings below, then the DungeonClear log-channel settings.
+
+#
+#    DungeonClear.PreventBotRelease
+#        When enabled (1, default), playerbot characters do NOT auto-release
+#        their spirit to the graveyard when they die — they stay dead (a corpse
+#        on the ground) until resurrected by a player/party rez, a self-resurrect
+#        (soulstone, Reincarnation, …), or summon-and-revive. This overrides
+#        mod-playerbots' stock "auto release" behaviour for ALL bots, not just
+#        ones running a dungeon clear.
+#        Set to 0 to restore the stock behaviour (bots release and corpse-run).
+#        Honoured live on `.reload config`.
+#        Note: the anti-stuck repop safety net (a dead bot wedged in geometry or
+#        falling out of the world) is left intact regardless of this setting.
+#
+#        Default: 1 (bots stay dead)
+#
+
+DungeonClear.PreventBotRelease = 1
+
+#
+# The settings below are for the dedicated DungeonClear log channel
 # (playerbots.dungeonclear). These keys are merged into the global logging
 # config, so they configure AzerothCore's logging system directly.
 
