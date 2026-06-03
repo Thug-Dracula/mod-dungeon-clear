@@ -40,6 +40,12 @@ class dtQueryFilter;
 // centering, so any nudge that would cross static geometry is still caught and
 // the corridor truncated to its verified prefix exactly as before.
 //
+// The per-point push is independent, and the "nearest wall" can flip sides
+// between adjacent points, leaving a sawtooth the spline follower renders as
+// stutter. So after pushing we run a few Laplacian smoothing passes
+// (neighbour-averaging with endpoints pinned and every result re-validated
+// on-mesh) to pull the kinks back out into a flowing line.
+//
 // Main-thread only (reads the static navmesh, touches no live game state).
 class CorridorCenter
 {
@@ -49,8 +55,9 @@ public:
     struct Params
     {
         bool  enable{true};
-        float clearance{2.5f};   // target yards from the nearest wall
+        float clearance{3.0f};   // target yards from the nearest wall
         float maxPush{3.0f};     // cap on per-point displacement
+        int   smoothIters{2};    // Laplacian passes to de-kink after centering
     };
 
     // Read the live config (honours `.reload config`) into a Params.

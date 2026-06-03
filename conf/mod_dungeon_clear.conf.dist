@@ -53,10 +53,10 @@ DungeonClear.PathCenterEnable = 1
 #        Larger values hug walls less but cause more LOS truncations in tight
 #        spaces; smaller values stay closer to the original line.
 #
-#        Default: 2.5
+#        Default: 3.0
 #
 
-DungeonClear.PathWallClearance = 2.5
+DungeonClear.PathWallClearance = 3.0
 
 #
 #    DungeonClear.PathCenterMaxPush
@@ -68,6 +68,21 @@ DungeonClear.PathWallClearance = 2.5
 #
 
 DungeonClear.PathCenterMaxPush = 3.0
+
+#
+#    DungeonClear.PathCenterSmoothIters
+#        Number of Laplacian (neighbour-averaging) smoothing passes applied
+#        AFTER centring. The per-point push is independent and the nearest wall
+#        can flip sides between adjacent points, leaving a sawtooth the spline
+#        follower renders as stutter; these passes pull it back into a flowing
+#        line. Endpoints are pinned and every result is re-validated on-mesh.
+#        0 disables smoothing (raw centred line); higher values are smoother but
+#        relax centring slightly at sharp bends. 2 is a good balance.
+#
+#        Default: 2
+#
+
+DungeonClear.PathCenterSmoothIters = 2
 
 #
 # The settings below are for the dedicated DungeonClear log channel

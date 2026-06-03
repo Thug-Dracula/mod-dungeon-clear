@@ -66,16 +66,49 @@ namespace
         return dtStatusSucceed(query->findNearestPoly(pos, POLY_EXTENTS, filter, &ref, nearest)) &&
                ref != INVALID_POLYREF;
     }
+
+    // Laplacian de-kink. The per-point centering push is independent and the
+    // nearest wall can flip sides between adjacent points, leaving a sawtooth
+    // the spline follower renders as stutter. Each pass replaces every interior
+    // point with a 1-2-1 weighted average of itself and its neighbours, pinning
+    // the endpoints and skipping vertical transitions. Jacobi (reads a stable
+    // snapshot per pass) so the smoothing is symmetric, not direction-biased.
+    // Every averaged point is re-pinned to a walkable Z and reverted if it would
+    // leave the mesh; the producer's LOS screen still runs afterwards.
+    void SmoothPolyline(dtNavMeshQuery const* query, dtQueryFilter const* filter,
+                        Player* bot, std::vector<G3D::Vector3>& pts, int iterations)
+    {
+        if (iterations <= 0 || pts.size() < 3)
+            return;
+
+        for (int it = 0; it < iterations; ++it)
+        {
+            std::vector<G3D::Vector3> const src = pts;  // stable snapshot (Jacobi)
+            for (size_t i = 1; i + 1 < src.size(); ++i)
+            {
+                if (std::fabs(src[i].z - src[i - 1].z) > JUMP_DZ ||
+                    std::fabs(src[i + 1].z - src[i].z) > JUMP_DZ)
+                    continue;
+
+                G3D::Vector3 avg = src[i - 1] * 0.25f + src[i] * 0.5f + src[i + 1] * 0.25f;
+                bot->UpdateAllowedPositionZ(avg.x, avg.y, avg.z);
+                if (OnMesh(query, filter, avg))
+                    pts[i] = avg;
+            }
+        }
+    }
 }
 
 CorridorCenter::Params CorridorCenter::LoadParams()
 {
     Params p;
-    p.enable    = sConfigMgr->GetOption<bool>("DungeonClear.PathCenterEnable", true);
-    p.clearance = sConfigMgr->GetOption<float>("DungeonClear.PathWallClearance", 2.5f);
-    p.maxPush   = sConfigMgr->GetOption<float>("DungeonClear.PathCenterMaxPush", 3.0f);
-    p.clearance = std::max(0.0f, p.clearance);
-    p.maxPush   = std::max(0.0f, p.maxPush);
+    p.enable      = sConfigMgr->GetOption<bool>("DungeonClear.PathCenterEnable", true);
+    p.clearance   = sConfigMgr->GetOption<float>("DungeonClear.PathWallClearance", 3.0f);
+    p.maxPush     = sConfigMgr->GetOption<float>("DungeonClear.PathCenterMaxPush", 3.0f);
+    p.smoothIters = sConfigMgr->GetOption<int32>("DungeonClear.PathCenterSmoothIters", 2);
+    p.clearance   = std::max(0.0f, p.clearance);
+    p.maxPush     = std::max(0.0f, p.maxPush);
+    p.smoothIters = std::max(0, p.smoothIters);
     return p;
 }
 
@@ -145,6 +178,9 @@ void CorridorCenter::Center(dtNavMeshQuery const* query, dtQueryFilter const* fi
         }
         pts[i] = accepted;
     }
+
+    // Pull the per-point sawtooth back into a flowing line.
+    SmoothPolyline(query, filter, bot, pts, params.smoothIters);
 }
 
 void CorridorCenter::Center(Player* bot, std::vector<G3D::Vector3>& pts, Params const& params)
