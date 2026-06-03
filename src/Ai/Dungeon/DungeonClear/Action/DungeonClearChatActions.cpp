@@ -143,6 +143,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
@@ -383,15 +384,52 @@ bool DcBossesAction::Execute(Event event)
     }
 
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
+    auto& seen = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear seen bosses");
+
+    // The completed-encounter mask is the authoritative "the group killed it"
+    // signal: Map::UpdateEncounterState (driven from KillRewarder) flips bit
+    // (1 << DungeonEncounter.dbc index), and BossSpawnIndex stores that exact
+    // index in encounterIndex, so the bit lines up directly. This is the same
+    // kill record NextDungeonBossValue uses to advance the clear — see the long
+    // note there on why GetCompletedEncounterMask is correct and GetBossState is
+    // not. Reading kill state from the mask (and not from corpse presence) is the
+    // crux of the fix: a boss corpse despawns about a minute after death, so the
+    // old "present-but-no-live-creature == dead" heuristic made every killed boss
+    // silently flip from "dead" to "missing" the moment its body vanished.
+    InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+    uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
+
     for (DungeonBossInfo const& info : bosses)
     {
-        std::string statusStr = "dead";
-        if (skipped.count(info.entry))
+        bool const killed =
+            info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)) != 0u;
+        bool const liveOnMap = DungeonClearUtil::FindLiveCreatureOnMap(bot, info.entry) != nullptr;
+        // Only scan a second time for a corpse when there's no live instance.
+        bool const corpseOnMap =
+            !liveOnMap && DungeonClearUtil::IsCreaturePresentOnMap(bot, info.entry);
+
+        // Remember every boss we've actually seen alive this run so a later
+        // disappearance reads as "missing" rather than an unreached boss whose
+        // grid simply hasn't loaded yet.
+        if (liveOnMap)
+            seen.insert(info.entry);
+
+        // alive   — in zone and the group has not killed it
+        // dead    — the group has killed it (kill mask, or a corpse on the floor
+        //           for the brief window before the mask flips)
+        // missing — was seen alive earlier, is now gone, and was not killed
+        // skipped — user/AI chose to pass it by (only while it's still alive)
+        std::string statusStr;
+        if (killed || corpseOnMap)
+            statusStr = "dead";
+        else if (skipped.count(info.entry))
             statusStr = "skipped";
-        else if (!DungeonClearUtil::IsCreaturePresentOnMap(bot, info.entry))
-            statusStr = "missing";
-        else if (DungeonClearUtil::FindLiveCreatureOnMap(bot, info.entry))
+        else if (liveOnMap)
             statusStr = "alive";
+        else if (seen.count(info.entry))
+            statusStr = "missing";
+        else
+            statusStr = "alive";  // exists in the instance, grid not yet loaded
 
         std::ostringstream addonMsg;
         addonMsg << "BOSS\t"

@@ -50,6 +50,28 @@ private:
     std::unordered_set<uint32> data;
 };
 
+// Boss entries that have been observed alive on the map at least once during
+// the current run. This is what lets the status report tell a boss that "was
+// alive and is now gone" (missing) apart from one we simply haven't reached
+// yet — a boss in a far grid that has never loaded looks identical to a
+// vanished one (neither is in the creature store), so without a memory of what
+// we've actually seen alive, every unreached boss would falsely read as
+// missing. Populated by DcBossesAction whenever a boss is found alive; cleared
+// on `dc on` alongside the skipped set so a fresh run starts with a clean slate.
+class DungeonClearSeenBossesValue : public ManualSetValue<std::unordered_set<uint32>&>
+{
+public:
+    DungeonClearSeenBossesValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear seen bosses")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::unordered_set<uint32> data;
+};
+
 class DungeonClearStuckCountValue : public ManualSetValue<uint32>
 {
 public:

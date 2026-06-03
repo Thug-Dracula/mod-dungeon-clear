@@ -26,6 +26,7 @@ public:
         creators["dungeon clear enabled"] = &DungeonClearValueContext::dungeon_clear_enabled;
         creators["dungeon clear paused"] = &DungeonClearValueContext::dungeon_clear_paused;
         creators["dungeon clear skipped"] = &DungeonClearValueContext::dungeon_clear_skipped;
+        creators["dungeon clear seen bosses"] = &DungeonClearValueContext::dungeon_clear_seen_bosses;
         creators["dungeon clear stuck count"] = &DungeonClearValueContext::dungeon_clear_stuck_count;
         creators["dungeon clear last target entry"] = &DungeonClearValueContext::dungeon_clear_last_target_entry;
         creators["dungeon clear sticky boss"] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
@@ -59,6 +60,7 @@ private:
     static UntypedValue* dungeon_clear_enabled(PlayerbotAI* ai) { return new DungeonClearEnabledValue(ai); }
     static UntypedValue* dungeon_clear_paused(PlayerbotAI* ai) { return new DungeonClearPausedValue(ai); }
     static UntypedValue* dungeon_clear_skipped(PlayerbotAI* ai) { return new DungeonClearSkippedValue(ai); }
+    static UntypedValue* dungeon_clear_seen_bosses(PlayerbotAI* ai) { return new DungeonClearSeenBossesValue(ai); }
     static UntypedValue* dungeon_clear_stuck_count(PlayerbotAI* ai) { return new DungeonClearStuckCountValue(ai); }
     static UntypedValue* dungeon_clear_last_target_entry(PlayerbotAI* ai) { return new DungeonClearLastTargetEntryValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
