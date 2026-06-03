@@ -13,8 +13,12 @@
 #include <vector>
 
 #include "AttackersValue.h"
+#include "Config.h"
 #include "Creature.h"
 #include "Group.h"
+#include "ItemTemplate.h"
+#include "LootMgr.h"
+#include "ObjectMgr.h"
 #include "InstanceScript.h"
 #include "LootObjectStack.h"
 #include "Map.h"
@@ -630,6 +634,106 @@ bool DungeonClearUtil::MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTime
     GiveUpCurrentLoot(botAI, giveUpTtlMs);
     StripSkippedLoot(botAI);
     campGuid = ObjectGuid::Empty;
+    return true;
+}
+
+bool DungeonClearUtil::CorpseHasTakeableLoot(Player* bot, Creature* creature, uint32 minQuality)
+{
+    if (!bot || !creature)
+        return true;  // can't classify -> never skip on our account
+
+    Loot const& loot = creature->loot;
+
+    // Bags full -> only money is takeable (it needs no slot). Managed bots
+    // auto-sell so this is rare, but it's a genuine un-finishable case the camp
+    // timeout used to absorb. "bag space" is percent USED; 100 == no free slot.
+    PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+    bool const bagsFull =
+        botAI && botAI->GetAiObjectContext()->GetValue<uint8>("bag space")->Get() >= 100;
+
+    for (LootItem const& item : loot.items)
+    {
+        if (item.is_looted)
+            continue;
+
+        // Won by / reserved for someone else. (A roll we WIN delivers the item
+        // automatically; we never come back to the corpse for it, so skipping
+        // here loses nothing.)
+        if (item.rollWinnerGUID && item.rollWinnerGUID != bot->GetGUID())
+            continue;
+
+        // Above-threshold group-loot item under an unresolved roll: not
+        // free-lootable by us now (and won items arrive without re-looting).
+        if (item.is_blocked && item.rollWinnerGUID != bot->GetGUID())
+            continue;
+
+        // Round-robin / explicitly-allowed looter set that excludes us.
+        if (!item.freeforall && !item.GetAllowedLooters().empty() &&
+            !item.GetAllowedLooters().count(bot->GetGUID()))
+            continue;
+
+        // Faction / condition / quest eligibility (mirrors the server's own
+        // visibility check).
+        if (!item.AllowedForPlayer(bot, creature->GetGUID()))
+            continue;
+
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(item.itemid);
+        if (!proto)
+            continue;
+
+        // Quest / quest-starter items always qualify, regardless of the floor.
+        bool const questItem = item.needs_quest || proto->StartQuest != 0;
+        if (!questItem && proto->Quality < minQuality)
+            continue;
+
+        if (bagsFull)
+            continue;  // would take it, but nowhere to put it
+
+        return true;  // at least one item worth a stop
+    }
+
+    // No qualifying item. Gold earns a stop ONLY with no quality floor set
+    // (minQuality 0 == stock "loot everything"); once a floor is set, gold-only
+    // corpses are skipped so the floor genuinely cuts the number of stops.
+    return loot.gold > 0 && minQuality == 0;
+}
+
+bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs)
+{
+    if (!botAI)
+        return false;
+
+    Player* bot = botAI->GetBot();
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+
+    // The corpse we're about to commit to: stock's chosen target if set, else
+    // the nearest in the stack (what `loot` would pick next). This is the same
+    // selection GiveUpCurrentLoot blacklists, so the two stay aligned.
+    LootObject target = ctx->GetValue<LootObject>("loot target")->Get();
+    if (target.guid.IsEmpty())
+        if (LootObjectStack* stack = ctx->GetValue<LootObjectStack*>("available loot")->Get())
+            target = stack->GetLoot(sPlayerbotAIConfig.lootDistance);
+    if (target.guid.IsEmpty())
+        return false;  // nothing pending to judge
+
+    // Gathering nodes carry a skillId and a legitimate cast; chests / GOs / item
+    // loot we don't introspect this way. Only plain creature corpses are judged.
+    if (target.skillId != 0)
+        return false;
+    Creature* creature = botAI->GetCreature(target.guid);
+    if (!creature)
+        return false;
+
+    uint32 const minQuality = sConfigMgr->GetOption<uint32>("DungeonClear.LootMinQuality", 0);
+
+    if (CorpseHasTakeableLoot(bot, creature, minQuality))
+        return false;  // worth a stop -> let the loot pipeline run
+
+    // Nothing here for us -> blacklist + strip now so the loot flags drop this
+    // tick and the bot skips the detour entirely (the proactive analogue of the
+    // camp/yield timeouts firing after a wasted walk).
+    GiveUpCurrentLoot(botAI, giveUpTtlMs);
+    StripSkippedLoot(botAI);
     return true;
 }
 

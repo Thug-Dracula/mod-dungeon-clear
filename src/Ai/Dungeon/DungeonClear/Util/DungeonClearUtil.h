@@ -112,6 +112,44 @@ public:
     // values via GiveUpCurrentLoot / StripSkippedLoot, never stock code.
     static bool MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTimeoutMs, uint32 giveUpTtlMs);
 
+    // Decides, BEFORE the bot walks over, whether the corpse it is about to
+    // commit to (stock "loot target", else the nearest entry in "available
+    // loot") is worth a stop — and if not, blacklists + strips it this tick so
+    // the bot never detours to it (or, if already parked, leaves at once)
+    // instead of discovering its emptiness by camping out the loot-yield /
+    // camp timeouts. This is the proactive, event-driven counterpart to
+    // MaybeGiveUpCampedLoot: creature loot is generated at kill time, so the
+    // contents are knowable without opening the corpse.
+    //
+    // A corpse is skipped when it holds nothing this bot can take, which is two
+    // overlapping cases:
+    //   - un-finishable: every unlooted item is locked in a group-loot roll the
+    //     bot has not won (won items are auto-delivered, never re-looted),
+    //     reserved for another looter, disallowed for the bot, or the bags are
+    //     full — and there is no claimable gold.
+    //   - below policy: no unlooted item meets DungeonClear.LootMinQuality (an
+    //     ITEM_QUALITY_* floor). Quest / quest-starter items always qualify.
+    //     A floor above 0 also stops gold alone from earning a detour, so the
+    //     floor actually reduces the number of stops; floor 0 (default)
+    //     preserves stock "loot everything" behaviour.
+    //
+    // Only plain creature corpses are judged. Gathering nodes (non-zero skillId),
+    // chests, gameobjects and item loot are left to stock (returns false). The
+    // check is deliberately conservative — it skips only when confident nothing
+    // is takeable — because a false skip drops real loot, whereas a missed skip
+    // merely falls back to the existing timeout. Returns true when it skipped a
+    // corpse this call. Module-only: mutates stock loot values via
+    // GiveUpCurrentLoot / StripSkippedLoot, never stock code.
+    static bool MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs);
+
+    // Returns true if `creature`'s corpse holds at least one item this bot can
+    // take right now (allowed, not blocked in / lost to a group roll, meeting
+    // the minQuality ITEM_QUALITY_* floor — quest items always pass) or, when
+    // minQuality is 0, claimable gold. Inspects the server-side creature loot,
+    // filled at death. Used by MaybeSkipUnworthyLoot; returns true (don't skip)
+    // for anything it cannot positively classify.
+    static bool CorpseHasTakeableLoot(Player* bot, Creature* creature, uint32 minQuality);
+
     // Returns true if at least one navigable chunk of the path to (x, y, z)
     // exists. Delegates to ChunkedPathfinder::IsReachable, which is more
     // permissive than the legacy strict-PATHFIND_NORMAL check — partial
