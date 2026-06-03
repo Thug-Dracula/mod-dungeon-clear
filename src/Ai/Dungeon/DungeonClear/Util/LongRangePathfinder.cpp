@@ -5,6 +5,8 @@
 
 #include "LongRangePathfinder.h"
 
+#include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -440,6 +442,13 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         bot->UpdateAllowedPositionZ(p.x, p.y, p.z);
         pts.push_back(p);
     }
+
+    // Nudge the taut, wall-hugging smoothed line toward the corridor centre so
+    // the bot stops grazing walls/ledges and clipping wall-lining props. The
+    // start and target points are pinned; every nudged point is re-validated
+    // on-mesh inside Center(). The LOS screen below then verifies the CENTRED
+    // line, so any push that would cross geometry is still truncated away.
+    CorridorCenter::Center(query, &filter, bot, pts, CorridorCenter::LoadParams());
 
     // LOS-screen the smoothed corridor (corner grazes bridged; a sustained
     // wall-crossing truncates to the verified prefix). cleanPts counts from

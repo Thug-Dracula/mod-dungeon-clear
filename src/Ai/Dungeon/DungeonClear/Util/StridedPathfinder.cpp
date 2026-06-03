@@ -15,6 +15,7 @@
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonSpawnGraph.h"
+#include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 
@@ -234,11 +235,19 @@ namespace
         // LOS sanity check on the smoothed corridor. The leading point of the
         // input equals (cx,cy,cz) — the previous segment's endpoint already
         // represents it — and the rest form this stride's smoothed corridor.
-        std::vector<G3D::Vector3> candidate(pts.begin() + 1, pts.end());
         std::vector<G3D::Vector3> losInput;
-        losInput.reserve(candidate.size() + 1);
+        losInput.reserve(pts.size());
         losInput.push_back(G3D::Vector3(cx, cy, cz));
-        losInput.insert(losInput.end(), candidate.begin(), candidate.end());
+        losInput.insert(losInput.end(), pts.begin() + 1, pts.end());
+
+        // Centre the wall-hugging engine smoothing toward the corridor middle
+        // (start point pinned, stride endpoint pinned). Done BEFORE the LOS
+        // screen so the verified line is the centred one — identical handling
+        // to the primary long-range producer.
+        CorridorCenter::Center(bot, losInput, CorridorCenter::LoadParams());
+
+        // The candidate corridor is everything past the (pinned) start point.
+        std::vector<G3D::Vector3> candidate(losInput.begin() + 1, losInput.end());
 
         // Count the LOS-clean leading points (corner grazes bridged; a real
         // wall-bridge truncates the prefix). cleanPts includes the leading

@@ -29,6 +29,47 @@
 DungeonClear.PreventBotRelease = 1
 
 #
+#    DungeonClear.PathCenterEnable
+#        When enabled (1, default), routes built for dungeon-clear navigation
+#        are nudged toward the MIDDLE of the corridor they run through, instead
+#        of the taut wall-hugging line Detour's path smoothing produces by
+#        default. Centring keeps bots off walls and ledge edges (fewer falls)
+#        and away from wall-lining decorations they would otherwise clip.
+#        Every nudged point is re-validated on the navmesh and LOS-screened, so
+#        disabling this only reverts to the older wall-hugging behaviour.
+#        Honoured live on `.reload config`.
+#
+#        Default: 1 (centre routes)
+#
+
+DungeonClear.PathCenterEnable = 1
+
+#
+#    DungeonClear.PathWallClearance
+#        Target distance, in yards, to keep route points away from the nearest
+#        wall when centring (see PathCenterEnable). In corridors narrower than
+#        twice this value the route settles on the exact middle instead. In
+#        open rooms no wall is within range, so nothing moves.
+#        Larger values hug walls less but cause more LOS truncations in tight
+#        spaces; smaller values stay closer to the original line.
+#
+#        Default: 2.5
+#
+
+DungeonClear.PathWallClearance = 2.5
+
+#
+#    DungeonClear.PathCenterMaxPush
+#        Hard cap, in yards, on how far any single route point may be displaced
+#        by centring. Prevents a bad wall normal from flinging a point across a
+#        thin wall before the on-mesh / LOS validation can reject it.
+#
+#        Default: 3.0
+#
+
+DungeonClear.PathCenterMaxPush = 3.0
+
+#
 # The settings below are for the dedicated DungeonClear log channel
 # (playerbots.dungeonclear). These keys are merged into the global logging
 # config, so they configure AzerothCore's logging system directly.
