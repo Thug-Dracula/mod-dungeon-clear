@@ -8,7 +8,7 @@ handling doors/stalls along the way.
 ## Requirements
 
 - **mod-playerbots** must be installed and enabled. This is an *extension* of the
-  playerbots AI engine, not a standalone module — it subclasses playerbots'
+  playerbots AI engine, not a standalone module; it subclasses playerbots'
   strategy/action/trigger/value classes and links against them.
 - Works against a **stock, unmodified mod-playerbots** checkout: no playerbots
   source edits are required. See [How it integrates](#how-it-integrates).
@@ -25,7 +25,7 @@ handling doors/stalls along the way.
 
 ## Usage
 
-Both input methods control the same behaviour — drive the **tank** bot:
+Both input methods control the same behaviour. Drive the **tank** bot:
 
 | Slash command (any time, no config) | In-party chat keyword |
 |---|---|
@@ -39,8 +39,8 @@ Both input methods control the same behaviour — drive the **tank** bot:
   requires being inside a dungeon and acts on the group's tank bot.
 - **Chat keywords + follow-tank need the `dungeon clear` strategy applied.** The
   module's login hook applies it automatically to bots present at login, but the
-  reliable universal path — and the **only** one that reaches a self-bot created
-  mid-session via `.playerbots bot self` — is the playerbots config. Add this to
+  reliable universal path, and the **only** one that reaches a self-bot created
+  mid-session via `.playerbots bot self`, is the playerbots config. Add this to
   your deployed `playerbots.conf` (both fields, so player-bots, random bots and
   self-bots are all covered):
   ```
@@ -53,7 +53,7 @@ Both input methods control the same behaviour — drive the **tank** bot:
 
 ### You can't play *as* the tank with dungeon clear on
 
-Dungeon clear drives the **tank bot's** AI — it steers movement, pulls, and
+Dungeon clear drives the **tank bot's** AI; it steers movement, pulls, and
 loots on the tank's behalf. The party's tank therefore has to be a bot, not
 your own character: if you're personally controlling the tank, the AI and you
 fight over the same character and movement stutters/fails.
@@ -70,8 +70,8 @@ play one of the followers instead.
 
 `mod-dungeon-clear-addon` is a client-side WoW addon (interface 30300, patch
 3.3.5a) that gives the feature a movable in-game panel instead of typing
-`dc`/`.dc` commands. It is **optional** — everything it does is also reachable
-via chat keywords and the `.dc` command — but it's the recommended way to drive
+`dc`/`.dc` commands. It is **optional**: everything it does is also reachable
+via chat keywords and the `.dc` command, but it's the recommended way to drive
 and monitor a clear.
 
 ### Install
@@ -103,7 +103,7 @@ module itself.
 ### How it talks to the server
 
 The addon and module communicate over a silent `DC`-prefixed addon message
-channel on the `PARTY` distribution — no visible chat. The addon sends
+channel on the `PARTY` distribution (no visible chat). The addon sends
 `CMD\t<sub>[\t<param>]` payloads; the server's `DungeonClearAddonHook` intercepts
 them (before normal chat processing) and dispatches to the group's tank bot,
 exactly like the `.dc` command. The module pushes `STATUS`, `BOSS_START` /
