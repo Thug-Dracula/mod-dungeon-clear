@@ -68,12 +68,30 @@ namespace
     // despawned — all handled by the caller's partitioning, so a gone boss
     // simply isn't here to match.
     //
-    // The initial pick (no valid commit) prefers the nearest boss the bounded
-    // probe confirms reachable, falling back to the nearest overall. Picking
-    // reachable up front, then committing, satisfies "nearest reachable" at
-    // selection time without paying for it in stability afterward. A boss that
-    // turns out to be unreachable after commit is handled by Advance's
-    // stall/skip path, not by silently re-targeting.
+    // The initial pick (no valid commit) walks the candidates in DBC encounter
+    // order — which is the order they arrive in here, since the caller builds
+    // `cands` by iterating the encounter-index-sorted "dungeon bosses" list —
+    // and takes the first one. This advances strictly to the next boss in
+    // numerical order rather than to whichever boss happens to be physically
+    // nearest: when boss N dies and the commit releases, the bot heads to N+1,
+    // not to a closer-but-later N+2.
+    //
+    // Do NOT re-rank by straight-line distance here. Distance ordering is what
+    // made the target jump ahead multiple bosses — the route to the next boss
+    // often loops away from it, so a later boss reads as nearer. It also
+    // interacts badly with the reachability probe below: IsReachable is a
+    // bounded 2-stride check that reads false for any boss more than a couple
+    // strides off (i.e. every remaining boss right after a kill), so the
+    // fallback path runs almost every fresh pick — and a distance-sorted
+    // fallback front() is precisely the nearest boss, reintroducing the jump.
+    //
+    // Reachability is kept only as a forward-looking preference: among the
+    // in-order candidates, take the first the bounded probe confirms reachable,
+    // so a lower-index boss walled off behind an unopened event doesn't wedge
+    // the bot when a reachable boss sits right after it. When the probe is
+    // unsure about all of them (the common post-kill case) we fall back to the
+    // lowest-index boss. A boss that turns out to be unreachable after commit
+    // is handled by Advance's stall/skip path, not by silently re-targeting.
     std::optional<DungeonBossInfo> PickTarget(Player* bot,
                                               std::vector<DungeonBossInfo>& cands,
                                               uint32 stickyEntry)
@@ -87,20 +105,13 @@ namespace
                 if (info.entry == stickyEntry)
                     return info;
 
-        // Fresh selection. Stable sort keeps DBC encounter order among
-        // near-equal distances so the initial pick is deterministic.
-        std::stable_sort(cands.begin(), cands.end(),
-                         [bot](DungeonBossInfo const& a, DungeonBossInfo const& b)
-                         {
-                             return bot->GetDistance(a.x, a.y, a.z) <
-                                    bot->GetDistance(b.x, b.y, b.z);
-                         });
-
+        // Fresh selection, in encounter-index order: first reachable, else the
+        // lowest-index boss overall.
         for (DungeonBossInfo const& info : cands)
             if (DungeonClearUtil::IsReachable(bot, info.x, info.y, info.z))
                 return info;
 
-        return cands.front();  // nearest; reachability unconfirmed
+        return cands.front();  // lowest index; reachability unconfirmed
     }
 }
 
