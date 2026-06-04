@@ -142,14 +142,23 @@ public:
     // values via GiveUpCurrentLoot / StripSkippedLoot, never stock code.
     static bool MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTimeoutMs, uint32 giveUpTtlMs);
 
-    // Decides, BEFORE the bot walks over, whether the corpse it is about to
-    // commit to (stock "loot target", else the nearest entry in "available
-    // loot") is worth a stop — and if not, blacklists + strips it this tick so
-    // the bot never detours to it (or, if already parked, leaves at once)
-    // instead of discovering its emptiness by camping out the loot-yield /
-    // camp timeouts. This is the proactive, event-driven counterpart to
-    // MaybeGiveUpCampedLoot: creature loot is generated at kill time, so the
-    // contents are knowable without opening the corpse.
+    // Decides, BEFORE the bot walks over, whether the loot it is about to commit
+    // to (stock "loot target", else the nearest entry in "available loot") is
+    // worth a stop — and if not, blacklists + strips it this tick so the bot
+    // never detours to it (or, if already parked, leaves at once) instead of
+    // discovering its emptiness by camping out the loot-yield / camp timeouts.
+    // This is the proactive, event-driven counterpart to MaybeGiveUpCampedLoot:
+    // creature loot is generated at kill time, so the contents are knowable
+    // without opening the corpse.
+    //
+    // Dungeon-clear only ever stops for two kinds of loot: creature CORPSES
+    // (normal kill loot) and treasure CHESTS. Every other lootable interactable
+    // in the world is ignored so the bot walks straight past it instead of
+    // detouring onto — and often getting stuck on — it: herbalism / mining
+    // gathering nodes (chest-type gameobjects gated by a profession-skill lock),
+    // skinnable-only corpses, fishing holes, levers, quest objects and loose
+    // item loot. Anything that isn't a corpse-with-takeable-loot or a real chest
+    // is skipped on sight.
     //
     // Drains EVERY in-range unworthy corpse in one call, not just the nearest:
     // it re-evaluates the now-nearest pickup after each skip and repeats until
@@ -171,13 +180,13 @@ public:
     //     floor actually reduces the number of stops; floor 0 (default)
     //     preserves stock "loot everything" behaviour.
     //
-    // Only plain creature corpses are judged. Gathering nodes (non-zero skillId),
-    // chests, gameobjects and item loot are left to stock (returns false). The
-    // check is deliberately conservative — it skips only when confident nothing
-    // is takeable — because a false skip drops real loot, whereas a missed skip
-    // merely falls back to the existing timeout. Returns true when it skipped at
-    // least one corpse this call. Module-only: mutates stock loot values via
-    // GiveUpCurrentLoot / StripSkippedLoot, never stock code.
+    // The corpse-quality check is deliberately conservative — it skips a corpse
+    // only when confident nothing is takeable — because a false skip drops real
+    // loot, whereas a missed skip merely falls back to the existing timeout.
+    // Gameobjects are skipped unless they are genuine chests; all non-chest and
+    // gathering-node interactables are dropped outright. Returns true when it
+    // skipped at least one pickup this call. Module-only: mutates stock loot
+    // values via GiveUpCurrentLoot / StripSkippedLoot, never stock code.
     static bool MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs);
 
     // Returns true if `creature`'s corpse holds at least one item this bot can

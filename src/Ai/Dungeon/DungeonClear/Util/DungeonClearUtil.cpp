@@ -17,6 +17,7 @@
 #include "AttackersValue.h"
 #include "Config.h"
 #include "Creature.h"
+#include "GameObject.h"
 #include "Group.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
@@ -884,21 +885,38 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTt
         if (target.guid.IsEmpty())
             break;  // nothing left to judge
 
-        // Gathering nodes carry a skillId and a legitimate cast; chests / GOs /
-        // item loot we don't introspect this way. A gathering node as the
-        // nearest pickup means the bot should stop for it -> stop draining.
-        if (target.skillId != 0)
-            break;
-        Creature* creature = botAI->GetCreature(target.guid);
-        if (!creature)
-            break;  // can't classify the nearest -> let the pipeline handle it
+        // Classify the next pickup. Dungeon-clear stops only for creature
+        // CORPSES that hold loot we'd take, and for genuine treasure CHESTS;
+        // everything else is skipped so the bot never detours onto it.
+        bool keep = false;
+        if (Creature* creature = botAI->GetCreature(target.guid))
+        {
+            // A corpse. Worth a stop only if it carries loot this bot can
+            // actually take (above the quality floor, not locked in someone
+            // else's roll). A skinnable-only corpse has no normal loot here, so
+            // CorpseHasTakeableLoot is false and it is skipped like a gathering
+            // node — the bot does not stop merely to skin.
+            keep = CorpseHasTakeableLoot(bot, creature, minQuality);
+        }
+        else if (GameObject* go = botAI->GetGameObject(target.guid))
+        {
+            // A gameobject. Stop only for real chests. Herbalism / mining
+            // gathering veins are also chest-type gameobjects, but are gated by
+            // a profession-skill lock — skillId carries that profession — so
+            // exclude them; every non-chest gameobject (fishing hole, lever,
+            // quest object) is excluded by type.
+            keep = go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
+                   target.skillId != SKILL_HERBALISM && target.skillId != SKILL_MINING;
+        }
+        // else: loose item loot or an unresolvable guid -> not a corpse or chest.
 
-        if (CorpseHasTakeableLoot(bot, creature, minQuality))
+        if (keep)
             break;  // nearest is worth a stop -> let the loot pipeline run
 
-        // Nothing here for us -> blacklist + strip now so the loot flags drop
-        // this tick and the bot skips the detour entirely (the proactive
-        // analogue of the camp/yield timeouts firing after a wasted walk).
+        // Not a corpse-with-loot or a chest -> blacklist + strip now so the loot
+        // flags drop this tick and the bot skips the detour entirely (the
+        // proactive analogue of the camp/yield timeouts firing after a wasted
+        // walk).
         GiveUpCurrentLoot(botAI, giveUpTtlMs);
         StripSkippedLoot(botAI);
         skippedAny = true;
