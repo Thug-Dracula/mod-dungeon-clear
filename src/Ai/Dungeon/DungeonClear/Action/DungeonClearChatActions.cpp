@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Config.h"
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"
@@ -356,10 +357,15 @@ bool DcStatusAction::Execute(Event event)
             std::string const who = DungeonClearUtil::DescribePartyLooting(bot);
             detail = who.empty() ? "Collecting loot." : (who + ".");
         }
-        else if (!DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, 30.0f))
+        // Status display must use the SAME spread the advance gate enforces
+        // (DungeonClear.PartyMaxSpread), or the tank parks at the limit while
+        // still reporting "En route" instead of "Waiting on".
+        else if (float const maxSpread = sConfigMgr->GetOption<float>(
+                     "DungeonClear.PartyMaxSpread", 25.0f);
+                 !DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, maxSpread))
         {
             stateStr = "resting";
-            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, 30.0f);
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, maxSpread);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else
