@@ -45,7 +45,7 @@ namespace
     // has caught up, rested, and tank-side loot is collected.
     constexpr float DC_REST_MIN_HP_PCT = 90.0f;
     constexpr float DC_REST_MIN_MP_PCT = 75.0f;
-    constexpr float DC_PARTY_MAX_SPREAD = 40.0f;
+    constexpr float DC_PARTY_MAX_SPREAD = 30.0f;
 
     // DC must be enabled AND not paused for the driving ladder to fire. Pause
     // is a soft stop: `enabled` (and all boss progress) stays set, but every

@@ -66,7 +66,7 @@ namespace
     constexpr float DC_ENGAGE_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;
     constexpr float DC_REST_MIN_HP_PCT = 90.0f;
     constexpr float DC_REST_MIN_MP_PCT = 75.0f;
-    constexpr float DC_PARTY_MAX_SPREAD = 40.0f;
+    constexpr float DC_PARTY_MAX_SPREAD = 30.0f;
     constexpr bool  DC_USE_CORRIDOR_SCAN = true;
     constexpr float DC_CORRIDOR_LOOKAHEAD = 35.0f;
     // Half-width of the path "blocking trash" band. Widened from 8 to 18 so it
