@@ -289,6 +289,19 @@ public:
     }
 };
 
+// Millisecond timestamp of when the in-flight async job was submitted. Used as
+// a watchdog: if no result arrives within DC_ASYNC_PATH_PENDING_TIMEOUT_MS the
+// job is abandoned and rebuilt synchronously, so a lost result (swept after an
+// afk dc-off) or a wedged worker can't leave the bot stuck plotting forever.
+class DungeonClearPendingPathSinceValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPendingPathSinceValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pending path since")
+    {
+    }
+};
+
 // Index of the segment in the cached LongPath the bot is currently
 // walking toward. Reset to 0 whenever the path target changes.
 // Stored separately from the path so the segment list itself stays

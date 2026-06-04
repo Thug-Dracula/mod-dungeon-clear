@@ -178,6 +178,18 @@ namespace
     // like portal traversal or stuck-teleport recovery.
     constexpr uint32 DC_LONG_PATH_TTL_MS = 15 * 1000;
 
+    // Self-healing watchdog for an in-flight async path job. A real
+    // BuildCoreFromMesh is a single Detour query — sub-millisecond, well under
+    // one tick — so if a submitted job has produced NO mailbox result after
+    // this long, the result was lost (e.g. swept by the reaper while the bot
+    // was afk with dc off, since the reset paths don't all clear the pending
+    // jobId) or the worker thread is wedged/dead. Either way, abandon the
+    // pending job and rebuild synchronously so the bot can never wedge forever
+    // on "plotting route". Must stay well below DC_ASYNC_PATH_RESULT_TTL_MS (the
+    // 30s mailbox sweep) so a genuinely-completed result is collected via
+    // TryTake before this fires, and far above any real build time.
+    constexpr uint32 DC_ASYNC_PATH_PENDING_TIMEOUT_MS = 5 * 1000;
+
     // Commit-timeout for the loot yield, shared by the tank's advance yield and
     // the follower's follow-tank yield. After a pull the tank holds until the
     // WHOLE party has finished looting (see the advance loot-yield block), and
@@ -301,6 +313,7 @@ namespace
         ctx->GetValue<uint32>("dungeon clear long path target")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
         ctx->GetValue<uint64>("dungeon clear pending path job")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear pending path since")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
@@ -467,6 +480,7 @@ namespace
         uint32& cachedEntry = ctx->GetValue<uint32>("dungeon clear long path target")->RefGet();
         uint32& expiresAt = ctx->GetValue<uint32>("dungeon clear long path expires")->RefGet();
         uint64& pendingJob = ctx->GetValue<uint64>("dungeon clear pending path job")->RefGet();
+        uint32& pendingSince = ctx->GetValue<uint32>("dungeon clear pending path since")->RefGet();
         uint32 const now = getMSTime();
 
         bool const asyncEnabled = sConfigMgr->GetOption<bool>("DungeonClear.AsyncPathfinding", true);
@@ -478,9 +492,30 @@ namespace
             uint32 jobEntry = 0;
             uint32 jobMap = 0;
             if (!DcPathWorker::Instance().TryTake(pendingJob, raw, jobEntry, jobMap))
-                return;  // still building — keep serving the cached path
+            {
+                // No result yet. A real build is a single sub-tick Detour query,
+                // so a multi-second wait means the result was lost (swept by the
+                // reaper after an afk dc-off, since not every reset path clears
+                // the pending jobId) or the worker is wedged/dead. Abandon the
+                // job and rebuild synchronously this tick — otherwise step 1
+                // short-circuits forever and no toggle/skip can recover it.
+                if (getMSTimeDiff(pendingSince, now) < DC_ASYNC_PATH_PENDING_TIMEOUT_MS)
+                    return;  // still building — keep serving the cached path
+
+                LOG_WARN("playerbots.dungeonclear",
+                         "[DC:{}] async path job {} gave no result in {}ms — abandoning, "
+                         "rebuilding synchronously (worker swept/stalled?)",
+                         bot->GetName(), pendingJob, getMSTimeDiff(pendingSince, now));
+                pendingJob = 0;
+                pendingSince = 0;
+                ChunkedPathfinder::Result built =
+                    ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
+                InstallLongPath(bot, ctx, target, std::move(built), now, "sync (async timeout)");
+                return;
+            }
 
             pendingJob = 0;
+            pendingSince = 0;
 
             // Discard a result the world has moved past (boss changed, or the
             // bot zoned) — installing it would route toward the wrong target.
@@ -563,6 +598,7 @@ namespace
             bot->GetMapId(), target.entry, bot->GetGUID(), std::move(meshRef),
             bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
             target.x, target.y, target.z);
+        pendingSince = now;
 
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] async path submitted job={} -> {} ({})",

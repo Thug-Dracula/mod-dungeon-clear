@@ -46,6 +46,7 @@ public:
         creators["dungeon clear long path expires"] = &DungeonClearValueContext::dungeon_clear_long_path_expires;
         creators["dungeon clear current hop"] = &DungeonClearValueContext::dungeon_clear_current_hop;
         creators["dungeon clear pending path job"] = &DungeonClearValueContext::dungeon_clear_pending_path_job;
+        creators["dungeon clear pending path since"] = &DungeonClearValueContext::dungeon_clear_pending_path_since;
         creators["dungeon clear far targets"] = &DungeonClearValueContext::dungeon_clear_far_targets;
         creators["dungeon clear blocking door"] = &DungeonClearValueContext::dungeon_clear_blocking_door;
         creators["dungeon clear engage trash target"] = &DungeonClearValueContext::dungeon_clear_engage_trash_target;
@@ -85,6 +86,7 @@ private:
     static UntypedValue* dungeon_clear_long_path_expires(PlayerbotAI* ai) { return new DungeonClearLongPathExpiresValue(ai); }
     static UntypedValue* dungeon_clear_current_hop(PlayerbotAI* ai) { return new DungeonClearCurrentHopValue(ai); }
     static UntypedValue* dungeon_clear_pending_path_job(PlayerbotAI* ai) { return new DungeonClearPendingPathJobValue(ai); }
+    static UntypedValue* dungeon_clear_pending_path_since(PlayerbotAI* ai) { return new DungeonClearPendingPathSinceValue(ai); }
     static UntypedValue* dungeon_clear_far_targets(PlayerbotAI* ai) { return new DungeonClearFarTargetsValue(ai); }
     static UntypedValue* dungeon_clear_blocking_door(PlayerbotAI* ai) { return new DungeonClearBlockingDoorValue(ai); }
     static UntypedValue* dungeon_clear_engage_trash_target(PlayerbotAI* ai) { return new DungeonClearEngageTrashTargetValue(ai); }
