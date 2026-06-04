@@ -1182,6 +1182,22 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
     if (!path.reachable)
     {
+        // Async pathfinding (DungeonClear.AsyncPathfinding): a build is still in
+        // flight — almost always right after a boss change, where EnsureLongPath
+        // cleared the cache and handed the heavy A* to the worker. The empty
+        // path is EXPECTED here, not a routing failure, so hold position quietly
+        // and wait (the result lands within a tick or a few) instead of crying
+        // "no navigable route" to the party. Mirrors the between-pulls rest
+        // yield: no stall reason set, so the stalled-fallback never fires; the
+        // multiplier suppresses wander while we wait.
+        if (context->GetValue<uint64>("dungeon clear pending path job")->Get() != 0)
+        {
+            SetPhase(context, "planning route");
+            if (bot->isMoving())
+                bot->StopMoving();
+            return false;
+        }
+
         // Bot wedged off the navmesh — try a small offset to land on a
         // walkable poly. Common cause: stuck-teleport recovery landed
         // on a ledge that pad's mmap tile-boundary; another cause is
