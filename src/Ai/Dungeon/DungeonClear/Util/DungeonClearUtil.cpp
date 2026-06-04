@@ -9,6 +9,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <mutex>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -18,10 +20,12 @@
 #include "Group.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
+#include "Log.h"
 #include "ObjectMgr.h"
 #include "InstanceScript.h"
 #include "LootObjectStack.h"
 #include "Map.h"
+#include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "PathGenerator.h"
 #include "Player.h"
@@ -897,5 +901,73 @@ void DungeonClearUtil::SendAddonMessage(PlayerbotAI* botAI, std::string const& m
 
     for (Player* receiver : botAI->GetRealPlayersInGroup())
         ServerFacade::instance().SendPacket(receiver, &data);
+}
+
+namespace
+{
+    // GUIDs of players that currently carry a DC follow-tank MoveFollow
+    // generator. Mutated from the follow-tank action (bot AI update) and read by
+    // the reaper (world update / OnPlayerbotUpdate); both run on the world
+    // thread today, but the set is tiny and the lock is uncontended, so guard it
+    // anyway to stay correct if bot updates ever move off-thread.
+    std::set<ObjectGuid> g_dcFollowingPlayers;
+    std::mutex g_dcFollowingMutex;
+}
+
+void DungeonClearUtil::MarkFollowing(ObjectGuid player)
+{
+    std::lock_guard<std::mutex> lock(g_dcFollowingMutex);
+    g_dcFollowingPlayers.insert(player);
+}
+
+void DungeonClearUtil::UnmarkFollowing(ObjectGuid player)
+{
+    std::lock_guard<std::mutex> lock(g_dcFollowingMutex);
+    g_dcFollowingPlayers.erase(player);
+}
+
+void DungeonClearUtil::ReapOrphanedFollows()
+{
+    std::lock_guard<std::mutex> lock(g_dcFollowingMutex);
+    if (g_dcFollowingPlayers.empty())
+        return;
+
+    for (auto it = g_dcFollowingPlayers.begin(); it != g_dcFollowingPlayers.end();)
+    {
+        Player* player = ObjectAccessor::FindPlayer(*it);
+
+        // Player left the world (logged out, bot despawned): nothing to clear,
+        // and the GUID would otherwise linger forever. Drop it.
+        if (!player || !player->IsInWorld())
+        {
+            it = g_dcFollowingPlayers.erase(it);
+            continue;
+        }
+
+        // AI still ticking -> its own follow-tank teardown owns this generator;
+        // leave the mark in place and move on.
+        if (GET_PLAYERBOT_AI(player))
+        {
+            ++it;
+            continue;
+        }
+
+        // AI gone but the player is still in world (a self-bot toggled out of bot
+        // mode). Cancel the leftover continuous follow so movement control reverts
+        // to the human; a real player has no AI to self-heal it otherwise.
+        if (player->GetMotionMaster() &&
+            player->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+        {
+            if (player->isMoving())
+                player->StopMoving();
+            player->GetMotionMaster()->Clear();
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] reaped orphaned follow generator (self-bot left bot "
+                     "mode) -> movement control returned to player",
+                     player->GetName());
+        }
+
+        it = g_dcFollowingPlayers.erase(it);
+    }
 }
 

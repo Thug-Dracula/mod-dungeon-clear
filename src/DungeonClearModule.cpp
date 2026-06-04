@@ -64,6 +64,7 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 
 namespace
 {
@@ -147,8 +148,31 @@ public:
     }
 };
 
+// Drives the orphaned-follow reaper once per world tick. A non-tank DC follower
+// installs a persistent MoveFollow generator to chase the tank; its own
+// follow-tank action tears that down when the DC tank goes away — but only while
+// the follower's PlayerbotAI is still ticking. A self-bot that leaves bot mode
+// (`.playerbots bot self` off) has its PlayerbotAI deleted outright, so the
+// teardown never runs and the now-human player stays glued to the tank. The
+// reaper detects that orphaned generator and clears it, returning movement
+// control to the player. OnPlayerbotUpdate is the lone playerbots-specific
+// per-tick hook that fires regardless of whether the affected player still has
+// an AI (it is a global tick, not a per-bot one), which is exactly what we need
+// since the player we must fix no longer has a bot AI.
+class DungeonClearReaperScript : public PlayerbotScript
+{
+public:
+    DungeonClearReaperScript() : PlayerbotScript("DungeonClearReaperScript") {}
+
+    void OnPlayerbotUpdate(uint32 /*diff*/) override
+    {
+        DungeonClearUtil::ReapOrphanedFollows();
+    }
+};
+
 void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
+    new DungeonClearReaperScript();
 }

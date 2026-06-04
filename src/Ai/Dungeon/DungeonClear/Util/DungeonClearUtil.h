@@ -228,6 +228,23 @@ public:
 
     // Send a structured addon message with prefix "DC" to all real players in the bot's group.
     static void SendAddonMessage(PlayerbotAI* botAI, std::string const& msg);
+
+    // --- Orphaned follow-generator reaper -----------------------------------
+    // MoveFollow is a persistent MotionMaster generator. A non-tank DC follower
+    // installs one to chase the tank; its own follow-tank action tears it down
+    // when the DC tank goes away (see DungeonClearFollowTankAction::Execute).
+    // But that teardown only runs while the follower's PlayerbotAI is still
+    // ticking. When a SELF-bot leaves bot mode (`.playerbots bot self` off),
+    // playerbots `delete`s the PlayerbotAI outright — no teardown tick fires,
+    // and the leftover follow generator stays installed on the now-human player,
+    // gluing it to the tank with no way to self-heal (a real player has no AI to
+    // clear it). MarkFollowing records every player that currently has such a
+    // generator; ReapOrphanedFollows (driven each world tick from a
+    // PlayerbotScript) finds any marked player still in world whose AI has gone
+    // away and clears the generator, returning movement control to the player.
+    static void MarkFollowing(ObjectGuid player);
+    static void UnmarkFollowing(ObjectGuid player);
+    static void ReapOrphanedFollows();
 };
 
 #endif

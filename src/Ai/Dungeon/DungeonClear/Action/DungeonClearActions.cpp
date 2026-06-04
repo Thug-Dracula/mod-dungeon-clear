@@ -1833,6 +1833,9 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                      "follow generator (selfRealPlayer={})",
                      bot->GetName(), botAI && botAI->IsRealPlayer() ? 1 : 0);
             followedTank = ObjectGuid::Empty;
+            // Cleanly torn down by us -> drop the orphan-reaper mark; there is no
+            // longer a follow generator for it to chase down.
+            DungeonClearUtil::UnmarkFollowing(bot->GetGUID());
         }
         return false;
     }
@@ -1917,5 +1920,9 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // Remember who we're chasing so the teardown branch above can cancel this
     // continuous MoveFollow once the DC tank goes away.
     followedTank = tank->GetGUID();
+    // Record that this player now carries a follow generator so the world-tick
+    // orphan reaper can cancel it if the AI is deleted out from under us — a
+    // self-bot leaving bot mode never runs the teardown branch above.
+    DungeonClearUtil::MarkFollowing(bot->GetGUID());
     return Follow(tank, dist);
 }
