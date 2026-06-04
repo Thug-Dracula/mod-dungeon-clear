@@ -62,9 +62,9 @@ namespace
     // must agree on "are we at the boss yet" — otherwise a wandering/patrolling
     // boss that has left its spawn anchor makes the action keep walking while the
     // at-boss trigger thinks it has arrived (or vice versa).
-    float BossEngageDistance(Player* bot, DungeonBossInfo const& boss)
+    float BossEngageDistance(Player* bot, AiObjectContext* context, DungeonBossInfo const& boss)
     {
-        if (Creature* live = DungeonClearUtil::FindLiveCreatureOnMap(bot, boss.entry))
+        if (Creature* live = DungeonClearUtil::GetLiveBoss(bot, context, boss.entry))
             return bot->GetDistance(live->GetPositionX(), live->GetPositionY(), live->GetPositionZ());
         return bot->GetDistance(boss.x, boss.y, boss.z);
     }
@@ -113,7 +113,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    if (BossEngageDistance(bot, *next) >= DC_ENGAGE_RANGE)
+    if (BossEngageDistance(bot, context, *next) >= DC_ENGAGE_RANGE)
         return false;
 
     // When the long-path cache is anchored (registered route), make sure
@@ -161,7 +161,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
 
     // Within engage range of the live boss, at-boss trigger handles the pull.
-    if (BossEngageDistance(bot, *next) < DC_ENGAGE_RANGE)
+    if (BossEngageDistance(bot, context, *next) < DC_ENGAGE_RANGE)
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.

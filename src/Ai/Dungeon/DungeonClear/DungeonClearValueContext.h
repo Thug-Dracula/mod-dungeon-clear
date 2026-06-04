@@ -11,6 +11,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearBlockingDoorValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearFarTargetsValue.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLongPathValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearPartyTankValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
@@ -23,6 +24,7 @@ public:
     {
         creators["dungeon bosses"] = &DungeonClearValueContext::dungeon_bosses;
         creators["next dungeon boss"] = &DungeonClearValueContext::next_dungeon_boss;
+        creators["dungeon clear live boss"] = &DungeonClearValueContext::dungeon_clear_live_boss;
         creators["dungeon clear enabled"] = &DungeonClearValueContext::dungeon_clear_enabled;
         creators["dungeon clear paused"] = &DungeonClearValueContext::dungeon_clear_paused;
         creators["dungeon clear skipped"] = &DungeonClearValueContext::dungeon_clear_skipped;
@@ -60,6 +62,7 @@ public:
 private:
     static UntypedValue* dungeon_bosses(PlayerbotAI* ai) { return new DungeonBossesValue(ai); }
     static UntypedValue* next_dungeon_boss(PlayerbotAI* ai) { return new NextDungeonBossValue(ai); }
+    static UntypedValue* dungeon_clear_live_boss(PlayerbotAI* ai) { return new DungeonClearLiveBossValue(ai); }
     static UntypedValue* dungeon_clear_enabled(PlayerbotAI* ai) { return new DungeonClearEnabledValue(ai); }
     static UntypedValue* dungeon_clear_paused(PlayerbotAI* ai) { return new DungeonClearPausedValue(ai); }
     static UntypedValue* dungeon_clear_skipped(PlayerbotAI* ai) { return new DungeonClearSkippedValue(ai); }

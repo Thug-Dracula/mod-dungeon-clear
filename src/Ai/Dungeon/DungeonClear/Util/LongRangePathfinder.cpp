@@ -105,21 +105,28 @@ namespace
         return committed + 1;
     }
 
-    // ---- our own big-pool query, allocated per call ----------------------
-    // RAII so every return path frees it. We do NOT cache across calls: a
-    // cache keyed by the raw navmesh pointer is unsafe (an unloaded instance
-    // can be replaced by a new map's mesh at the same address), and Build is
-    // only invoked on cache-miss/TTL — every few seconds, not per tick — so
-    // the ~2-3MB node-pool alloc is negligible. Main-thread only: Detour's
-    // per-query node pool is mutated during search.
+    // ---- our own big-pool query, reused across calls ---------------------
+    // The query carries a ~2MB 65535-node A* pool. Re-allocating it on every
+    // Build (boss change / 15s TTL / stuck rebuild / reachability probe) is
+    // pure churn, so we keep ONE query per thread and re-init() it each call.
+    // dtNavMeshQuery::init() rebinds the mesh and merely clears the pool when
+    // it is already >= LR_NODE_POOL (it only reallocs when too small), so the
+    // re-init reuses the existing pool memory — and rebinding the mesh every
+    // call is exactly what makes this safe against the "unloaded instance
+    // replaced by a new map's mesh at the same address" hazard the per-call
+    // alloc was guarding against. thread_local because map updates run across a
+    // worker pool and Detour mutates the per-query node pool during search; the
+    // unique_ptr frees it at thread exit.
     using ManagedQuery = std::unique_ptr<dtNavMeshQuery, decltype(&dtFreeNavMeshQuery)>;
 
-    ManagedQuery MakeQuery(dtNavMesh const* mesh)
+    dtNavMeshQuery* AcquireQuery(dtNavMesh const* mesh)
     {
-        ManagedQuery q(dtAllocNavMeshQuery(), &dtFreeNavMeshQuery);
-        if (!q || dtStatusFailed(q->init(mesh, LR_NODE_POOL)))
-            return ManagedQuery(nullptr, &dtFreeNavMeshQuery);
-        return q;
+        thread_local ManagedQuery tlsQuery(nullptr, &dtFreeNavMeshQuery);
+        if (!tlsQuery)
+            tlsQuery.reset(dtAllocNavMeshQuery());
+        if (!tlsQuery || dtStatusFailed(tlsQuery->init(mesh, LR_NODE_POOL)))
+            return nullptr;
+        return tlsQuery.get();
     }
 
     // ---- ports of PathGenerator's smooth-path internals ------------------
@@ -216,7 +223,9 @@ namespace
         *smoothPathSize = 0;
         uint32 nsmoothPath = 0;
 
-        std::vector<dtPolyRef> polys(LR_MAX_POLYS, 0);
+        // Reused across calls (sized once per thread); the entries we read are
+        // overwritten below before use, so no per-call zero-fill is needed.
+        thread_local std::vector<dtPolyRef> polys(LR_MAX_POLYS);
         polyPathSize = std::min<uint32>(polyPathSize, LR_MAX_POLYS);
         memcpy(polys.data(), polyPath, sizeof(dtPolyRef) * polyPathSize);
         uint32 npolys = polyPathSize;
@@ -353,8 +362,7 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         return result;
     }
 
-    ManagedQuery queryHolder = MakeQuery(navMesh);
-    dtNavMeshQuery* query = queryHolder.get();
+    dtNavMeshQuery* query = AcquireQuery(navMesh);
     if (!query)
     {
         result.failureReason = "navmesh query alloc/init failed";
@@ -408,8 +416,9 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
     }
 
     // Full poly corridor in one call — the big node pool + buffer is what
-    // lifts the 74-poly cap.
-    std::vector<dtPolyRef> corridor(LR_MAX_POLYS, 0);
+    // lifts the 74-poly cap. Scratch is reused per thread (findPath fills
+    // [0..npolys] before we read it, so no per-call zero-fill is needed).
+    thread_local std::vector<dtPolyRef> corridor(LR_MAX_POLYS);
     int npolys = 0;
     dtStatus const pathStatus = query->findPath(startRef, endRef, startNearest, endNearest, &filter,
                                                 corridor.data(), &npolys, static_cast<int>(LR_MAX_POLYS));
@@ -420,8 +429,9 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
     }
     bool const corridorComplete = (corridor[npolys - 1] == endRef);
 
-    // Smooth the whole corridor into a polyline.
-    std::vector<float> smooth(LR_MAX_POINTS * VERTEX_SIZE, 0.0f);
+    // Smooth the whole corridor into a polyline. Scratch reused per thread;
+    // FindSmoothPath writes [0..nsmooth) before we read it back.
+    thread_local std::vector<float> smooth(LR_MAX_POINTS * VERTEX_SIZE);
     int nsmooth = 0;
     dtStatus const smoothStatus = FindSmoothPath(query, navMesh, &filter, startNearest, endNearest,
                                                  corridor.data(), static_cast<uint32>(npolys),

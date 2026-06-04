@@ -17,6 +17,7 @@
 #include "ModelIgnoreFlags.h"
 #include "PathGenerator.h"    // NAV_* flags, VERTEX_SIZE, INVALID_POLYREF
 #include "Player.h"
+#include "Timer.h"            // getMSTime
 
 namespace
 {
@@ -137,6 +138,17 @@ namespace
 
 CorridorCenter::Params CorridorCenter::LoadParams()
 {
+    // These four options change only on a manual `.reload config`, yet the
+    // strided fallback calls this once per probe per stride — each call doing
+    // four string-keyed config lookups. Cache for a second so the lookups don't
+    // repeat in a hot loop while a live reload still takes effect promptly.
+    // thread_local keeps it lock-free across the map-update worker pool.
+    thread_local Params cached;
+    thread_local uint32 cachedAt = 0;
+    uint32 const now = getMSTime();
+    if (cachedAt != 0 && now - cachedAt < 1000)
+        return cached;
+
     Params p;
     p.enable      = sConfigMgr->GetOption<bool>("DungeonClear.PathCenterEnable", true);
     p.clearance   = sConfigMgr->GetOption<float>("DungeonClear.PathWallClearance", 3.0f);
@@ -145,6 +157,9 @@ CorridorCenter::Params CorridorCenter::LoadParams()
     p.clearance   = std::max(0.0f, p.clearance);
     p.maxPush     = std::max(0.0f, p.maxPush);
     p.smoothIters = std::max(0, p.smoothIters);
+
+    cached = p;
+    cachedAt = now;
     return p;
 }
 
@@ -241,7 +256,15 @@ void CorridorCenter::Center(Player* bot, std::vector<G3D::Vector3>& pts, Params 
     if (!navMesh)
         return;
 
-    ManagedQuery query(dtAllocNavMeshQuery(), &dtFreeNavMeshQuery);
+    // Reuse one query per thread instead of allocating a fresh node pool on
+    // every probe/stride. init() rebinds the mesh and clears (reuses) the pool
+    // when it is already >= CC_NODE_POOL, so this is both cheaper and safe
+    // against a mesh being replaced at the same address. thread_local because
+    // map updates run across a worker pool and Detour mutates the node pool
+    // during search; the unique_ptr frees it at thread exit.
+    thread_local ManagedQuery query(nullptr, &dtFreeNavMeshQuery);
+    if (!query)
+        query.reset(dtAllocNavMeshQuery());
     if (!query || dtStatusFailed(query->init(navMesh, CC_NODE_POOL)))
         return;
 

@@ -654,7 +654,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // the boss actually is instead of parking at the spawn anchor. Falls back to
     // the static coords when the creature isn't loaded (far grid not streamed in
     // yet — see DC_BOSS_GRID_LOADED_RANGE).
-    Creature* const liveBoss = DungeonClearUtil::FindLiveCreatureOnMap(bot, next->entry);
+    Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
     float const bossX = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const bossY = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bossZ = liveBoss ? liveBoss->GetPositionZ() : next->z;
@@ -1529,7 +1529,7 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
     if (!next.has_value())
         return false;
 
-    Creature* boss = DungeonClearUtil::FindLiveCreatureOnMap(bot, next->entry);
+    Creature* boss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
     if (!boss)
     {
         StallDungeonClear(botAI,

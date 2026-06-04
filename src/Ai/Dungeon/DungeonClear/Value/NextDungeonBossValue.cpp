@@ -6,6 +6,7 @@
 #include "NextDungeonBossValue.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -30,26 +31,38 @@ namespace
         bool alive;
     };
 
-    BossLiveState CheckBossLive(Map* map, uint32 entry)
+    // One pass over the creature store builds the liveness of every boss
+    // entry of interest, instead of re-scanning the whole store once per boss
+    // (the old per-boss CheckBossLive was O(bosses x store)). `wanted` is the
+    // set of boss entries we care about; entries never seen stay absent and
+    // read as {present=false, alive=false} via the caller's default.
+    std::unordered_map<uint32, BossLiveState> BuildLiveness(Map* map,
+                                                            std::unordered_set<uint32> const& wanted)
     {
-        BossLiveState state{false, false};
-        if (!map)
-            return state;
+        std::unordered_map<uint32, BossLiveState> liveness;
+        if (!map || wanted.empty())
+            return liveness;
 
-        auto const& store = map->GetCreatureBySpawnIdStore();
-        for (auto const& kv : store)
+        for (auto const& kv : map->GetCreatureBySpawnIdStore())
         {
             Creature* c = kv.second;
-            if (!c || c->GetEntry() != entry)
+            if (!c)
                 continue;
+            uint32 const entry = c->GetEntry();
+            if (!wanted.count(entry))
+                continue;
+            BossLiveState& state = liveness[entry];  // default {false,false}
             state.present = true;
             if (c->IsAlive())
-            {
                 state.alive = true;
-                return state;
-            }
         }
-        return state;
+        return liveness;
+    }
+
+    BossLiveState LookupLive(std::unordered_map<uint32, BossLiveState> const& liveness, uint32 entry)
+    {
+        auto it = liveness.find(entry);
+        return it != liveness.end() ? it->second : BossLiveState{false, false};
     }
 
     // From a same-tier candidate list (all currently fightable, or all
@@ -148,6 +161,14 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
 
+    // Resolve every boss's liveness in a single store pass (shared by the
+    // selected-override check and the partition loop below).
+    std::unordered_set<uint32> wantedEntries;
+    wantedEntries.reserve(bosses.size());
+    for (DungeonBossInfo const& info : bosses)
+        wantedEntries.insert(info.entry);
+    std::unordered_map<uint32, BossLiveState> const liveness = BuildLiveness(map, wantedEntries);
+
     // Check if there is a manually selected boss target override
     uint32 const selectedEntry = AI_VALUE(uint32, "dungeon clear selected boss");
     if (selectedEntry != 0)
@@ -162,7 +183,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
                 if (!invalid)
                 {
-                    BossLiveState const state = CheckBossLive(map, info.entry);
+                    BossLiveState const state = LookupLive(liveness, info.entry);
                     if (state.present && !state.alive)
                         invalid = true;
                 }
@@ -200,7 +221,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         if (info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
             continue;
 
-        BossLiveState const state = CheckBossLive(map, info.entry);
+        BossLiveState const state = LookupLive(liveness, info.entry);
         if (state.alive)
             alive.push_back(info);
         else if (!state.present)

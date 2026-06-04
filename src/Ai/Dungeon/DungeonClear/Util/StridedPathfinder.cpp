@@ -617,9 +617,28 @@ bool StridedPathfinder::IsReachable(Player* bot, float tx, float ty, float tz)
     if (!bot || !bot->IsInWorld())
         return false;
 
-    // Cheap probe: a single bee-line stride. If we get even one segment of
-    // forward progress, the destination is "reachable" — Advance will chunk
-    // the rest if Build is called next tick.
-    Result const r = Build(bot, bot->GetMapId(), /*bossEntry*/ 0u, tx, ty, tz, /*maxStrides*/ 2u);
-    return r.reachable && !r.segments.empty();
+    // Lightweight gate: a single engine PathGenerator call on the shared
+    // pooled query — NO big-pool alloc, no smoothing, no CorridorCenter
+    // raycasts, no LOS screen. This is only a "does a navmesh corridor make
+    // forward progress toward the target" probe (used by boss selection and
+    // the stalled-fallback's nearest-hostile pick); the real route is built
+    // later by the full producer in EnsureLongPath, so routing quality is
+    // unchanged. Previously this delegated to Build(), which front-ran the
+    // whole LongRangePathfinder (a full-dungeon A* + ~2MB query) just to
+    // return a bool.
+    //
+    // PATHFIND_NORMAL is a complete path; PATHFIND_INCOMPLETE is a valid
+    // partial corridor truncated at Detour's 74-poly cap (a far-but-reachable
+    // target) — both count as reachable, matching Build's direct-probe tier.
+    // NOPATH / SHORT / SHORTCUT are straight-line non-corridors and don't.
+    PathGenerator gen(bot);
+    gen.CalculatePath(tx, ty, tz, /*forceDest*/ false);
+    uint32 const type = gen.GetPathType();
+    if (type & (PATHFIND_NOPATH | PATHFIND_SHORT | PATHFIND_SHORTCUT))
+        return false;
+    // NOT_USING_PATH (no mmap / flying / swimming) goes straight to the dest;
+    // treat as reachable, same as Build's TryProbe.
+    if (type & PATHFIND_NOT_USING_PATH)
+        return true;
+    return gen.GetPath().size() >= 2;
 }

@@ -33,6 +33,7 @@
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 
 Unit* DungeonClearUtil::FindBlockingTrash(Player* bot,
                                           DungeonBossInfo const& boss,
@@ -263,6 +264,29 @@ Creature* DungeonClearUtil::FindLiveCreatureOnMap(Player* bot, uint32 entry)
             return c;
     }
     return nullptr;
+}
+
+Creature* DungeonClearUtil::GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry)
+{
+    if (!bot || !ctx || !entry)
+        return nullptr;
+
+    DungeonClearLiveBoss const cached =
+        ctx->GetValue<DungeonClearLiveBoss>("dungeon clear live boss")->Get();
+    if (cached.entry == entry && !cached.guid.IsEmpty())
+    {
+        // Re-resolve the cached GUID every call so the position stays live and
+        // we never touch a pointer that may have been freed since the scan.
+        Creature* c = ObjectAccessor::GetCreature(*bot, cached.guid);
+        if (c && c->IsAlive() && c->GetEntry() == entry)
+            return c;
+        // Cached GUID went stale within the interval (died / despawned). Fall
+        // through to a direct scan rather than miss a still-present instance.
+    }
+
+    // Cache miss: computed for a different boss (just after a boss change), or
+    // a stale GUID — pay one direct scan. Steady state hits the branch above.
+    return FindLiveCreatureOnMap(bot, entry);
 }
 
 bool DungeonClearUtil::IsCreaturePresentOnMap(Player* bot, uint32 entry)

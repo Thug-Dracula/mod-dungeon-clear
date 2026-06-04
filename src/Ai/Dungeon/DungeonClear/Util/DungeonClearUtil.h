@@ -18,6 +18,7 @@ class Unit;
 class Creature;
 class InstanceScript;
 class PlayerbotAI;
+class AiObjectContext;
 struct DungeonBossInfo;
 
 class DungeonClearUtil
@@ -55,6 +56,15 @@ public:
     // Returns a live spawned creature with the given entry on the bot's map, or
     // nullptr if none exists or all are dead.
     static Creature* FindLiveCreatureOnMap(Player* bot, uint32 entry);
+
+    // Live boss creature for `entry`, resolved through the cached
+    // "dungeon clear live boss" GUID (O(1) ObjectAccessor lookup) instead of
+    // re-scanning the whole creature store on every call — the trigger ladder
+    // and advance action ask for it several times per tick. Falls back to a
+    // direct store scan when the cache was computed for a different boss (the
+    // brief window just after a boss change) or the cached GUID went stale.
+    // Returns nullptr when the boss isn't loaded/alive on the map.
+    static Creature* GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry);
 
     // Returns true if at least one spawned creature with the given entry exists
     // on the bot's map (alive or dead). Distinguishes "missing" from "killed".
