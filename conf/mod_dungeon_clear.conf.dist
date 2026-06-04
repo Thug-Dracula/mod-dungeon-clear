@@ -84,6 +84,22 @@ Logger.playerbots.dungeonclear=4,Console DungeonClear
 # leave them at their defaults unless you know what you're doing.
 
 #
+#    DungeonClear.AsyncPathfinding
+#        1 (default): run the heavy full-dungeon navmesh route build on a
+#        background worker thread so a cache-miss can't micro-stutter the server
+#        tick. While a build is in flight the tank keeps walking its current
+#        route (a boss change briefly pauses until the new route lands). The
+#        route output is identical to synchronous mode. 0 builds inline on the
+#        map thread (the original behaviour) — set this if you ever suspect the
+#        worker and want the known-good fallback. Honoured live on
+#        `.reload config` (takes effect on the next route rebuild).
+#
+#        Default: 1
+#
+
+DungeonClear.AsyncPathfinding = 1
+
+#
 #    DungeonClear.PathCenterEnable
 #        1 (default): nudge routes toward the middle of corridors instead of
 #        Detour's wall-hugging line, keeping bots off walls and ledge edges.

@@ -339,23 +339,15 @@ namespace
     }
 }
 
-LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, float ty, float tz)
+LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
+    dtNavMesh const* navMesh, float sx, float sy, float sz, float tx, float ty, float tz)
 {
-    Result result;
-    if (!bot || !bot->IsInWorld())
-    {
-        result.failureReason = "no bot in world";
-        return result;
-    }
+    // WORKER-SAFE: no Player*/Map*/VMAP here — only the navmesh + plain floats.
+    RawResult result;
+    result.tx = tx;
+    result.ty = ty;
+    result.tz = tz;
 
-    Map* map = bot->GetMap();
-    if (!map)
-    {
-        result.failureReason = "no map";
-        return result;
-    }
-
-    dtNavMesh const* navMesh = map->GetMapCollisionData().GetMMapData().GetNavMesh();
     if (!navMesh)
     {
         result.failureReason = "no navmesh on map";
@@ -375,9 +367,6 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
     filter.setExcludeFlags(0);
 
     // Detour coordinate order is {y, z, x}.
-    float const sx = bot->GetPositionX();
-    float const sy = bot->GetPositionY();
-    float const sz = bot->GetPositionZ();
     float const startPt[VERTEX_SIZE] = { sy, sz, sx };
     float const endPt[VERTEX_SIZE]   = { ty, tz, tx };
 
@@ -427,7 +416,7 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         result.failureReason = "findPath returned no corridor";
         return result;
     }
-    bool const corridorComplete = (corridor[npolys - 1] == endRef);
+    result.corridorComplete = (corridor[npolys - 1] == endRef);
 
     // Smooth the whole corridor into a polyline. Scratch reused per thread;
     // FindSmoothPath writes [0..nsmooth) before we read it back.
@@ -442,23 +431,56 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         return result;
     }
 
-    // Convert to world-space G3D points and pin each to a walkable Z, exactly
-    // as PathGenerator::NormalizePath does. pts[0] is the (snapped) start.
-    std::vector<G3D::Vector3> pts;
-    pts.reserve(nsmooth);
+    // Convert to world-space G3D points. Z here is the navmesh getPolyHeight
+    // estimate from FindSmoothPath; the live-state refinement
+    // (Player::UpdateAllowedPositionZ) is deferred to Finalize on the map
+    // thread, so this loop stays free of any Player/Map access. rawPts[0] is
+    // the (snapped) start point.
+    result.rawPts.reserve(nsmooth);
     for (int i = 0; i < nsmooth; ++i)
+        result.rawPts.emplace_back(smooth[i * VERTEX_SIZE + 2], smooth[i * VERTEX_SIZE + 0],
+                                   smooth[i * VERTEX_SIZE + 1]);
+
+    result.reachable = true;
+    return result;
+}
+
+LongRangePathfinder::Result LongRangePathfinder::Finalize(Player* bot, RawResult const& raw)
+{
+    // MAP-THREAD ONLY: from here on we touch the live Player and VMAP.
+    Result result;
+    if (!raw.reachable)
     {
-        G3D::Vector3 p(smooth[i * VERTEX_SIZE + 2], smooth[i * VERTEX_SIZE + 0], smooth[i * VERTEX_SIZE + 1]);
-        bot->UpdateAllowedPositionZ(p.x, p.y, p.z);
-        pts.push_back(p);
+        // Propagate the core's verdict so Advance/the strided fallback see the
+        // same failure they would have from the synchronous build.
+        result.startFarFromPoly = raw.startFarFromPoly;
+        result.failureReason = raw.failureReason;
+        return result;
     }
+    if (!bot || !bot->IsInWorld())
+    {
+        result.failureReason = "no bot in world";
+        return result;
+    }
+    if (raw.rawPts.size() < 2)
+    {
+        result.failureReason = "smooth-path build failed";
+        return result;
+    }
+
+    // Pin each point to a walkable Z, exactly as PathGenerator::NormalizePath
+    // does. (Was inline in the convert loop pre-split; moved here because it
+    // reads terrain/VMAP.) pts[0] is the (snapped) start.
+    std::vector<G3D::Vector3> pts = raw.rawPts;
+    for (G3D::Vector3& p : pts)
+        bot->UpdateAllowedPositionZ(p.x, p.y, p.z);
 
     // Nudge the taut, wall-hugging smoothed line toward the corridor centre so
     // the bot stops grazing walls/ledges and clipping wall-lining props. The
     // start and target points are pinned; every nudged point is re-validated
     // on-mesh inside Center(). The LOS screen below then verifies the CENTRED
     // line, so any push that would cross geometry is still truncated away.
-    CorridorCenter::Center(query, &filter, bot, pts, CorridorCenter::LoadParams());
+    CorridorCenter::Center(bot, pts, CorridorCenter::LoadParams());
 
     // LOS-screen the smoothed corridor (corner grazes bridged; a sustained
     // wall-crossing truncates to the verified prefix). cleanPts counts from
@@ -470,8 +492,8 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         // off to the strided fallback, which has bee-line/arc tiers for this.
         result.failureReason = "LOS: no clean corridor from start";
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[dungeon-clear] long-range route rejected by LOS at start ({} smoothed pts, "
-                  "corridor {} polys)", nsmooth, npolys);
+                  "[dungeon-clear] long-range route rejected by LOS at start ({} smoothed pts)",
+                  raw.rawPts.size());
         return result;
     }
 
@@ -487,11 +509,11 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
     bool const losTruncated = (cleanPts < pts.size());
 
     G3D::Vector3 const& last = polyline.back();
-    float const dx = tx - last.x;
-    float const dy = ty - last.y;
-    float const dz = tz - last.z;
+    float const dx = raw.tx - last.x;
+    float const dy = raw.ty - last.y;
+    float const dz = raw.tz - last.z;
     bool const nearTarget = (dx * dx + dy * dy + dz * dz) <= (ARRIVE_RADIUS * ARRIVE_RADIUS);
-    bool const complete = corridorComplete && !losTruncated && nearTarget;
+    bool const complete = raw.corridorComplete && !losTruncated && nearTarget;
 
     PathSegment seg;
     seg.ex = last.x;
@@ -506,9 +528,36 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
     result.complete = complete;
 
     LOG_DEBUG("playerbots.dungeonclear",
-              "[dungeon-clear] long-range route: {} corridor polys, {} smoothed pts, "
-              "{} usable ({}), complete={}",
-              npolys, nsmooth, result.segments.back().polyline.size(),
+              "[dungeon-clear] long-range route: {} smoothed pts, {} usable ({}), complete={}",
+              raw.rawPts.size(), result.segments.back().polyline.size(),
               losTruncated ? "LOS-truncated" : "full", complete);
     return result;
+}
+
+LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, float ty, float tz)
+{
+    Result result;
+    if (!bot || !bot->IsInWorld())
+    {
+        result.failureReason = "no bot in world";
+        return result;
+    }
+
+    Map* map = bot->GetMap();
+    if (!map)
+    {
+        result.failureReason = "no map";
+        return result;
+    }
+
+    dtNavMesh const* navMesh = map->GetMapCollisionData().GetMMapData().GetNavMesh();
+    if (!navMesh)
+    {
+        result.failureReason = "no navmesh on map";
+        return result;
+    }
+
+    RawResult const raw = BuildCoreFromMesh(navMesh, bot->GetPositionX(), bot->GetPositionY(),
+                                            bot->GetPositionZ(), tx, ty, tz);
+    return Finalize(bot, raw);
 }

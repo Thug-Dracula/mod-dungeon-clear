@@ -272,6 +272,23 @@ public:
     }
 };
 
+// Async-pathfinding bookkeeping (DungeonClear.AsyncPathfinding). When the
+// long-path build is offloaded to DcPathWorker, this holds the in-flight
+// jobId (0 = none). EnsureLongPath polls DcPathWorker::TryTake(jobId) each
+// tick and gates resubmission on this being non-zero, guaranteeing exactly
+// one outstanding build per bot. The boss entry + map id the job was built
+// for ride along in the worker's result (checked for staleness on take), so
+// no separate per-bot copy of them is needed here. Cleared on install, on
+// dc-off/skip/boss reset, and on a stale completion.
+class DungeonClearPendingPathJobValue : public ManualSetValue<uint64>
+{
+public:
+    DungeonClearPendingPathJobValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint64>(botAI, 0u, "dungeon clear pending path job")
+    {
+    }
+};
+
 // Index of the segment in the cached LongPath the bot is currently
 // walking toward. Reset to 0 whenever the path target changes.
 // Stored separately from the path so the segment list itself stays

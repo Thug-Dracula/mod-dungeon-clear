@@ -7,8 +7,10 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Config.h"
@@ -28,9 +30,13 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/StridedPathfinder.h"
 #include "Playerbots.h"
 
 namespace
@@ -294,6 +300,7 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear phase")->Get().clear();
         ctx->GetValue<uint32>("dungeon clear long path target")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+        ctx->GetValue<uint64>("dungeon clear pending path job")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
@@ -418,35 +425,148 @@ namespace
         return DungeonClearUtil::IsPartyReady(bot, DC_REST_MIN_HP_PCT, DC_REST_MIN_MP_PCT, maxSpread);
     }
 
-    // Rebuild the cached long-path when the boss entry changes or the
-    // TTL expires. Idempotent — safe to call every Advance tick. Any
-    // rebuild also resets the follower state so we don't index off the
-    // end of a fresh, shorter polyline.
-    void EnsureLongPath(Player* bot, AiObjectContext* ctx, DungeonBossInfo const& target)
+    // Commit a freshly-built path into the cache and reset the follower so we
+    // don't index off the end of a shorter polyline. Shared by the sync and
+    // async install sites.
+    void InstallLongPath(Player* bot, AiObjectContext* ctx, DungeonBossInfo const& target,
+                         ChunkedPathfinder::Result&& built, uint32 now, char const* how)
     {
-        uint32& cachedEntry = ctx->GetValue<uint32>("dungeon clear long path target")->RefGet();
-        uint32& expiresAt = ctx->GetValue<uint32>("dungeon clear long path expires")->RefGet();
-        uint32 const now = getMSTime();
-        bool const targetChanged = cachedEntry != target.entry;
-        bool const expired = expiresAt == 0 || now >= expiresAt;
-        if (!targetChanged && !expired)
-            return;
-
         ChunkedPathfinder::Result& path =
             ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
-        path = ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
-        cachedEntry = target.entry;
-        expiresAt = now + DC_LONG_PATH_TTL_MS;
+        path = std::move(built);
+        ctx->GetValue<uint32>("dungeon clear long path target")->Set(target.entry);
+        ctx->GetValue<uint32>("dungeon clear long path expires")->Set(now + DC_LONG_PATH_TTL_MS);
 
-        size_t firstSegPts = path.segments.empty() ? 0 : path.segments.front().polyline.size();
+        size_t const firstSegPts = path.segments.empty() ? 0 : path.segments.front().polyline.size();
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] path rebuilt -> {} ({}): segs={} firstSegPts={} complete={}{}",
-                 bot->GetName(), target.name, targetChanged ? "boss changed" : "TTL/forced",
+                 bot->GetName(), target.name, how,
                  path.segments.size(), firstSegPts, path.complete,
                  path.reachable ? "" : (" UNREACHABLE: " + path.failureReason));
 
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+    }
+
+    // Rebuild the cached long-path when the boss entry changes or the TTL
+    // expires. Idempotent — safe to call every Advance tick.
+    //
+    // With DungeonClear.AsyncPathfinding ON (default) the heavy navmesh A* runs
+    // on DcPathWorker's background thread so it can't micro-stutter the map
+    // tick. This call then becomes: drain a finished job and install it, or (if
+    // a rebuild is due and nothing is in flight) submit one and keep serving the
+    // current path until it lands. Boss changes briefly clear the cache (no
+    // valid path for the new target exists yet); TTL refreshes keep walking.
+    //
+    // Hand-tuned anchor routes are cheap (snap-only, no A*) and must take
+    // precedence over the LongRange corridor, so when one is registered for the
+    // boss we build synchronously and skip the worker entirely. The worker only
+    // ever runs LongRangePathfinder::BuildCoreFromMesh.
+    void EnsureLongPath(Player* bot, AiObjectContext* ctx, DungeonBossInfo const& target)
+    {
+        uint32& cachedEntry = ctx->GetValue<uint32>("dungeon clear long path target")->RefGet();
+        uint32& expiresAt = ctx->GetValue<uint32>("dungeon clear long path expires")->RefGet();
+        uint64& pendingJob = ctx->GetValue<uint64>("dungeon clear pending path job")->RefGet();
+        uint32 const now = getMSTime();
+
+        bool const asyncEnabled = sConfigMgr->GetOption<bool>("DungeonClear.AsyncPathfinding", true);
+
+        // ---- 1. Drain a completed async build ----
+        if (pendingJob)
+        {
+            LongRangePathfinder::RawResult raw;
+            uint32 jobEntry = 0;
+            uint32 jobMap = 0;
+            if (!DcPathWorker::Instance().TryTake(pendingJob, raw, jobEntry, jobMap))
+                return;  // still building — keep serving the cached path
+
+            pendingJob = 0;
+
+            // Discard a result the world has moved past (boss changed, or the
+            // bot zoned) — installing it would route toward the wrong target.
+            bool const stale = (jobEntry != target.entry) || (jobMap != bot->GetMapId());
+            if (!stale)
+            {
+                ChunkedPathfinder::Result built = LongRangePathfinder::Finalize(bot, raw);
+                if (!built.reachable && !built.startFarFromPoly)
+                {
+                    // LongRange couldn't reach the boss; run the lighter
+                    // anchor/bee-line/arc/spawn-graph fallback tiers on the map
+                    // thread WITHOUT redoing the heavy A* we already offloaded.
+                    built = StridedPathfinder::Build(bot, target.mapId, target.entry,
+                                                     target.x, target.y, target.z, 16, /*skipLongRange*/ true);
+                }
+                InstallLongPath(bot, ctx, target, std::move(built), now, "async");
+                return;
+            }
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] discarded stale async path (built for boss {} map {}, now boss {} map {})",
+                      bot->GetName(), jobEntry, jobMap, target.entry, bot->GetMapId());
+            // fall through to re-evaluate need and maybe resubmit
+        }
+
+        // ---- 2. Is a (re)build due? ----
+        bool const targetChanged = cachedEntry != target.entry;
+        bool const expired = expiresAt == 0 || now >= expiresAt;
+        if (!targetChanged && !expired)
+            return;
+
+        // ---- 3. Anchor route OR sync mode → build inline ----
+        // Anchor-route lookup is O(1)-ish and navmesh-only; a registered route
+        // means the synchronous build is cheap (no A*), so there's nothing to
+        // offload. Sync mode (toggle OFF) always builds inline.
+        Map* map = bot->GetMap();
+        bool hasAnchorRoute = false;
+        if (map)
+            hasAnchorRoute = DungeonClearRouteRegistry::Get(target.mapId, map->GetDifficulty(),
+                                                            target.entry) != nullptr;
+
+        if (!asyncEnabled || hasAnchorRoute)
+        {
+            ChunkedPathfinder::Result built =
+                ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
+            InstallLongPath(bot, ctx, target, std::move(built), now,
+                            !asyncEnabled ? "sync" : "sync (anchor route)");
+            return;
+        }
+
+        // ---- 4. Async submit ----
+        // On a true boss change there is no valid path for the new target, so
+        // clear the cache + follower (Advance stalls briefly until the job
+        // lands). On a TTL-only refresh leave the cache walking.
+        if (targetChanged)
+        {
+            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
+            cachedEntry = target.entry;   // stop re-detecting "boss changed" every tick
+            expiresAt = 0;                // mark "no usable path yet"
+            ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
+            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+        }
+
+        // One in-flight job per bot; nothing to do until it returns.
+        if (pendingJob)
+            return;
+
+        // Pin the navmesh alive across the worker round-trip. If the map has no
+        // navmesh, fall back to a synchronous build so the bot never wedges.
+        std::shared_ptr<dtNavMesh> meshRef =
+            map ? map->GetMapCollisionData().GetMMapNavMeshSharedPtr() : std::shared_ptr<dtNavMesh>();
+        if (!meshRef)
+        {
+            ChunkedPathfinder::Result built =
+                ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
+            InstallLongPath(bot, ctx, target, std::move(built), now, "sync (no navmesh)");
+            return;
+        }
+
+        pendingJob = DcPathWorker::Instance().Submit(
+            bot->GetMapId(), target.entry, bot->GetGUID(), std::move(meshRef),
+            bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            target.x, target.y, target.z);
+
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] async path submitted job={} -> {} ({})",
+                  bot->GetName(), pendingJob, target.name, targetChanged ? "boss changed" : "TTL");
     }
 
     // Try a small offset move when the bot wedges on geometry off the

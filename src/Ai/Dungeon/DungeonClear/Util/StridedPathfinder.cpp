@@ -286,7 +286,7 @@ namespace
 }
 
 StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, uint32 bossEntry, float tx, float ty,
-                                                   float tz, uint32 maxStrides)
+                                                   float tz, uint32 maxStrides, bool skipLongRange)
 {
     Result result;
     if (!bot || !bot->IsInWorld())
@@ -383,6 +383,11 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
     // internally too, which is harmless. On failure (no navmesh, target
     // off-mesh, immediate static obstruction at the start) we fall through to
     // the hardened bee-line / arc / spawn-graph stride tiers below.
+    //
+    // skipLongRange: the async caller already ran this exact LongRange build on
+    // the worker thread and got "unreachable", so re-running it here would just
+    // pay the heavy A* again on the map thread. Skip straight to the fallback.
+    if (!skipLongRange)
     {
         LongRangePathfinder::Result lr = LongRangePathfinder::Build(bot, tx, ty, tz);
         if (lr.reachable && !lr.segments.empty())

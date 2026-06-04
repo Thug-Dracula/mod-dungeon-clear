@@ -47,8 +47,13 @@ public:
 
     // Build a chained path from the bot's current position to the boss
     // target. Caller (Advance) walks each segment sequentially.
+    //
+    // skipLongRange skips the LongRangePathfinder primary tier (anchor route +
+    // strided fallback only). The async path uses this on the map thread after
+    // the offloaded LongRangePathfinder build already came back unreachable, so
+    // we don't redo that heavy A* synchronously just to reach the fallback.
     static Result Build(Player* bot, uint32 mapId, uint32 bossEntry, float tx, float ty, float tz,
-                        uint32 maxStrides = 16);
+                        uint32 maxStrides = 16, bool skipLongRange = false);
 
     // Cheap reachability check. Equivalent to Build(...).reachable but
     // exits as soon as one usable segment is produced. Used by the stall

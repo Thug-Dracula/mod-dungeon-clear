@@ -64,7 +64,17 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+
+namespace
+{
+    // Completed-but-uncollected async path results older than this are swept
+    // from DcPathWorker's mailbox. Far longer than a normal poll cadence (the
+    // owning bot drains its result on its very next AI tick), so this only ever
+    // catches results orphaned by a logout / dc-off mid-build.
+    constexpr uint32 DC_ASYNC_PATH_RESULT_TTL_MS = 30 * 1000;
+}
 
 namespace
 {
@@ -118,6 +128,16 @@ public:
                            "registries of mod-playerbots.");
     }
 
+    // Stop + join the async pathfinding worker before maps unload (this fires
+    // during the world shutdown sequence, ahead of OnAfterUnloadAllMaps). After
+    // join, the worker's queue and mailbox are cleared, releasing every navmesh
+    // shared_ptr it held — so no worker thread can touch a map being torn down.
+    // Idempotent and safe even if the worker was never started.
+    void OnShutdown() override
+    {
+        DcPathWorker::Instance().Stop();
+    }
+
 private:
     bool _registered = false;
 };
@@ -167,6 +187,10 @@ public:
     void OnPlayerbotUpdate(uint32 /*diff*/) override
     {
         DungeonClearUtil::ReapOrphanedFollows();
+        // Drop async path results that were never collected (the bot logged out
+        // or toggled dc off before polling). Bounds the mailbox; cheap no-op
+        // when empty.
+        DcPathWorker::Instance().Sweep(DC_ASYNC_PATH_RESULT_TTL_MS);
     }
 };
 
