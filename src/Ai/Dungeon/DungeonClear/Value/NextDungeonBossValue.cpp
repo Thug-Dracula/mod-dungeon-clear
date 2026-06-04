@@ -65,9 +65,32 @@ namespace
         return it != liveness.end() ? it->second : BossLiveState{false, false};
     }
 
+    // From a same-tier candidate list (all in encounter-index order), pick the
+    // first boss the bounded reachability probe confirms reachable, else the
+    // lowest-index one. A lower-index boss walled off behind an unopened event
+    // shouldn't wedge the bot when a reachable boss sits right after it; when
+    // the probe is unsure about all of them (the common post-kill case) we fall
+    // back to the lowest-index boss.
+    //
+    // Do NOT re-rank by straight-line distance: the route to the next boss
+    // often loops away from it, so a later boss reads as nearer and the target
+    // jumps ahead multiple bosses.
+    std::optional<DungeonBossInfo> FirstReachableOrFront(
+        Player* bot, std::vector<DungeonBossInfo> const& cands)
+    {
+        if (cands.empty())
+            return std::nullopt;
+        for (DungeonBossInfo const& info : cands)
+            if (DungeonClearUtil::IsReachable(bot, info.x, info.y, info.z))
+                return info;
+        return cands.front();  // lowest index; reachability unconfirmed
+    }
+
     // From a same-tier candidate list (all currently fightable, or all
     // not-yet-spawned), pick the boss to head toward. `stickyEntry` is the boss
-    // chosen on the previous computation.
+    // chosen on the previous computation; `stickyEncounterIndex` is its DBC
+    // encounter index when `haveStickyIndex` (the sticky boss is still known in
+    // the "dungeon bosses" list, even if it's now dead and absent from `cands`).
     //
     // COMMIT-AND-HOLD. Once we've committed to a boss we return it unchanged
     // for as long as it remains in this candidate tier — no per-tick re-ranking
@@ -81,33 +104,23 @@ namespace
     // despawned — all handled by the caller's partitioning, so a gone boss
     // simply isn't here to match.
     //
-    // The initial pick (no valid commit) walks the candidates in DBC encounter
-    // order — which is the order they arrive in here, since the caller builds
-    // `cands` by iterating the encounter-index-sorted "dungeon bosses" list —
-    // and takes the first one. This advances strictly to the next boss in
-    // numerical order rather than to whichever boss happens to be physically
-    // nearest: when boss N dies and the commit releases, the bot heads to N+1,
-    // not to a closer-but-later N+2.
+    // ADVANCE-FORWARD. When the commit releases (the boss we were heading to is
+    // gone), we head to the next boss *after* it in encounter order, not to the
+    // lowest-index survivor. Snapping to the lowest index is correct only when
+    // the party clears strictly from boss #1; a party that started mid-list
+    // (e.g. via a manual `dungeon clear boss #3` selection, or by skipping
+    // early bosses) would otherwise walk back to boss #1 on every kill. We take
+    // the candidates with encounter index strictly greater than the boss we
+    // just left and pick within them; only if nothing remains ahead do we wrap
+    // to the full set to mop up any lower-index bosses left behind.
     //
-    // Do NOT re-rank by straight-line distance here. Distance ordering is what
-    // made the target jump ahead multiple bosses — the route to the next boss
-    // often loops away from it, so a later boss reads as nearer. It also
-    // interacts badly with the reachability probe below: IsReachable is a
-    // bounded 2-stride check that reads false for any boss more than a couple
-    // strides off (i.e. every remaining boss right after a kill), so the
-    // fallback path runs almost every fresh pick — and a distance-sorted
-    // fallback front() is precisely the nearest boss, reintroducing the jump.
-    //
-    // Reachability is kept only as a forward-looking preference: among the
-    // in-order candidates, take the first the bounded probe confirms reachable,
-    // so a lower-index boss walled off behind an unopened event doesn't wedge
-    // the bot when a reachable boss sits right after it. When the probe is
-    // unsure about all of them (the common post-kill case) we fall back to the
-    // lowest-index boss. A boss that turns out to be unreachable after commit
-    // is handled by Advance's stall/skip path, not by silently re-targeting.
+    // A boss that turns out to be unreachable after commit is handled by
+    // Advance's stall/skip path, not by silently re-targeting.
     std::optional<DungeonBossInfo> PickTarget(Player* bot,
                                               std::vector<DungeonBossInfo>& cands,
-                                              uint32 stickyEntry)
+                                              uint32 stickyEntry,
+                                              uint32 stickyEncounterIndex,
+                                              bool haveStickyIndex)
     {
         if (cands.empty())
             return std::nullopt;
@@ -118,13 +131,20 @@ namespace
                 if (info.entry == stickyEntry)
                     return info;
 
-        // Fresh selection, in encounter-index order: first reachable, else the
-        // lowest-index boss overall.
-        for (DungeonBossInfo const& info : cands)
-            if (DungeonClearUtil::IsReachable(bot, info.x, info.y, info.z))
-                return info;
+        // Commit released: prefer the next boss after the one we just left.
+        if (haveStickyIndex)
+        {
+            std::vector<DungeonBossInfo> ahead;
+            ahead.reserve(cands.size());
+            for (DungeonBossInfo const& info : cands)
+                if (info.encounterIndex > stickyEncounterIndex)
+                    ahead.push_back(info);
+            if (std::optional<DungeonBossInfo> pick = FirstReachableOrFront(bot, ahead))
+                return pick;
+        }
 
-        return cands.front();  // lowest index; reachability unconfirmed
+        // Fresh selection (no prior commit) or wrap-around (nothing ahead).
+        return FirstReachableOrFront(bot, cands);
     }
 }
 
@@ -235,9 +255,25 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     // chosen boss until it leaves the candidate set (see PickTarget).
     uint32 const stickyEntry = AI_VALUE(uint32, "dungeon clear sticky boss");
 
-    std::optional<DungeonBossInfo> pick = PickTarget(bot, alive, stickyEntry);
+    // Resolve the committed boss's encounter index from the full boss list (it
+    // stays here even after the boss dies and drops out of the candidate
+    // tiers), so PickTarget can advance to the next boss after it rather than
+    // snapping back to the lowest-index survivor when the commit releases.
+    uint32 stickyEncounterIndex = 0;
+    bool haveStickyIndex = false;
+    if (stickyEntry)
+        for (DungeonBossInfo const& info : bosses)
+            if (info.entry == stickyEntry)
+            {
+                stickyEncounterIndex = info.encounterIndex;
+                haveStickyIndex = true;
+                break;
+            }
+
+    std::optional<DungeonBossInfo> pick =
+        PickTarget(bot, alive, stickyEntry, stickyEncounterIndex, haveStickyIndex);
     if (!pick)
-        pick = PickTarget(bot, missing, stickyEntry);
+        pick = PickTarget(bot, missing, stickyEntry, stickyEncounterIndex, haveStickyIndex);
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every
