@@ -4,54 +4,91 @@
 # mod-dungeon-clear configuration
 ########################################
 #
-# Dungeon clearing itself is controlled at runtime with the
-# `.dc on|off|skip|status|bosses` command or the in-party chat keywords
-# (`dc on`, `dungeon clear on`, …) — those need no config.
-#
-# Behavioural settings below, then the DungeonClear log-channel settings.
+# Clearing is driven at runtime with `.dc on|off|skip|status|bosses` or the
+# in-party chat keywords (`dc on`, `dungeon clear on`, …) — no config needed.
+# The settings below tune behaviour, debugging, and pathing.
+
+########################################
+# GENERAL SETTINGS
+########################################
 
 #
 #    DungeonClear.PreventBotRelease
-#        When enabled (1, default), playerbot characters do NOT auto-release
-#        their spirit to the graveyard when they die — they stay dead (a corpse
-#        on the ground) until resurrected by a player/party rez, a self-resurrect
-#        (soulstone, Reincarnation, …), or summon-and-revive. This overrides
-#        mod-playerbots' stock "auto release" behaviour for ALL bots, not just
-#        ones running a dungeon clear.
-#        Set to 0 to restore the stock behaviour (bots release and corpse-run).
-#        Honoured live on `.reload config`.
-#        Note: the anti-stuck repop safety net (a dead bot wedged in geometry or
-#        falling out of the world) is left intact regardless of this setting.
+#        1 (default): dead bots stay as a corpse until resurrected (rez,
+#        soulstone, summon-and-revive) instead of auto-releasing to the
+#        graveyard. Applies to ALL bots. 0 restores stock auto-release.
+#        Honoured live on `.reload config`. The anti-stuck repop safety net
+#        (dead bot wedged in geometry / out of world) stays active either way.
 #
-#        Default: 1 (bots stay dead)
+#        Default: 1
 #
 
 DungeonClear.PreventBotRelease = 1
 
 #
-#    DungeonClear.PathCenterEnable
-#        When enabled (1, default), routes built for dungeon-clear navigation
-#        are nudged toward the MIDDLE of the corridor they run through, instead
-#        of the taut wall-hugging line Detour's path smoothing produces by
-#        default. Centring keeps bots off walls and ledge edges (fewer falls)
-#        and away from wall-lining decorations they would otherwise clip.
-#        Every nudged point is re-validated on the navmesh and LOS-screened, so
-#        disabling this only reverts to the older wall-hugging behaviour.
-#        Honoured live on `.reload config`.
+#    DungeonClear.LootMinQuality
+#        Minimum item rarity worth looting. Corpses holding only items below
+#        this floor are skipped without a detour. Quest items always qualify.
+#        A floor above 0 also skips money-only corpses, trading trash gold for
+#        a faster clear.
+#            0 = Poor/grey (loot everything, incl. trash coin — stock)
+#            1 = Common (white)   2 = Uncommon (green)
+#            3 = Rare (blue)      4 = Epic (purple)
 #
-#        Default: 1 (centre routes)
+#        Default: 0
+#
+
+DungeonClear.LootMinQuality = 0
+
+########################################
+# DEBUGGING SETTINGS
+########################################
+#
+# These keys merge into AzerothCore's global logging config for the dedicated
+# DungeonClear channel (playerbots.dungeonclear).
+
+#
+#    Appender.DungeonClear
+#        Writes the channel to its own file. Format: Type,LogLevel,Flags,File
+#        Type 2 = File. LogLevel 5 = Debug, 6 = Trace.
+#
+
+Appender.DungeonClear=2,5,0,DungeonClear.log
+
+#
+#    Logger.playerbots.dungeonclear
+#        Routes the channel. Format: LogLevel,AppenderList
+#        4 (Info, default): milestones only. Raise to 5 (Debug) or 6 (Trace)
+#        to diagnose pathfinding/stall issues.
+#
+
+Logger.playerbots.dungeonclear=4,Console DungeonClear
+
+########################################
+# ADVANCED PATHING SETTINGS
+########################################
+#
+# WARNING: changing these can break navigation. They are mostly for testing —
+# leave them at their defaults unless you know what you're doing.
+
+#
+#    DungeonClear.PathCenterEnable
+#        1 (default): nudge routes toward the middle of corridors instead of
+#        Detour's wall-hugging line, keeping bots off walls and ledge edges.
+#        Nudged points are re-validated on-mesh and LOS-screened. 0 reverts to
+#        the wall-hugging line. Honoured live on `.reload config`.
+#
+#        Default: 1
 #
 
 DungeonClear.PathCenterEnable = 1
 
 #
 #    DungeonClear.PathWallClearance
-#        Target distance, in yards, to keep route points away from the nearest
-#        wall when centring (see PathCenterEnable). In corridors narrower than
-#        twice this value the route settles on the exact middle instead. In
-#        open rooms no wall is within range, so nothing moves.
-#        Larger values hug walls less but cause more LOS truncations in tight
-#        spaces; smaller values stay closer to the original line.
+#        Target distance (yards) to keep route points off the nearest wall when
+#        centring. Corridors narrower than twice this settle on the exact
+#        middle. Larger values hug walls less but cause more LOS truncations in
+#        tight spaces.
 #
 #        Default: 3.0
 #
@@ -60,9 +97,8 @@ DungeonClear.PathWallClearance = 3.0
 
 #
 #    DungeonClear.PathCenterMaxPush
-#        Hard cap, in yards, on how far any single route point may be displaced
-#        by centring. Prevents a bad wall normal from flinging a point across a
-#        thin wall before the on-mesh / LOS validation can reject it.
+#        Hard cap (yards) on how far centring may displace a single point,
+#        preventing a bad wall normal from flinging a point through a thin wall.
 #
 #        Default: 3.0
 #
@@ -71,66 +107,11 @@ DungeonClear.PathCenterMaxPush = 3.0
 
 #
 #    DungeonClear.PathCenterSmoothIters
-#        Number of Laplacian (neighbour-averaging) smoothing passes applied
-#        AFTER centring. The per-point push is independent and the nearest wall
-#        can flip sides between adjacent points, leaving a sawtooth the spline
-#        follower renders as stutter; these passes pull it back into a flowing
-#        line. Endpoints are pinned and every result is re-validated on-mesh.
-#        0 disables smoothing (raw centred line); higher values are smoother but
-#        relax centring slightly at sharp bends. 2 is a good balance.
+#        Laplacian smoothing passes applied after centring to remove sawtooth
+#        stutter. 0 disables; higher is smoother but relaxes centring at sharp
+#        bends. Endpoints pinned, results re-validated on-mesh.
 #
 #        Default: 2
 #
 
 DungeonClear.PathCenterSmoothIters = 2
-
-#
-#    DungeonClear.LootMinQuality
-#        Minimum item rarity a corpse must hold for a dungeon-clear bot to bother
-#        walking to and looting it. Corpses whose only contents fall below this
-#        floor are skipped immediately — the bot never detours, instead of
-#        walking over and discovering the loot isn't worth taking (or can't be
-#        taken) only after camping it out. Quest and quest-starter items always
-#        qualify regardless of this setting.
-#
-#        Values follow the standard item-quality scale:
-#            0 = Poor (grey)    — loot everything, including grey items AND the
-#                                 coppers on every trash mob (stock behaviour)
-#            1 = Common (white)
-#            2 = Uncommon (green)
-#            3 = Rare (blue)
-#            4 = Epic (purple)
-#
-#        A floor above 0 also means a corpse carrying only money (no qualifying
-#        item) is skipped, so raising the floor genuinely cuts the number of
-#        stops — and the gold from trash — in exchange for a faster clear. Set 0
-#        to keep the original "loot it all" behaviour.
-#
-#        Default: 0
-#
-
-DungeonClear.LootMinQuality = 0
-
-#
-# The settings below are for the dedicated DungeonClear log channel
-# (playerbots.dungeonclear). These keys are merged into the global logging
-# config, so they configure AzerothCore's logging system directly.
-
-#
-#    Appender.DungeonClear
-#        Writes the DungeonClear log channel to its own file.
-#        Format: Type,LogLevel,Flags,File
-#        Type 2 = File. LogLevel 5 = Debug, 6 = Trace.
-#
-
-Appender.DungeonClear=2,5,0,DungeonClear.log
-
-#
-#    Logger.playerbots.dungeonclear
-#        Routes the DungeonClear channel. Format: LogLevel,AppenderList
-#        Default 4 (Info): milestone/state-change lines only; routine per-tick
-#        DEBUG (5) is suppressed. Raise to 5 (Debug) or 6 (Trace) to diagnose
-#        pathfinding/stall issues, then route to the DungeonClear appender.
-#
-
-Logger.playerbots.dungeonclear=4,Console DungeonClear
