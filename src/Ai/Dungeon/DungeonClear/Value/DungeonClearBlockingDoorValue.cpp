@@ -9,6 +9,7 @@
 #include <limits>
 
 #include "GameObject.h"
+#include "Log.h"
 #include "Map.h"
 #include "Player.h"
 #include "SharedDefines.h"
@@ -21,7 +22,16 @@ namespace
     // this distance we don't care — the chunked pathfinder will rebuild
     // by the time the bot gets there and the value will re-evaluate.
     constexpr float DOOR_LOOK_AHEAD = 80.0f;
-    constexpr float DOOR_CORRIDOR_WIDTH = 5.0f;   // 2D radius from segment centerline
+    // 2D radius from the walked centerline within which a door counts as
+    // "on the corridor". This is NOT the doorway width — it is the slack
+    // between the smoothed route and the door's GO origin. A door's origin
+    // sits at its hinge/jamb, which on a wide gateway (e.g. a grand stone
+    // temple door) can be several yards to the side of the line the bot
+    // actually walks through. At 5yd those wide gates slipped past detection
+    // and the tank strolled through the closed doorway "as if it weren't
+    // there"; 8yd catches the jamb without reaching across a dungeon wall
+    // into a parallel corridor (stone walls are thicker than that gap).
+    constexpr float DOOR_CORRIDOR_WIDTH = 8.0f;
 
     float DistSqToSegment2D(float px, float py, float ax, float ay, float bx, float by)
     {
@@ -167,7 +177,20 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
                 minDistSq = d2;
         }
         if (minDistSq > widthSq)
+        {
+            // Closed door near the bot but off the walked centerline. This is
+            // the prime suspect when the tank walks through a shut door "as if
+            // it weren't there": the route really does pass through it but the
+            // door's GO origin lands outside the corridor band. Log how far off
+            // it was so the band can be retuned from a live capture instead of
+            // guessing.
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] blocking-door: closed door {} (entry {}) {:.1f}yd off corridor "
+                      "(band {:.1f}yd), {:.1f}yd from bot -> NOT flagged",
+                      bot->GetName(), go->GetGUID().ToString(), info->entry,
+                      std::sqrt(minDistSq), DOOR_CORRIDOR_WIDTH, std::sqrt(distFromBotSq));
             continue;
+        }
 
         if (distFromBotSq < bestDistFromBotSq)
         {
@@ -175,5 +198,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
             best = go->GetGUID();
         }
     }
+
+    if (!best.IsEmpty())
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] blocking-door: flagged {} as corridor-blocking",
+                  bot->GetName(), best.ToString());
     return best;
 }

@@ -110,15 +110,15 @@ namespace
     // corridor half-width, so this stays inside that band.
     constexpr float DC_DOOR_STOP_DISTANCE = 4.0f;
 
-    // Once parked at a blocking door, try to open it the way a player would:
-    // interact with GameObject::Use (the exact path a client right-click takes)
-    // — but ONLY when the bot is actually entitled to open it, as decided by
-    // BotCanOpenDoorLikePlayer (plain click-door, or it holds the key / has the
-    // required skill). The raw GameObject::Use door branch toggles the GO state
-    // with no lock check, so calling it unconditionally force-opens keyed and
-    // encounter doors the player has no business opening; the entitlement gate
-    // is what keeps us honest. Doors we can't open legitimately are left shut
-    // and we wait for the human. Flip to false to never auto-open anything.
+    // Once parked at a blocking door, open it with GameObject::Use (the exact
+    // path a client right-click takes) — but ONLY when the bot is actually
+    // entitled to, as decided by BotCanOpenDoorLikePlayer: a real lock the bot
+    // satisfies (holds the key / has the lockpicking skill). The raw
+    // GameObject::Use door branch toggles the GO state with no lock and no
+    // script/event check, so calling it on the wrong door desyncs the
+    // encounter; the entitlement gate is what keeps us honest. Lock-free and
+    // script/encounter doors are left shut and we wait for the human. Flip to
+    // false to never auto-open anything.
     constexpr bool DC_ATTEMPT_DOOR_OPEN = true;
 
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
@@ -338,19 +338,27 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
     }
 
-    // True if a player standing where the bot stands could open this door by
-    // interacting with it — i.e. it is a plain click-to-open door, or it is
+    // True only when the bot is genuinely ENTITLED to open this door: it is
     // lock-gated and the bot satisfies the lock (holds the key item, or has the
-    // required skill such as lockpicking). Returns false for the doors a player
-    // can't click open: those flagged not-selectable (driven by instance/boss
-    // scripting — encounter gates, "kill the boss" doors) and locked doors the
-    // bot has no key/skill for.
+    // required skill such as lockpicking). Everything else returns false and is
+    // left for a human / the instance script to open.
     //
-    // This is the gate that keeps the tank from force-opening keyed or encounter
-    // doors it has no business opening: GameObject::Use's door branch toggles
-    // the GO state with no lock check, so it must only ever be called on a door
-    // this returns true for. Mirrors the core lock logic in Spell::CanOpenLock /
-    // OpenLootAction::CanOpenLock.
+    // This is the gate that keeps the tank from force-opening doors it has no
+    // business opening: GameObject::Use's door branch toggles the GO state with
+    // NO lock and NO script/event check, so calling it on the wrong door
+    // desyncs the encounter (e.g. popping a boss seal open without running the
+    // event). It must only ever be called on a door this returns true for.
+    // Mirrors the core lock logic in Spell::CanOpenLock / OpenLootAction.
+    //
+    // CRITICAL: a lock-free door (lockId == 0) is NOT treated as "a plain door,
+    // click opens it" any more. In an instance a closed lock-free door is
+    // almost always script/encounter-controlled — the Uldaman Ironaya seal
+    // (GO 124372) and similar gates carry no lock and no NOT_SELECTABLE flag
+    // until the script opens them, so they are indistinguishable from a mundane
+    // door by template flags alone. The old `!lockId -> true` shortcut let the
+    // tank force the seal open before its event ran. The only doors we force
+    // are ones with a real lock we hold the key/skill for; a plain closed door
+    // makes the tank park and ask the human, which is the safe default.
     bool BotCanOpenDoorLikePlayer(Player* bot, GameObject* go)
     {
         if (!bot || !go)
@@ -358,14 +366,16 @@ namespace
         GameObjectTemplate const* info = go->GetGOInfo();
         if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
             return false;
-        // Not-selectable doors can't be right-clicked by a player at all; they
-        // are opened by the instance/boss scripting. Never force them.
-        if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
+        // Not-selectable / can't-interact doors are driven purely by the
+        // instance/boss scripting (encounter gates, "kill the boss" doors).
+        // A player can't click them; never force them.
+        if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE) ||
+            go->HasGameObjectFlag(GO_FLAG_INTERACT_COND))
             return false;
 
         uint32 const lockId = info->GetLockId();
         if (!lockId)
-            return true;            // no requirement: a plain door, click opens it
+            return false;           // lock-free: treat as script/encounter door
 
         LockEntry const* lock = sLockStore.LookupEntry(lockId);
         if (!lock)
