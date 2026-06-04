@@ -576,6 +576,22 @@ InstanceScript* DungeonClearUtil::GetInstanceScript(Player* bot)
     return im ? im->GetInstanceScript() : nullptr;
 }
 
+float DungeonClearUtil::RestMinHpPct()
+{
+    // 90% is our "topped up enough to pull" ceiling. Clamp it to the level bots
+    // actually eat back up to (AiPlayerbot.AlmostFullHealth, default 85) so the
+    // gate never waits on HP a bot won't restore on its own.
+    return std::min(90.0f, static_cast<float>(sPlayerbotAIConfig.almostFullHealth));
+}
+
+float DungeonClearUtil::RestMinMpPct()
+{
+    // 75% ceiling, clamped to the level bots actually drink back up to
+    // (AiPlayerbot.HighMana, default 65). Bots stop drinking at HighMana, so a
+    // higher gate would strand the tank waiting on slow natural mana regen.
+    return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
+}
+
 bool DungeonClearUtil::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread)
 {
     if (!bot)
@@ -1229,10 +1245,11 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
         // still reporting "En route" instead of "Waiting on".
         else if (float const maxSpread = sConfigMgr->GetOption<float>(
                      "DungeonClear.PartyMaxSpread", 25.0f);
-                 !DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, maxSpread))
+                 !DungeonClearUtil::IsPartyReady(bot, RestMinHpPct(), RestMinMpPct(), maxSpread))
         {
             stateStr = "resting";
-            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, maxSpread);
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, RestMinHpPct(),
+                                                                            RestMinMpPct(), maxSpread);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else

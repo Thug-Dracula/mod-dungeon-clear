@@ -71,8 +71,8 @@ namespace
     constexpr float DC_ENGAGE_RANGE = 22.0f;
     constexpr float DC_ENGAGE_CONE_RANGE = 35.0f;
     constexpr float DC_ENGAGE_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;
-    constexpr float DC_REST_MIN_HP_PCT = 90.0f;
-    constexpr float DC_REST_MIN_MP_PCT = 75.0f;
+    // Rest-gate HP/mana thresholds live in DungeonClearUtil::RestMin{Hp,Mp}Pct(),
+    // which clamp to mod-playerbots' drink/eat targets (see DungeonClearUtil.h).
     // Max distance the tank may lead a party member before it holds the advance
     // to let them catch up. Configurable; see DungeonClear.PartyMaxSpread. Must
     // stay aligned with the same key's default in DungeonClearTriggers.cpp.
@@ -437,7 +437,8 @@ namespace
     {
         float const maxSpread = sConfigMgr->GetOption<float>(
             "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
-        return DungeonClearUtil::IsPartyReady(bot, DC_REST_MIN_HP_PCT, DC_REST_MIN_MP_PCT, maxSpread);
+        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(),
+                                              DungeonClearUtil::RestMinMpPct(), maxSpread);
     }
 
     // Commit a freshly-built path into the cache and reset the follower so we

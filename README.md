@@ -108,6 +108,66 @@ It touches **no** playerbots file. The trade-off: it couples to playerbots'
 internal class shape, so an upstream rename of those registries surfaces as a
 **compile error** here, never a silent runtime failure.
 
+## mod-playerbots interaction
+
+Dungeon clear sits on top of mod-playerbots and inherits a few of its settings.
+You usually don't need to touch them, but it helps to know how they affect a run.
+
+### Resting between pulls
+
+Between pulls the tank holds the advance until the whole party has caught up and
+recovered — every living member must be back above an HP and a mana threshold
+before the next pull. **Crucially, dungeon clear does not do its own eating or
+drinking.** Recovery is mod-playerbots' job: bots eat back up to
+`AiPlayerbot.AlmostFullHealth` (default `85`) and drink back up to
+`AiPlayerbot.HighMana` (default `65`), then stop.
+
+So the rest gate can only ever wait for as much HP/mana as the bots will
+actually restore. To avoid stranding the tank waiting on HP or mana a bot will
+*never* voluntarily drink/eat back (it would have to crawl up on slow natural
+regen instead), the gate's thresholds are **clamped to those two playerbots
+settings**:
+
+- mana gate = `min(75, AiPlayerbot.HighMana)`
+- HP gate   = `min(90, AiPlayerbot.AlmostFullHealth)`
+
+With stock playerbots config that's a 65% mana / 85% HP gate — exactly where the
+bots stop drinking and eating, so a pull resumes the moment the party finishes
+resting, with no dead wait.
+
+This clamp is automatic; **no config change is required.** If you *want* the tank
+to pull at fuller bars, raise the playerbots thresholds and the gate follows them
+up to its 75% / 90% ceiling. For example, for near-full mana before each pull:
+
+```
+AiPlayerbot.HighMana         = 85    # bots drink to 85%, gate waits to 75%
+AiPlayerbot.AlmostFullHealth = 90    # bots eat to 90%, gate waits to 90%
+```
+
+> ⚠️ The older advice to raise `AiPlayerbot.HighMana` was a **workaround** for a
+> bug where the gate hardcoded 75% mana while bots only drank to 65%, so a bot at
+> 70% would sit forever. That gap is now closed by the clamp above — raising the
+> setting is purely optional tuning, not a fix.
+
+Bot-to-bot spread (how far the tank may lead a member before holding to let it
+catch up) is controlled separately by `DungeonClear.PartyMaxSpread` in this
+module's own config, not by mod-playerbots.
+
+### Other inherited mod-playerbots settings
+
+A few playerbots ranges are reused as-is, so retuning them also shifts dungeon
+clear behaviour:
+
+- `AiPlayerbot.LootDistance` — reach for tank-side looting along the route.
+- `AiPlayerbot.ReactDistance` — pull range is derived from this (`× 3`).
+- `AiPlayerbot.SightDistance` — far-target scan radius is derived from this.
+- `AiPlayerbot.FollowDistance` — how closely followers trail the tank.
+- `AiPlayerbot.ReactDelay` / `AiPlayerbot.MaxWaitForMove` — bound the action's
+  per-tick check/move pacing.
+
+Loot rarity for the tank's own pickups is filtered by `DungeonClear.LootMinQuality`
+in this module's config, independent of mod-playerbots.
+
 ## License
 
 AGPL-3.0-or-later (inherited from mod-playerbots). See `LICENSE`.

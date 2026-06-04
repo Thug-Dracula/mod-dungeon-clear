@@ -97,11 +97,25 @@ public:
     static float BossEngageRange(Player* bot, AiObjectContext* ctx,
                                  DungeonBossInfo const& boss, float staticRange);
 
+    // The HP/mana percentages the between-pulls rest gate (IsPartyReady) holds
+    // for. These are NOT fixed: they are clamped to mod-playerbots' own drink/eat
+    // stop thresholds (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana). A
+    // bot only eats back up to AlmostFullHealth and drinks back up to HighMana,
+    // then stops; requiring MORE than that would strand the tank waiting on slow
+    // natural regen for mana/HP the bot will never voluntarily restore. We take
+    // the lower of our own "good enough to pull" ceiling and the bot's recover
+    // target, so the gate is always reachable by resting regardless of how the
+    // server's AiPlayerbot.* thresholds are configured. See the README's
+    // "mod-playerbots interaction" section.
+    static float RestMinHpPct();
+    static float RestMinMpPct();
+
     // Returns true when the party has caught up and recovered enough to pull again:
     //  - every living party member on the bot's map has HP% >= minHpPct,
     //  - every living mana-using party member has mana% >= minMpPct,
     //  - every living member is within maxSpread yards of the bot.
     // Dead members are not blocking — the party-died trigger handles them.
+    // Callers pass RestMinHpPct()/RestMinMpPct() for the recovery thresholds.
     static bool IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread);
 
     // Returns true if any LIVING bot party member on the bot's map (excluding
