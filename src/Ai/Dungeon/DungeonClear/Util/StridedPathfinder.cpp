@@ -154,12 +154,12 @@ namespace
         losInput.push_back(G3D::Vector3(cx, cy, cz));
         losInput.insert(losInput.end(), pts.begin() + 1, pts.end());
 
-        // Centre the wall-hugging engine smoothing toward the corridor middle
-        // (start point pinned, stride endpoint pinned). Done BEFORE the LOS
-        // screen so the verified line is the centred one — identical handling
-        // to the primary long-range producer.
-        CorridorCenter::Center(bot, losInput, CorridorCenter::LoadParams());
-
+        // NOTE: corridor centering is DEFERRED to Build's accept path, which
+        // centres only the one stride it actually keeps instead of every
+        // rejected tier's probe (the direct/bee-line/arc/spawn-graph cascade
+        // could otherwise run findDistanceToWall + VMAP raycasts on a dozen
+        // throwaway probes). So the LOS screen below verifies the raw
+        // engine-smoothed line; Build re-screens after centring the winner.
         // The candidate corridor is everything past the (pinned) start point.
         std::vector<G3D::Vector3> candidate(losInput.begin() + 1, losInput.end());
 
@@ -458,6 +458,27 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                       "(dist remaining {:.0f}); returning partial route",
                       bossEntry, stride, result.segments.size(), distToTarget);
             return result;
+        }
+
+        // Centre the CHOSEN stride's wall-hugging engine smoothing toward the
+        // corridor middle — deferred here from TryProbe so the raycast-heavy
+        // findDistanceToWall / VMAP work runs once for the stride we keep, not
+        // for every rejected tier. Pin the start (cx,cy,cz) and the stride
+        // endpoint; CorridorCenter never moves index 0 or the last point. Done
+        // BEFORE probeEnd/stepLen are read so any LOS-truncation from a push is
+        // reflected in the endpoint — identical ordering to the old inline
+        // centre-then-truncate. If centering somehow breaks even the first hop
+        // (it self-validates each push, so this is a backstop), keep the already
+        // LOS-clean un-centred probe so the stride is never worse than before.
+        {
+            std::vector<G3D::Vector3> centred;
+            centred.reserve(probePoints.size() + 1);
+            centred.push_back(G3D::Vector3(cx, cy, cz));
+            centred.insert(centred.end(), probePoints.begin(), probePoints.end());
+            CorridorCenter::Center(bot, centred, CorridorCenter::LoadParams());
+            size_t const cleanPts = LosCleanPrefixCount(bot, centred);
+            if (cleanPts >= 2)
+                probePoints.assign(centred.begin() + 1, centred.begin() + cleanPts);
         }
 
         // TryProbe guarantees at least one point on success.
