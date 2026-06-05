@@ -86,14 +86,14 @@ namespace
         return cands.front();  // lowest index; reachability unconfirmed
     }
 
-    // From a same-tier candidate list (all currently fightable, or all
-    // not-yet-spawned), pick the boss to head toward. `stickyEntry` is the boss
-    // chosen on the previous computation; `stickyEncounterIndex` is its DBC
-    // encounter index when `haveStickyIndex` (the sticky boss is still known in
-    // the "dungeon bosses" list, even if it's now dead and absent from `cands`).
+    // From the encounter-ordered candidate list, pick the boss to head toward.
+    // `stickyEntry` is the boss chosen on the previous computation;
+    // `stickyEncounterIndex` is its DBC encounter index when `haveStickyIndex`
+    // (the sticky boss is still known in the "dungeon bosses" list, even if it's
+    // now dead and absent from `cands`).
     //
     // COMMIT-AND-HOLD. Once we've committed to a boss we return it unchanged
-    // for as long as it remains in this candidate tier — no per-tick re-ranking
+    // for as long as it remains in the candidate list — no per-tick re-ranking
     // by distance, no per-tick reachability re-probe. Both of those signals are
     // noisy near a decision boundary: straight-line distance swings as the bot
     // rounds corners, and the bounded 2-stride IsReachable probe flickers when
@@ -101,8 +101,8 @@ namespace
     // (and the long-path rebuilt from it) flip-flop between two bosses, which
     // wedges the bot between competing routes. The commit is released only when
     // the boss leaves `cands` entirely — killed (mask bit set), skipped, or
-    // despawned — all handled by the caller's partitioning, so a gone boss
-    // simply isn't here to match.
+    // turned to a corpse — all handled by the caller's candidate filtering, so
+    // a gone boss simply isn't here to match.
     //
     // ADVANCE-FORWARD. When the commit releases (the boss we were heading to is
     // gone), we head to the next boss *after* it in encounter order, not to the
@@ -125,7 +125,7 @@ namespace
         if (cands.empty())
             return std::nullopt;
 
-        // Hold the commit if the boss is still a candidate in this tier.
+        // Hold the commit if the boss is still in the candidate list.
         if (stickyEntry)
             for (DungeonBossInfo const& info : cands)
                 if (info.entry == stickyEntry)
@@ -222,16 +222,31 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         }
     }
 
-    // Partition the uncleared bosses by liveness instead of returning the
-    // first one in DBC encounter order. `alive` bosses can be fought right
-    // now; `missing` bosses have no spawn on the map yet (far grid not loaded,
-    // or a boss that only spawns after an event). We never engage a corpse —
-    // a present-but-dead boss whose completion bit hasn't flipped yet is
-    // transient and is skipped, matching the prior fall-through behavior and
-    // keeping the empty-result == all-cleared contract that AllClearedTrigger
-    // relies on.
-    std::vector<DungeonBossInfo> alive;
-    std::vector<DungeonBossInfo> missing;
+    // Build the candidate list in DBC encounter order (the order `bosses`
+    // already arrives in). A boss is a candidate unless it's authoritatively
+    // finished or deliberately passed over:
+    //   - completion bit set — the group killed it,
+    //   - user-skipped,
+    //   - present but dead — a corpse whose completion bit hasn't flipped yet;
+    //     transient, so we don't re-engage it.
+    // A boss whose grid simply hasn't streamed in yet (not present at all) is
+    // STILL a candidate, in its natural encounter-order slot.
+    //
+    // This list used to be split into alive-vs-not-spawned tiers, with the
+    // not-spawned tier consulted only when nothing was spawned. That made the
+    // bot skip past the next in-order boss (whose grid wasn't loaded) to a far
+    // boss that merely happened to be spawned already — e.g. in Stratholme,
+    // killing Forresten (idx 1) jumped straight to Barthilas (idx 10) because
+    // the live-side bosses between them hadn't streamed in. Advance already
+    // handles a not-yet-spawned target correctly: it walks toward the boss's
+    // static spawn coords to stream the grid in, and only stalls (prompting a
+    // manual `dc skip`) once close enough that the grid is certainly loaded and
+    // the boss is genuinely absent (a true event-gate). So in-order selection
+    // across spawned and not-yet-spawned bosses alike is safe, and keeps the
+    // clear sequential. The empty-result == all-cleared contract that
+    // AllClearedTrigger relies on still holds: the list empties only once every
+    // boss is completed, skipped, or a fresh corpse.
+    std::vector<DungeonBossInfo> cands;
     for (DungeonBossInfo const& info : bosses)
     {
         if (skipped.count(info.entry))
@@ -242,22 +257,17 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             continue;
 
         BossLiveState const state = LookupLive(liveness, info.entry);
-        if (state.alive)
-            alive.push_back(info);
-        else if (!state.present)
-            missing.push_back(info);
+        if (state.present && !state.alive)
+            continue;  // corpse — transient, will flip to completed
+
+        cands.push_back(info);
     }
 
-    // Prefer a boss we can fight now over one that hasn't spawned: this stops
-    // the bot from locking onto an early-indexed unspawned boss (and stalling
-    // with "not spawned, use dc skip" in Advance) while a later-indexed boss
-    // is alive and killable. Within each tier we commit to the previously
-    // chosen boss until it leaves the candidate set (see PickTarget).
     uint32 const stickyEntry = AI_VALUE(uint32, "dungeon clear sticky boss");
 
     // Resolve the committed boss's encounter index from the full boss list (it
     // stays here even after the boss dies and drops out of the candidate
-    // tiers), so PickTarget can advance to the next boss after it rather than
+    // list), so PickTarget can advance to the next boss after it rather than
     // snapping back to the lowest-index survivor when the commit releases.
     uint32 stickyEncounterIndex = 0;
     bool haveStickyIndex = false;
@@ -271,9 +281,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             }
 
     std::optional<DungeonBossInfo> pick =
-        PickTarget(bot, alive, stickyEntry, stickyEncounterIndex, haveStickyIndex);
-    if (!pick)
-        pick = PickTarget(bot, missing, stickyEntry, stickyEncounterIndex, haveStickyIndex);
+        PickTarget(bot, cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every
