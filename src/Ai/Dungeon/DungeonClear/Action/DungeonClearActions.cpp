@@ -967,7 +967,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // group-roll/reserved loot, or below DungeonClear.LootMinQuality) BEFORE we
     // walk to it, so it never arms the yield at all — the event-driven analogue
     // of the camp/timeout cutoffs below, which only fire after a wasted walk.
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
     // Fast-skip a corpse we've been camped on too long (un-lootable) before it
     // can burn the full yield timeout below; followers do the same in their
     // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
@@ -2104,7 +2104,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // BEFORE it walks over — so it never steps off follow for it and never adds
     // to the tank's IsAnyPartyMemberLooting wait. Event-driven counterpart to
     // the camp/timeout cutoffs, which only fire after the walk is wasted.
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
     // Fast-skip a corpse this follower has been camped on too long instead of
     // waiting out the full yield timeout: an un-finishable corpse (group-roll
     // items pending, bags full) otherwise wastes 15s here AND keeps the tank's

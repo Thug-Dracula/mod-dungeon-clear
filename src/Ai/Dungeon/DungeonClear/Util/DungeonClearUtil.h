@@ -171,12 +171,31 @@ public:
     // it mutates the stock loot values, never stock code.
     static void StripSkippedLoot(PlayerbotAI* botAI);
 
+    // Sentinel ttl meaning "never expire — give up for the rest of the run."
+    // Pass as GiveUpCurrentLoot's ttl when the reason a corpse was skipped is
+    // permanent: empty, below the quality floor, skinnable-only, or holding only
+    // loot this bot can never take by re-looting — roll-locked / won-by-another
+    // (the winner's item auto-delivers, it is never re-looted), round-robin or
+    // allowed-looter sets that exclude us, or bags full with no vendor to clear
+    // them mid-dungeon. None of these become takeable later, so a sticky skip
+    // can never re-arm the loot yield on a backtrack.
+    //
+    // A real ms ttl (LOOT_SKIP_STICKY's complement) is used only for the
+    // residual cases the content inspector can't pre-classify away — a camp or
+    // 15s-yield timeout on loot that LOOKED takeable but didn't complete (a
+    // momentary second looter on the corpse, or own loot not yet reached). There
+    // the ttl just retries once rather than permanently abandon possibly-real
+    // loot. Sticky entries clear only with the whole list (DisableDungeonClear).
+    static constexpr uint32 LOOT_SKIP_STICKY = 0u;
+
     // Marks the loot the bot is currently committed to — the stock "loot
     // target" if set, else the nearest entry in the available-loot stack — as
-    // given-up for `ttlMs`. Called when a loot yield times out so the bot stops
-    // re-committing to a corpse/chest it can't finish. No-op when nothing of the
-    // bot's own is resolvable (e.g. a tank whose yield is only IsAnyPartyMember-
-    // Looting waiting on a follower — that follower gives up its own loot).
+    // given-up for `ttlMs` (or permanently when ttlMs == LOOT_SKIP_STICKY).
+    // Called when a loot yield times out, or proactively when the loot is
+    // un-takeable, so the bot stops re-committing to a corpse/chest it can't
+    // finish. No-op when nothing of the bot's own is resolvable (e.g. a tank
+    // whose yield is only IsAnyPartyMemberLooting waiting on a follower — that
+    // follower gives up its own loot).
     static void GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs);
 
     // Fast-skips a corpse the bot has been "camped" on — standing within
@@ -240,7 +259,14 @@ public:
     // gathering-node interactables are dropped outright. Returns true when it
     // skipped at least one pickup this call. Module-only: mutates stock loot
     // values via GiveUpCurrentLoot / StripSkippedLoot, never stock code.
-    static bool MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs);
+    //
+    // Every reason this function skips a corpse is PERMANENT for the run (empty,
+    // below the quality floor, skinnable-only, a gathering node, not a chest) —
+    // none of it can become takeable later the way a pending group roll can — so
+    // the skips are recorded as LOOT_SKIP_STICKY. That stops the backtrack
+    // re-stutter: a field of below-floor / empty corpses stays skipped for the
+    // whole run instead of re-arming the loot yield once the give-up ttl lapses.
+    static bool MaybeSkipUnworthyLoot(PlayerbotAI* botAI);
 
     // Returns true if `creature`'s corpse holds at least one item this bot can
     // take right now (allowed, not blocked in / lost to a group roll, meeting

@@ -385,16 +385,24 @@ public:
 };
 
 // Per-corpse loot give-up list: maps a loot GUID whose pickup the bot
-// abandoned (its loot-yield timed out on it) to the ms timestamp at which the
-// skip expires. Each DC tick the still-live entries are stripped from the stock
-// "available loot" stack and cleared from "loot target" (see
-// DungeonClearUtil::StripSkippedLoot), so neither the loot flags nor stock's
-// nearest-target pick can re-commit to it. This is what breaks the
-// corpse<->tank / chest<->path ping-pong that arose when an un-finishable loot
-// (group-roll leftover, bags full, party clustered on it) kept re-arming the
-// loot yield every time the bot drifted back within LootDistance. Self-expiring
-// so loot that later becomes takeable (a pending roll resolves) is retried once
-// more; also cleared on dc on/off / party death via DisableDungeonClear.
+// abandoned to the ms timestamp at which the skip expires — or to
+// DungeonClearUtil::LOOT_SKIP_STICKY (0) for a permanent skip. Each DC tick the
+// still-live entries are stripped from the stock "available loot" stack and
+// cleared from "loot target" (see DungeonClearUtil::StripSkippedLoot), so
+// neither the loot flags nor stock's nearest-target pick can re-commit to it.
+// This is what breaks the corpse<->tank / chest<->path ping-pong that arose
+// when un-finishable loot kept re-arming the loot yield every time the bot
+// drifted back within LootDistance. The ttl depends on WHY the corpse was
+// skipped. Permanent reasons (empty / below the quality floor / roll-locked or
+// won-by-another — the winner's item auto-delivers, never re-looted — round-
+// robin or allowed-looter excluding us, or bags full with no mid-dungeon
+// vendor) are recorded sticky by the content-inspecting MaybeSkipUnworthyLoot
+// and never re-arm on a backtrack. A real expiry is used only for the residual
+// cases that inspection can't pre-classify — a camp / 15s-yield timeout on loot
+// that looked takeable but didn't complete (a momentary second looter, own loot
+// not yet reached) — so it is retried once rather than abandoned outright. All
+// entries — sticky included — are cleared on dc on/off / party death via
+// DisableDungeonClear.
 class DungeonClearLootSkipValue : public ManualSetValue<std::map<ObjectGuid, uint32>&>
 {
 public:

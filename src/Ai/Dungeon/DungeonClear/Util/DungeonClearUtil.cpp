@@ -806,10 +806,15 @@ void DungeonClearUtil::StripSkippedLoot(PlayerbotAI* botAI)
 
     for (auto it = skip.begin(); it != skip.end();)
     {
-        if (now >= it->second)
+        // Sticky entries (permanent skip reason — empty / below-floor / un-
+        // takeable by nature) never expire; only DisableDungeonClear clears them.
+        if (it->second != LOOT_SKIP_STICKY && now >= it->second)
         {
-            // Expired — drop it so the loot becomes eligible again (a pending
-            // group roll may have resolved while we were away).
+            // Expired — drop it so a residual transient block can be retried
+            // once (a second looter who has since left the corpse, own loot
+            // we couldn't reach in time). NOT for group rolls: a roll we lose
+            // is gone for us and a roll we win auto-delivers, so roll-locked
+            // loot is recorded sticky upstream, never here.
             it = skip.erase(it);
             continue;
         }
@@ -844,7 +849,18 @@ void DungeonClearUtil::GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs)
 
     std::map<ObjectGuid, uint32>& skip =
         ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get();
-    skip[guid] = getMSTime() + ttlMs;
+    if (ttlMs == LOOT_SKIP_STICKY)
+    {
+        skip[guid] = LOOT_SKIP_STICKY;  // never expires (permanent skip reason)
+        return;
+    }
+    // A real ttl: store the expiry. Guard the one-tick window every ~49 days
+    // where getMSTime() + ttlMs wraps to exactly the sticky sentinel — bump it
+    // off 0 so a transient skip is never mistaken for a permanent one.
+    uint32 expiry = getMSTime() + ttlMs;
+    if (expiry == LOOT_SKIP_STICKY)
+        expiry = 1u;
+    skip[guid] = expiry;
 }
 
 bool DungeonClearUtil::MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTimeoutMs, uint32 giveUpTtlMs)
@@ -962,7 +978,7 @@ bool DungeonClearUtil::CorpseHasTakeableLoot(Player* bot, Creature* creature, ui
     return loot.gold > 0 && minQuality == 0;
 }
 
-bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs)
+bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
 {
     if (!botAI)
         return false;
@@ -1030,8 +1046,9 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTt
         // Not a corpse-with-loot or a chest -> blacklist + strip now so the loot
         // flags drop this tick and the bot skips the detour entirely (the
         // proactive analogue of the camp/yield timeouts firing after a wasted
-        // walk).
-        GiveUpCurrentLoot(botAI, giveUpTtlMs);
+        // walk). Sticky: every reason we get here is permanent for the run, so
+        // the corpse must never re-arm the yield on a later backtrack.
+        GiveUpCurrentLoot(botAI, LOOT_SKIP_STICKY);
         StripSkippedLoot(botAI);
         skippedAny = true;
     }
