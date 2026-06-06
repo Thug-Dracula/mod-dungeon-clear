@@ -43,6 +43,7 @@ public:
         creators["dungeon clear last pull target"] = &DungeonClearValueContext::dungeon_clear_last_pull_target;
         creators["dungeon clear long path"] = &DungeonClearValueContext::dungeon_clear_long_path;
         creators["dungeon clear long path target"] = &DungeonClearValueContext::dungeon_clear_long_path_target;
+        creators["dungeon clear long path target pos"] = &DungeonClearValueContext::dungeon_clear_long_path_target_pos;
         creators["dungeon clear long path expires"] = &DungeonClearValueContext::dungeon_clear_long_path_expires;
         creators["dungeon clear current hop"] = &DungeonClearValueContext::dungeon_clear_current_hop;
         creators["dungeon clear pending path job"] = &DungeonClearValueContext::dungeon_clear_pending_path_job;
@@ -83,6 +84,7 @@ private:
     static UntypedValue* dungeon_clear_last_pull_target(PlayerbotAI* ai) { return new DungeonClearLastPullTargetValue(ai); }
     static UntypedValue* dungeon_clear_long_path(PlayerbotAI* ai) { return new DungeonClearLongPathValue(ai); }
     static UntypedValue* dungeon_clear_long_path_target(PlayerbotAI* ai) { return new DungeonClearLongPathTargetValue(ai); }
+    static UntypedValue* dungeon_clear_long_path_target_pos(PlayerbotAI* ai) { return new DungeonClearLongPathTargetPosValue(ai); }
     static UntypedValue* dungeon_clear_long_path_expires(PlayerbotAI* ai) { return new DungeonClearLongPathExpiresValue(ai); }
     static UntypedValue* dungeon_clear_current_hop(PlayerbotAI* ai) { return new DungeonClearCurrentHopValue(ai); }
     static UntypedValue* dungeon_clear_pending_path_job(PlayerbotAI* ai) { return new DungeonClearPendingPathJobValue(ai); }

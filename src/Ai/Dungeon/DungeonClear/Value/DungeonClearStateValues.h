@@ -259,10 +259,31 @@ public:
     }
 };
 
-// Millisecond timestamp at which the cached LongPath expires. The path
-// itself doesn't change as the world advances (boss positions are static)
-// but the cache stays bounded so a stale path doesn't survive past edge
-// cases like map reloads. Default 0 → "not cached yet".
+// World position the cached `dungeon clear long path` was actually built
+// toward. For a pool-spawn / wandering boss (e.g. the Wailing Caverns
+// Disciples) the live creature is rarely at its static DB spawn anchor, so
+// Advance feeds EnsureLongPath the boss's LIVE position; this records where
+// that path aims so a later tick can detect the boss has relocated (or that
+// the live position has just streamed in, far from the static anchor the
+// first build used) and force an early rebuild instead of walking a stale
+// route the full TTL. Default (0,0,0) → "no path built yet".
+class DungeonClearLongPathTargetPosValue : public ManualSetValue<Position&>
+{
+public:
+    DungeonClearLongPathTargetPosValue(PlayerbotAI* botAI)
+        : ManualSetValue<Position&>(botAI, data, "dungeon clear long path target pos")
+    {
+    }
+
+private:
+    Position data;
+};
+
+// Millisecond timestamp at which the cached LongPath expires. The cache
+// stays bounded so a stale path doesn't survive past edge cases like map
+// reloads; it is also rebuilt early when the live boss relocates far from
+// the position the path was built toward (see long path target pos).
+// Default 0 → "not cached yet".
 class DungeonClearLongPathExpiresValue : public ManualSetValue<uint32>
 {
 public:

@@ -173,11 +173,26 @@ namespace
     // dead-end -> stall escalation. ~5 ticks ≈ a couple of seconds.
     constexpr uint32 DC_PURSUIT_FAIL_LIMIT = 5;
 
-    // Long-path cache TTL. Boss positions are static, so a longer TTL is
-    // safe; rebuild costs are bounded (~8 PathGenerator calls × sub-ms each).
-    // Keeping the TTL short keeps stale paths from outlasting edge cases
-    // like portal traversal or stuck-teleport recovery.
+    // Long-path cache TTL. Most bosses hold a fixed position, so a longer TTL
+    // is safe; rebuild costs are bounded (~8 PathGenerator calls × sub-ms each).
+    // Keeping the TTL short keeps stale paths from outlasting edge cases like
+    // portal traversal or stuck-teleport recovery. A boss that relocates within
+    // the TTL is handled out-of-band by DC_LONG_PATH_RETARGET_DIST.
     constexpr uint32 DC_LONG_PATH_TTL_MS = 15 * 1000;
+
+    // How far the effective boss target may drift from the position the cached
+    // long-path was built toward before EnsureLongPath forces an early rebuild,
+    // ahead of the TTL. Advance feeds the boss's LIVE position when it is
+    // loaded, so a pool-spawn / wandering boss (e.g. the Wailing Caverns
+    // Disciples, which spawn at one of several pooled anchors and rarely sit on
+    // the one BossSpawnIndex picked) gets a route to where it actually is — and
+    // the moment its live position streams in far from the static anchor the
+    // first build used, the path retargets instead of walking the wrong way for
+    // the full TTL ("goes the wrong direction, then says the way is blocked").
+    // Above minor patrol jitter so a pacing boss doesn't thrash rebuilds; the
+    // direct-pursuit shortcut already handles the close-range (<=80yd, LOS)
+    // tracking, so this only governs the long-range approach.
+    constexpr float DC_LONG_PATH_RETARGET_DIST = 15.0f;
 
     // Self-healing watchdog for an in-flight async path job. A real
     // BuildCoreFromMesh is a single Detour query — sub-millisecond, well under
@@ -314,6 +329,7 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear phase")->Get().clear();
         ctx->GetValue<uint32>("dungeon clear long path target")->Set(0u);
+        ctx->GetValue<Position&>("dungeon clear long path target pos")->Get() = Position();
         ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
         ctx->GetValue<uint64>("dungeon clear pending path job")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear pending path since")->Set(0u);
@@ -490,6 +506,8 @@ namespace
             ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
         path = std::move(built);
         ctx->GetValue<uint32>("dungeon clear long path target")->Set(target.entry);
+        ctx->GetValue<Position&>("dungeon clear long path target pos")->Get() =
+            Position(target.x, target.y, target.z);
         ctx->GetValue<uint32>("dungeon clear long path expires")->Set(now + DC_LONG_PATH_TTL_MS);
 
         size_t const firstSegPts = path.segments.empty() ? 0 : path.segments.front().polyline.size();
@@ -590,7 +608,16 @@ namespace
         // ---- 2. Is a (re)build due? ----
         bool const targetChanged = cachedEntry != target.entry;
         bool const expired = expiresAt == 0 || now >= expiresAt;
-        if (!targetChanged && !expired)
+        // The live boss relocated (pool/wandering boss) or its live position
+        // just streamed in far from the static anchor the current path was
+        // built toward — retarget early instead of walking a stale route the
+        // full TTL. Only meaningful once a path actually exists (expiresAt!=0).
+        Position const& builtToward =
+            ctx->GetValue<Position&>("dungeon clear long path target pos")->Get();
+        bool const moved = expiresAt != 0 &&
+            builtToward.GetExactDist(Position(target.x, target.y, target.z)) >
+                DC_LONG_PATH_RETARGET_DIST;
+        if (!targetChanged && !expired && !moved)
             return;
 
         // ---- 3. Anchor route OR sync mode → build inline ----
@@ -1317,9 +1344,17 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     }
     // else: latched — skip direct pursuit and let the long-path below drive.
 
-    // Build or refresh the long-path cache. Boss positions are static,
-    // so the TTL can be generous; cache is invalidated on boss change.
-    EnsureLongPath(bot, context, *next);
+    // Build or refresh the long-path cache toward the boss's EFFECTIVE
+    // position (its live creature coords when loaded, else the static spawn
+    // anchor). A pool-spawn / wandering boss is rarely at the static anchor
+    // BossSpawnIndex picked, so routing to the anchor sends the tank the wrong
+    // way until it gives up ("the way is blocked"); EnsureLongPath retargets
+    // when this drifts from the position the cached path was built toward.
+    DungeonBossInfo effectiveTarget = *next;
+    effectiveTarget.x = bossX;
+    effectiveTarget.y = bossY;
+    effectiveTarget.z = bossZ;
+    EnsureLongPath(bot, context, effectiveTarget);
 
     ChunkedPathfinder::Result const& path =
         AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
@@ -1991,7 +2026,22 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
     // the last reachable spot far short of it. Reuse the same escort-spline
     // follower Advance drives (shared follower state, same long-path value).
     if (next.has_value())
-        EnsureLongPath(bot, context, *next);
+    {
+        // Match Advance: route toward the boss's EFFECTIVE position (live
+        // creature coords when loaded, else the static anchor) so this shares
+        // the same cached long-path Advance builds. Targeting the static anchor
+        // here while Advance targets the live boss would flip the shared cache's
+        // built-toward position every tick and thrash rebuilds.
+        Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+        DungeonBossInfo effectiveTarget = *next;
+        if (liveBoss)
+        {
+            effectiveTarget.x = liveBoss->GetPositionX();
+            effectiveTarget.y = liveBoss->GetPositionY();
+            effectiveTarget.z = liveBoss->GetPositionZ();
+        }
+        EnsureLongPath(bot, context, effectiveTarget);
+    }
 
     ChunkedPathfinder::Result const& path =
         AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
