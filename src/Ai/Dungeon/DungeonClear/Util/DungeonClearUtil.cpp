@@ -2141,9 +2141,14 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
         }
         // Status display must use the SAME spread the advance gate enforces
         // (DungeonClear.PartyMaxSpread), or the tank parks at the limit while
-        // still reporting "En route" instead of "Waiting on".
-        else if (float const maxSpread = sConfigMgr->GetOption<float>(
-                     "DungeonClear.PartyMaxSpread", 25.0f);
+        // still reporting "En route" instead of "Waiting on". In advanced-pull
+        // mode the advance gate (IsBetweenPullsReady) drops the spread check —
+        // the party deliberately holds at camp while the tank scouts ahead — so
+        // mirror that here, or the panel falsely reports "Waiting on … (out of
+        // range)" while the tank is actually still moving out to pull.
+        else if (float const maxSpread = pullMode
+                     ? 100000.0f
+                     : sConfigMgr->GetOption<float>("DungeonClear.PartyMaxSpread", 25.0f);
                  !DungeonClearUtil::IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), maxSpread))
         {
             stateStr = "resting";
