@@ -181,4 +181,40 @@ public:
     bool IsActive() override;
 };
 
+// Follower-only, non-combat. Fires while this bot's leader tank is in the
+// advanced-pull camp fight (phase Engage, leader in combat) AND this bot has no
+// LOS target of its own to engage. This is the corner case the LOS-blind assist
+// exists for: the drag-back can park the pack out of the camp's line of sight,
+// so a follower sitting at camp never sees it and the stock target picker
+// (AttackersValue, which LOS-filters) never acquires it — the party would stand
+// idle and the camp would never enter combat. Drives DungeonClearAssistCampAction
+// to close on the fight and regain sight. Outranks hold-at-camp so it preempts
+// the camp yield. Inert the instant a valid attacker is in sight (stock combat
+// takes over then). See DungeonClearUtil::IsLeaderCampFightActive.
+class DungeonClearAssistCampTrigger : public Trigger
+{
+public:
+    DungeonClearAssistCampTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear assist camp", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
+// Follower-only, COMBAT engine. Combat-side twin of the trigger above: the same
+// "close on the out-of-LOS camp fight" assist for when the follower is already
+// IN combat (dragged in by group combat / a stray hit) but, with the pack around
+// a corner, has an empty LOS attacker list and so stands idle in the combat
+// engine. Drives DungeonClearAssistCampCombatAction. Inert the instant a valid
+// attacker comes into sight, handing the fight back to stock combat.
+class DungeonClearAssistCampCombatTrigger : public Trigger
+{
+public:
+    DungeonClearAssistCampCombatTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear assist camp combat", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

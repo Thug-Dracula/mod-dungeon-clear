@@ -210,4 +210,44 @@ public:
     }
 };
 
+// Shared body for the two follower-only "join the out-of-LOS camp fight" actions.
+// Resolves the nearest live unit attacking the leader tank — LINE-OF-SIGHT BLIND
+// on purpose — sets it as the bot's current target, forces the bot into combat
+// with it, and moves the bot onto it. This is the fix for a camp parked near a
+// corner: the drag-back can leave the pack out of the camp's line of sight, where
+// the stock LOS-gated target picker never acquires it and the released party
+// stands idle. Moving the follower in regains sight, at which point its trigger
+// goes inert (a valid attacker is now visible) and stock combat owns the fight.
+// Registered under two names on the two engines (see the subclasses below).
+class DungeonClearAssistCampActionBase : public MovementAction
+{
+public:
+    DungeonClearAssistCampActionBase(PlayerbotAI* botAI, std::string const& name)
+        : MovementAction(botAI, name)
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// Non-combat engine: a follower that never took a hit, sitting idle at camp.
+class DungeonClearAssistCampAction : public DungeonClearAssistCampActionBase
+{
+public:
+    DungeonClearAssistCampAction(PlayerbotAI* botAI)
+        : DungeonClearAssistCampActionBase(botAI, "dungeon clear assist camp")
+    {
+    }
+};
+
+// Combat engine: a follower dragged into combat but with the pack out of sight,
+// idling in the combat engine with an empty LOS attacker list.
+class DungeonClearAssistCampCombatAction : public DungeonClearAssistCampActionBase
+{
+public:
+    DungeonClearAssistCampCombatAction(PlayerbotAI* botAI)
+        : DungeonClearAssistCampActionBase(botAI, "dungeon clear assist camp combat")
+    {
+    }
+};
+
 #endif

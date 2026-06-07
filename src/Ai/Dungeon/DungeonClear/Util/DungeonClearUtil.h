@@ -534,6 +534,17 @@ public:
     // teardown), this is true throughout pull mode so the party never follows.
     static bool GetLeaderCampHold(Player* bot, Position& campOut, bool& passiveOut);
 
+    // True when `bot` is a non-leader follower whose elected leader tank is in
+    // the advanced-pull camp fight RIGHT NOW: pull phase Engage (the pack has
+    // been dragged back and handed to stock combat) AND the leader is actually in
+    // combat. This is the window in which a released follower must pile into the
+    // pack even if the drag parked it out of the camp's line of sight (around a
+    // corner) — where the stock LOS-gated target picker never acquires a target
+    // and the party would otherwise stand idle and never enter the fight. Drives
+    // DungeonClearAssistCamp{,Combat}Trigger. Returns false (the common case) for
+    // the leader, outside pull mode, or when the leader isn't mid camp-fight.
+    static bool IsLeaderCampFightActive(Player* bot);
+
     // Force the leader of `bot`'s group to abandon the current pull and release
     // the party (sets the leader's pull phase to Engage). Used by the camp-safety
     // valve when a held, passive follower is taking unexpected damage. No-op if

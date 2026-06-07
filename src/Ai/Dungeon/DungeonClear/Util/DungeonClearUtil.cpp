@@ -1280,6 +1280,27 @@ bool DungeonClearUtil::GetLeaderCampHold(Player* bot, Position& campOut, bool& p
     return true;
 }
 
+bool DungeonClearUtil::IsLeaderCampFightActive(Player* bot)
+{
+    if (!bot || bot->isDead())
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader runs the fight; it never assists itself
+
+    uint32 phase = 0;
+    Position camp;
+    if (!GetLeaderPullInfo(bot, phase, camp))
+        return false;
+
+    // Only the camp fight (Engage) — during the holding phases the party is
+    // pinned passive at camp by hold-at-camp/stay-at-camp, and a leader-in-combat
+    // while merely scouting (Idle) is handled by the drag-back maneuver, which
+    // flips the phase out of Idle before any party member would assist.
+    return phase == static_cast<uint32>(DcPullPhase::Engage) && leader->IsInCombat();
+}
+
 void DungeonClearUtil::AbortLeaderPull(Player* bot)
 {
     if (!bot)

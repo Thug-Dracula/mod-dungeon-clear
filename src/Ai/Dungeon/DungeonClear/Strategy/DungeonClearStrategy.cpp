@@ -85,6 +85,17 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear hold at camp",
         { NextAction("dungeon clear hold at camp", 28.0f) }));
 
+    // Out-of-LOS camp fight: while the leader fights a pack the drag-back parked
+    // out of the camp's line of sight (around a corner), a follower idling at
+    // camp must close on the fight to regain sight and engage — the stock target
+    // picker LOS-filters and would never acquire it. Relevance above hold-at-camp
+    // (28) so it preempts the camp yield; inert the moment a target is visible
+    // (the trigger gates on an empty LOS attacker list). See
+    // DungeonClearAssistCampTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear assist camp",
+        { NextAction("dungeon clear assist camp", 29.0f) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance above advance (15) and follow-tank (25) so a bot below target
     // sits and rests instead of walking; safely below the engage triggers,
@@ -166,4 +177,15 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear stay at camp",
         { NextAction("dungeon clear stay at camp", 60.0f) }));
+
+    // Out-of-LOS camp fight, combat-engine side. A released follower that was
+    // dragged into combat but has the pack around a corner has an empty LOS
+    // attacker list and so idles in the combat engine — stock MoveChase/attack
+    // have no target. Drive it onto the leader's pack to regain sight. Relevance
+    // above the stock combat movers (MoveChase ~30) so it owns the tick; inert
+    // the instant a valid attacker is visible, handing back to stock combat. Sits
+    // below stay-at-camp / pull-maneuver (60), which are inert at Engage anyway.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear assist camp combat",
+        { NextAction("dungeon clear assist camp combat", 35.0f) }));
 }

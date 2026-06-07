@@ -600,6 +600,43 @@ bool DungeonClearHoldAtCampCombatTrigger::IsActive()
     return passive;
 }
 
+namespace
+{
+    // Shared gate for the two camp-fight assist triggers: this follower's leader
+    // is mid camp-fight AND the bot currently has NO line-of-sight target of its
+    // own. The empty-attackers test is what makes the assist self-limiting: the
+    // stock AttackersValue LOS-filters, so "attackers" is empty exactly while the
+    // pack is out of sight (the bug) and becomes non-empty the moment movement
+    // carries the bot back into sight — at which point this goes inert and stock
+    // combat owns the fight again.
+    bool ShouldAssistCampFight(PlayerbotAI* botAI, Player* bot)
+    {
+        if (!DungeonClearUtil::IsLeaderCampFightActive(bot))
+            return false;
+        return botAI->GetAiObjectContext()
+                   ->GetValue<GuidVector>("attackers")->Get().empty();
+    }
+}
+
+bool DungeonClearAssistCampTrigger::IsActive()
+{
+    // Non-combat side: a follower that never took a hit sits idle at camp while
+    // the tank fights an out-of-LOS pack. Move it in (and it enters combat).
+    if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+    return ShouldAssistCampFight(botAI, bot);
+}
+
+bool DungeonClearAssistCampCombatTrigger::IsActive()
+{
+    // Combat side: a follower dragged into combat (group combat / stray hit) but
+    // with the pack around a corner has an empty LOS attacker list and so idles
+    // in the combat engine. Drive it into sight so stock combat can engage.
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return false;
+    return ShouldAssistCampFight(botAI, bot);
+}
+
 bool DungeonClearFilterLootTrigger::IsActive()
 {
     if (!bot || bot->isDead() || bot->IsInCombat())

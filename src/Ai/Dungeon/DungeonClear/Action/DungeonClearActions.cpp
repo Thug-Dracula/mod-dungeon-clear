@@ -3016,3 +3016,60 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
                   bot->GetName(), toCamp, passive, moved);
     return true;
 }
+
+bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
+{
+    Player* leader = DungeonClearUtil::FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;
+
+    // Nearest live unit the leader is meleeing — the pulled pack. LOS-blind on
+    // purpose: this action exists precisely for the case the drag-back parked the
+    // pack out of the camp's line of sight, where the stock target picker never
+    // acquires it. getAttackers() covers the melee pack the tank is holding; the
+    // leader's victim is the fallback for the (rare) all-ranged grab.
+    Unit* target = nullptr;
+    float bestDist = 0.0f;
+    for (Unit* a : leader->getAttackers())
+    {
+        if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+            continue;
+        if (!bot->IsValidAttackTarget(a))
+            continue;
+        float const d = bot->GetExactDist2d(a);
+        if (!target || d < bestDist)
+        {
+            target = a;
+            bestDist = d;
+        }
+    }
+    if (!target)
+        target = leader->GetVictim();
+
+    // No concrete target resolvable (e.g. brief threat-table gap): close on the
+    // leader instead, which puts us back in sight of whatever it is fighting so
+    // stock combat can pick the target up the moment we round the corner.
+    Unit* const moveTo = target ? target : static_cast<Unit*>(leader);
+
+    if (target)
+    {
+        // Commit the follower to the pack even without LOS: select it, publish it
+        // as the current target, and open a combat timer so the bot is in the
+        // fight (and in the combat engine) the instant movement carries it back
+        // into sight — instead of standing idle at camp.
+        bot->SetSelection(target->GetGUID());
+        context->GetValue<Unit*>("current target")->Set(target);
+        if (!bot->IsInCombat())
+            bot->SetInCombatWith(target);
+    }
+
+    DC_PULL_TRACE("[DC:{}] assist camp: closing on out-of-LOS fight ({:.1f}yd, "
+                  "target={})", bot->GetName(), bot->GetExactDist(moveTo),
+                  target ? target->GetGUID().ToString() : "leader");
+
+    MoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
+           moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
+           /*normal_only*/ false, /*exact_waypoint*/ false,
+           MovementPriority::MOVEMENT_COMBAT);
+    return true;
+}

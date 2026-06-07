@@ -32,6 +32,8 @@ public:
         creators["dungeon clear pull maneuver"] = &DungeonClearTriggerContext::pull_maneuver;
         creators["dungeon clear hold at camp"] = &DungeonClearTriggerContext::hold_at_camp;
         creators["dungeon clear stay at camp"] = &DungeonClearTriggerContext::stay_at_camp;
+        creators["dungeon clear assist camp"] = &DungeonClearTriggerContext::assist_camp;
+        creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
 
         // Chat-command triggers (one per keyword/alias).
         creators["dc on"] = &DungeonClearTriggerContext::dc_on;
@@ -64,6 +66,8 @@ private:
     static Trigger* pull_maneuver(PlayerbotAI* ai) { return new DungeonClearPullManeuverTrigger(ai); }
     static Trigger* hold_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampTrigger(ai); }
     static Trigger* stay_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampCombatTrigger(ai); }
+    static Trigger* assist_camp(PlayerbotAI* ai) { return new DungeonClearAssistCampTrigger(ai); }
+    static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
 
     static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }
     static Trigger* dungeon_clear_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear on"); }
