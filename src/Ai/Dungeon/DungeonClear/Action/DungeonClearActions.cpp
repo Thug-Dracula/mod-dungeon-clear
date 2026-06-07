@@ -111,11 +111,14 @@ namespace
     // plowing through them to a locked target.
     constexpr float DC_COMBAT_APPROACH_RANGE = 10.0f;
 
-    // How far in front of a blocking door the tank parks while waiting for it
-    // to be opened. Close enough to read as "standing at the door", far enough
-    // not to clip into the GO model. The blocking-door detector uses a 5yd
-    // corridor half-width, so this stays inside that band.
-    constexpr float DC_DOOR_STOP_DISTANCE = 4.0f;
+    // Stand-off before a blocking door, as distance TRAVELLED ALONG the path to
+    // where the route first reaches the doorway (see
+    // DungeonClearUtil::DistAlongPathToClosedDoor) — NOT straight-line to the
+    // door's GO origin, which can sit past the gap and made the walk-in glide
+    // straight through it. The door-blocked action parks when the remaining
+    // along-path travel to the door drops to this, every tick before the glide is
+    // re-issued, so the tank halts on the near side of the doorway.
+    constexpr float DC_DOOR_STOP_DISTANCE = 10.0f;
 
     // Once parked at a blocking door, open it with GameObject::Use (the exact
     // path a client right-click takes) — but ONLY when the bot is actually
@@ -1083,6 +1086,17 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStal
 
 bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 {
+    // Hard pause guard. The engine builds its action queue from the triggers
+    // that fired at the START of the tick; on the tick the door-blocked action
+    // auto-pauses, `advance` was already queued (paused was still false then) and
+    // would otherwise execute right after door-blocked sets the flag — issuing a
+    // fresh long escort glide that carries the tank straight through the door it
+    // just parked at. The trigger's IsEnabled gate can't catch an already-queued
+    // action, so re-check here and bail before issuing any movement. (Confirmed
+    // from a capture: PARK -> auto-pausing -> "advance tick" -> "spline issued".)
+    if (AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
     {
@@ -1761,6 +1775,10 @@ namespace
 
 bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 {
+    // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
+    if (AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
         return false;
@@ -1858,6 +1876,10 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 
 bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 {
+    // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
+    if (AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
         return false;
@@ -1946,13 +1968,13 @@ bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
     return true;
 }
 
-bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
+bool DungeonClearDoorBlockedAction::Execute(Event event)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
-    std::string const stallReason =
-        "A door blocks the path to " + target + " and I can't open it. Open it "
-        "and I'll resume; 'dc off' to stop.";
+    std::string const pauseReason =
+        "A door blocks the path to " + target +
+        " and I can't open it. Paused — open it and hit Resume.";
     std::string const openingReason = "Opening the door to " + target + ".";
 
     ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
@@ -1964,7 +1986,12 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
     //     interaction range), then hold for the tick — the door swings open,
     //     the blocking-door value empties next tick, and Advance resumes.
     //   - not openable (locked with no key/skill, or a script/encounter door):
-    //     never touch the GO state; park and ask the human to open it.
+    //     never touch the GO state — drop straight into pause mode. The player
+    //     has to come solve the door anyway, and pause is exactly the right hold:
+    //     the whole party stops driving and follows (see DungeonClearMultiplier)
+    //     until the door is opened and the player hits Resume. This replaces the
+    //     old bespoke "stalled at door" state, which was prone to the bot's stock
+    //     AI later walking it straight through the opened door.
     // The Use() is throttled on the announced-reason transition so we don't
     // re-click a door every tick; when Advance resumes it clears the reason, so
     // a later re-close (autoclose doors) re-arms a fresh single attempt.
@@ -1975,22 +2002,37 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
 
         bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
                              BotCanOpenDoorLikePlayer(bot, door);
-        std::string const& reason = canOpen ? openingReason : stallReason;
 
         if (canOpen)
         {
             std::string const& lastSaid =
                 context->GetValue<std::string&>("dungeon clear last said reason")->Get();
-            if (lastSaid != reason)
+            if (lastSaid != openingReason)
             {
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] door-blocked: opening {} as a player would (entitled)",
                          bot->GetName(), door->GetGUID().ToString());
                 door->Use(bot);
             }
+            StallDungeonClear(botAI, openingReason);
+            return true;
         }
 
-        StallDungeonClear(botAI, reason);
+        // Can't open it ourselves — auto-pause and force the navigation dead.
+        // Set the flag once on transition: the door-blocked trigger gates on
+        // !paused, so it won't re-fire and re-announce every tick.
+        if (!AI_VALUE(bool, "dungeon clear paused"))
+        {
+            context->GetValue<bool>("dungeon clear paused")->Set(true);
+            if (MotionMaster* mm = bot->GetMotionMaster())
+                mm->Clear();
+            bot->StopMovingOnCurrentPos();
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] door-blocked: can't open {} -> auto-pausing",
+                     bot->GetName(), door ? door->GetGUID().ToString() : "(none)");
+            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + pauseReason);
+            botAI->DoSpecificAction("dc status", event, true);
+        }
         return true;
     };
 
@@ -2005,14 +2047,12 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
         return parkAndStall();
     }
 
+    // GetExactDist is to the door's GO origin (hinge/jamb) — kept only for log
+    // lines. It is NOT used to decide when to park: the origin can sit past the
+    // doorway gap, so "within Nyd of the origin" made the walk-in glide carry the
+    // tank THROUGH the gap to reach it. Parking is decided below on distance
+    // travelled ALONG the path to the door (DistAlongPathToClosedDoor).
     float const distToDoor = bot->GetExactDist(door);
-    if (distToDoor <= DC_DOOR_STOP_DISTANCE)
-    {
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door-blocked: at door ({:.1f}yd) -> parking, waiting for it to open",
-                  bot->GetName(), distToDoor);
-        return parkAndStall();
-    }
 
     // --- Walk the WHOLE corridor up to the door --------------------------
     // The door is detected as much as 80yd ahead along the route, so we must
@@ -2053,6 +2093,24 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
                   "[DC:{}] door-blocked: no long-path corridor ({:.1f}yd from door) "
                   "-> park in place",
                   bot->GetName(), distToDoor);
+        return parkAndStall();
+    }
+
+    // Park on the NEAR side: stop once the route is within DC_DOOR_STOP_DISTANCE
+    // (travel distance) of reaching the doorway. Measured along the path, so it
+    // halts before the gap even when the door's GO origin sits past it and the
+    // navmesh runs the corridor straight through the shut door. Without this the
+    // walk-in glided through the gap to get "close to the origin", then the pack
+    // beyond aggroed the now-through tank.
+    float const distAlongToDoor =
+        DungeonClearUtil::DistAlongPathToClosedDoor(
+            bot, path, door->GetPositionX(), door->GetPositionY(), /*lookAhead*/ 100.0f);
+    if (distAlongToDoor <= DC_DOOR_STOP_DISTANCE)
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] door-blocked: at door ({:.1f}yd along path) -> parking, "
+                  "waiting for it to open",
+                  bot->GetName(), distAlongToDoor);
         return parkAndStall();
     }
 

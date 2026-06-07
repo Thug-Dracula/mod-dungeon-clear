@@ -44,11 +44,45 @@ float DungeonClearMultiplier::GetValue(Action* action)
         }
     }
 
-    // While paused, behave as if DC were off: don't suppress wandering, so the
-    // tank reverts to stock non-combat behavior just like under `dc off`.
-    if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
+    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
+    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+
+    // DC off: fully stock behavior, nothing suppressed.
+    if (!enabled)
         return 1.0f;
 
+    // Wander-style autonomous navigation (grind / rpg / travel). This is what
+    // drives the bot around the world on its own.
+    bool const isWander =
+        name.find("grind") != std::string::npos ||
+        name.find("rpg") != std::string::npos ||
+        name == "travel" || name.find("travel ") != std::string::npos;
+
+    // Proactive engagement: the bot's OWN target-picking that walks it to a mob
+    // and pulls (the grind strategy fires "attack anything"; the pull strategy
+    // fires "pull start"/"pull action"/"reach pull"). These run in the non-combat
+    // engine BEFORE combat starts, so they bypass DC's triggers entirely — which
+    // is exactly how a paused/parked tank still strolls THROUGH a navmesh-passable
+    // door to a pack on the far side (the pack only aggros once the tank arrives,
+    // so it never shows as combat). DC drives all engagement through its own
+    // engage-trash/engage-boss actions, so the stock pickers must stay suppressed
+    // whenever DC owns the bot — active OR paused. Reactive defense (a mob that
+    // actually aggros the bot) is combat-engine and untouched here.
+    bool const isProactiveEngage =
+        name == "attack anything" ||
+        name == "move random" ||
+        name == "pull action" || name == "pull start" || name == "reach pull";
+
+    // Paused is a HOLD, not a hand-back to stock AI. This used to return 1.0
+    // (full stock), which let the tank grind/pull off on its own — that's how a
+    // paused tank walked straight THROUGH a door the player paused at to deal
+    // with. Keep autonomous wandering AND proactive engagement suppressed so a
+    // paused tank simply holds and follows the party like any member (follow is
+    // left at 1.0, unlike the active branch below) until the player resumes.
+    if (paused)
+        return (isWander || isProactiveEngage) ? 0.0f : 1.0f;
+
+    // --- Active (enabled && !paused) ------------------------------------------
     // The tank leads the clear — it must never follow its master. When Advance
     // yields to wait for the party to catch up (party spread > DungeonClear.PartyMaxSpread)
     // it StopMoving()s and parks; without this, the stock FollowAction (relevance
@@ -62,14 +96,11 @@ float DungeonClearMultiplier::GetValue(Action* action)
     if (PlayerbotAI::IsTank(bot) && dynamic_cast<FollowAction*>(action))
         return 0.0f;
 
-    // Suppress wander-style actions while DC is active. Anything else
-    // (loot, food, drink, combat, our own dungeon-clear actions, and follow
-    // for non-tanks) is untouched.
-    if (name.find("grind") != std::string::npos)
-        return 0.0f;
-    if (name.find("rpg") != std::string::npos)
-        return 0.0f;
-    if (name == "travel" || name.find("travel ") != std::string::npos)
+    // Suppress wander AND the stock proactive-engagement pickers while DC is
+    // active — DC owns engagement via its own engage-trash/engage-boss actions.
+    // Anything else (loot, food, drink, reactive combat, our own dungeon-clear
+    // actions, and follow for non-tanks) is untouched.
+    if (isWander || isProactiveEngage)
         return 0.0f;
     return 1.0f;
 }

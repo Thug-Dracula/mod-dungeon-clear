@@ -89,6 +89,31 @@ namespace
         }
         return "Someone";
     }
+
+    // Forcefully halt the tank's in-flight DC navigation when DC is turned off,
+    // paused, or retargeted. The Advance/DoorBlocked glide is an escort spline
+    // (MoveSplinePath -> EscortMovementGenerator at MOTION_SLOT_ACTIVE), and
+    // stopping it is harder than it looks:
+    //   - MotionMaster::Clear() removes the generator, but
+    //     EscortMovementGenerator::DoFinalize() only clears unit states — it
+    //     never stops the launched movespline, so the server keeps gliding the
+    //     bot to the spline's endpoint.
+    //   - Unit::StopMoving() early-returns once movespline->Finalized(), so it is
+    //     NOT a reliable way to cancel a spline that is mid-flight or between
+    //     windows.
+    // StopMovingOnCurrentPos() is the reliable primitive: it DisableSpline()s and
+    // launches a zero-length spline at the current position, forcibly overriding
+    // whatever was playing. Clear() first so the escort generator can't recalc /
+    // relaunch, then the override stops the unit dead. Stock follow reclaims the
+    // slot on the next tick.
+    void HaltAllMovement(Player* bot)
+    {
+        if (!bot)
+            return;
+        if (MotionMaster* mm = bot->GetMotionMaster())
+            mm->Clear();
+        bot->StopMovingOnCurrentPos();
+    }
 }
 
 bool DcOnAction::Execute(Event event)
@@ -211,18 +236,12 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
 
-    // Cancel any in-flight advance/engage MoveTo so the bot actually stops
+    // Cancel any in-flight advance/engage spline so the bot actually stops
     // walking when the player says `dc off`. Without this, a previously
-    // queued MOVEMENT_NORMAL/MOVEMENT_COMBAT spline keeps running to its
-    // endpoint even though the strategy is now disabled — the bot looks
-    // like it's ignoring the off command for several seconds.
-    if (bot)
-    {
-        if (bot->isMoving())
-            bot->StopMoving();
-        if (MotionMaster* mm = bot->GetMotionMaster())
-            mm->Clear();
-    }
+    // queued spline keeps running to its endpoint even though the strategy is
+    // now disabled — the bot looks like it's ignoring the off command for
+    // several seconds. See HaltAllMovement for why this can't gate on isMoving().
+    HaltAllMovement(bot);
 
     // Leave the "dungeon clear" strategy installed. With the enabled flag now
     // false, every trigger and the multiplier in it are inert, so the tank is
@@ -566,10 +585,9 @@ bool DcGoAction::Execute(Event event)
 
     context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Reset();
 
-    if (bot->isMoving())
-        bot->StopMoving();
-    if (MotionMaster* mm = bot->GetMotionMaster())
-        mm->Clear();
+    // Kill any parked escort glide before building the route to the new target
+    // (see HaltAllMovement) so the tank doesn't coast down the old path first.
+    HaltAllMovement(bot);
 
     DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tTargeting boss: " + matched->name + ". Navigating...");
 
@@ -606,16 +624,11 @@ bool DcPauseAction::Execute(Event event)
         // all boss progress is preserved for resume.
         context->GetValue<bool>("dungeon clear paused")->Set(true);
 
-        // Stop the in-flight advance spline so it doesn't coast to its
-        // endpoint. Only when out of combat: mid-fight the combat engine owns
-        // movement and we want the current fight to finish before holding.
+        // Stop the in-flight advance glide so it doesn't coast to its endpoint.
+        // Only out of combat: mid-fight the combat engine owns movement and we
+        // want the current fight to finish before holding.
         if (bot && !bot->IsInCombat())
-        {
-            if (bot->isMoving())
-                bot->StopMoving();
-            if (MotionMaster* mm = bot->GetMotionMaster())
-                mm->Clear();
-        }
+            HaltAllMovement(bot);
 
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tDungeon clear paused.");
         botAI->DoSpecificAction("dc status", event, true);

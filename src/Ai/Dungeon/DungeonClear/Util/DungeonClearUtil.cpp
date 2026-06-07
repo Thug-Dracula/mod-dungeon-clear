@@ -120,6 +120,60 @@ namespace
     // it to PickBlockingTrash.
     struct Seg2D { float ax, ay, bx, by; };
 
+    // 2D half-width band around the walked route within which a closed door
+    // counts as sitting "on the corridor". Matches DOOR_CORRIDOR_WIDTH in
+    // DungeonClearBlockingDoorValue — a door's GO origin (its hinge/jamb) can be
+    // several yards off the line the bot actually walks through, so a tighter
+    // band misses wide gates.
+    constexpr float DC_DOOR_BAND = 8.0f;
+
+    // Closed `GAMEOBJECT_TYPE_DOOR`s on the map, as 2D points, culled to within
+    // `radius` of (cx,cy). Used to truncate the corridor trash scan at the first
+    // door so the tank never picks a pack on the FAR side of a shut door — some
+    // doors aren't modeled as solid in the navmesh, so the corridor runs straight
+    // through them. Mirrors the closed-state logic in DungeonClearBlockingDoorValue.
+    std::vector<std::pair<float, float>> CollectClosedDoors(Map* map, float cx,
+                                                            float cy, float radius)
+    {
+        std::vector<std::pair<float, float>> doors;
+        if (!map)
+            return doors;
+        float const r2 = radius * radius;
+        for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+        {
+            GameObject* go = kv.second;
+            if (!go || !go->IsInWorld())
+                continue;
+            GameObjectTemplate const* info = go->GetGOInfo();
+            if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
+                continue;
+            if (info->door.ignoredByPathing)
+                continue;
+            bool const startOpen = info->door.startOpen != 0;
+            bool const closed = (go->GetGoState() == GO_STATE_READY) != startOpen;
+            if (!closed)
+                continue;
+            float const gx = go->GetPositionX();
+            float const gy = go->GetPositionY();
+            if ((gx - cx) * (gx - cx) + (gy - cy) * (gy - cy) > r2)
+                continue;
+            doors.emplace_back(gx, gy);
+        }
+        return doors;
+    }
+
+    // True if any door point lies within DC_DOOR_BAND of segment a→b.
+    bool SegmentHitsClosedDoor(Seg2D const& s,
+                               std::vector<std::pair<float, float>> const& doors)
+    {
+        float const bandSq = DC_DOOR_BAND * DC_DOOR_BAND;
+        for (auto const& d : doors)
+            if (DungeonClearMath::DistSqToSegment2D(d.first, d.second,
+                                                    s.ax, s.ay, s.bx, s.by) <= bandSq)
+                return true;
+        return false;
+    }
+
     // Shared candidate evaluation for the corridor-style trash scans. Returns
     // the closest hostile, alive, level-reachable, in-LOS unit whose 2D
     // position lands within its OWN effective aggro band of any segment in
@@ -247,6 +301,12 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
     // Walk the polyline only as far as `maxLookAhead` yards from the bot's
     // current position. Beyond that the trigger doesn't care — we only
     // engage things that actually block the next leg of the route.
+    // Truncate at the first closed door (see FindBlockingTrashOnPath) so a pack
+    // on the far side of a shut, navmesh-passable door is never picked.
+    std::vector<std::pair<float, float>> const doors =
+        CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
+                           maxLookAhead + DC_DOOR_BAND);
+
     std::vector<Seg2D> segments;
     segments.reserve(corridor.size());
     float accumulated = 0.0f;
@@ -254,7 +314,10 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
     {
         G3D::Vector3 const& a = corridor[i];
         G3D::Vector3 const& b = corridor[i + 1];
-        segments.push_back(Seg2D{a.x, a.y, b.x, b.y});
+        Seg2D const s{a.x, a.y, b.x, b.y};
+        if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+            break;
+        segments.push_back(s);
         float const dx = b.x - a.x;
         float const dy = b.y - a.y;
         accumulated += std::sqrt(dx * dx + dy * dy);
@@ -411,6 +474,126 @@ bool DungeonClearUtil::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
     return true;
 }
 
+bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
+                                         float corridorWidth)
+{
+    if (!bot)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    float const bx = bot->GetPositionX();
+    float const by = bot->GetPositionY();
+    float const widthSq = corridorWidth * corridorWidth;
+
+    for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+    {
+        GameObject* go = kv.second;
+        if (!go || !go->IsInWorld())
+            continue;
+        GameObjectTemplate const* info = go->GetGOInfo();
+        if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
+            continue;
+        // Authored non-blocking (decorative / always-passable) doors never count.
+        if (info->door.ignoredByPathing)
+            continue;
+        // Closed iff GO_STATE_READY xor startOpen (mirrors the client; same
+        // inversion handled in DungeonClearBlockingDoorValue::Calculate).
+        bool const startOpen = info->door.startOpen != 0;
+        bool const closed = (go->GetGoState() == GO_STATE_READY) != startOpen;
+        if (!closed)
+            continue;
+
+        // Within corridorWidth of the bot->target segment? DistSqToSegment2D
+        // clamps to the segment, so a small value means the door lies on the
+        // line between them (or at an endpoint, which for "trash in the doorway"
+        // or "bot already at the door" is still correctly a veto).
+        float const d2 = DungeonClearMath::DistSqToSegment2D(
+            go->GetPositionX(), go->GetPositionY(), bx, by, tx, ty);
+        if (d2 <= widthSq)
+            return true;
+    }
+    return false;
+}
+
+float DungeonClearUtil::DistAlongPathToClosedDoor(
+    Player* bot, ChunkedPathfinder::Result const& path,
+    float doorX, float doorY, float maxLookAhead)
+{
+    if (!bot || !path.reachable || path.segments.empty())
+        return std::numeric_limits<float>::max();
+
+    // Walk the smoothed polyline accumulating distance FROM THE PATH START, and
+    // track two cursors: where the path is closest to the bot (the tank's current
+    // progress along it) and where it first enters THIS door's band. Return the
+    // forward gap between them — the travel still REMAINING to the doorway.
+    //
+    // The accumulate-from-the-bot version was wrong: the long-path is anchored
+    // where it was built, which falls behind as the tank advances, so walking
+    // from the bot counted the already-walked prefix and the returned distance
+    // GREW as the tank closed in (it never dropped to the stand-off until the bot
+    // physically entered the band, parking it on the door). Subtracting the bot's
+    // progress cursor fixes that. Only this one door is tested: scanning every
+    // nearby door returned whichever the winding route grazed first (an off-route
+    // side door), masking the real blocker.
+    float const bandSq = DC_DOOR_BAND * DC_DOOR_BAND;
+    float const botX = bot->GetPositionX();
+    float const botY = bot->GetPositionY();
+
+    float prevX = 0.0f, prevY = 0.0f;
+    bool havePrev = false;
+    float accumulated = 0.0f;     // distance from path start to current point
+    float cursorAccum = 0.0f;     // accumulated at the point closest to the bot
+    float bestBotDistSq = std::numeric_limits<float>::max();
+    float doorAccum = -1.0f;      // accumulated at the band entry
+
+    auto visit = [&](float px, float py) -> bool
+    {
+        if (havePrev)
+        {
+            if (DungeonClearMath::DistSqToSegment2D(doorX, doorY, prevX, prevY, px, py) <= bandSq)
+            {
+                doorAccum = accumulated;   // at the START (prev) of the hitting segment
+                return true;
+            }
+            float const dx = px - prevX;
+            float const dy = py - prevY;
+            accumulated += std::sqrt(dx * dx + dy * dy);
+        }
+        float const bdx = px - botX;
+        float const bdy = py - botY;
+        float const bd2 = bdx * bdx + bdy * bdy;
+        if (bd2 < bestBotDistSq)
+        {
+            bestBotDistSq = bd2;
+            cursorAccum = accumulated;
+        }
+        prevX = px;
+        prevY = py;
+        havePrev = true;
+        return false;
+    };
+
+    bool hit = false;
+    for (PathSegment const& seg : path.segments)
+    {
+        if (seg.polyline.empty())
+            hit = visit(seg.ex, seg.ey);
+        else
+            for (G3D::Vector3 const& pt : seg.polyline)
+                if ((hit = visit(pt.x, pt.y)))
+                    break;
+        if (hit || accumulated >= maxLookAhead)
+            break;
+    }
+
+    if (!hit)
+        return std::numeric_limits<float>::max();
+
+    return std::max(0.0f, doorAccum - cursorAccum);
+}
+
 bool DungeonClearUtil::IsReachable(Player* bot, float x, float y, float z)
 {
     // Delegate to the chunked pathfinder. Strict PATHFIND_NORMAL was too
@@ -484,10 +667,20 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
     std::vector<Seg2D> segs;
     segs.reserve(segments.size());
 
+    // Truncate the scanned corridor at the first closed door so trash on the FAR
+    // side is never picked: door-blind, the corridor runs straight through doors
+    // the navmesh doesn't model as solid, and engage-trash (25) would beat
+    // door-blocked (22) and walk the tank through to the pack. Computed fresh from
+    // the live door state here (not the 500ms-cached blocking-door value), so it
+    // holds even on the tick a scan first sees the pack.
+    std::vector<std::pair<float, float>> const doors =
+        CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
+                           maxLookAhead + DC_DOOR_BAND);
+
     float prevX = bot->GetPositionX();
     float prevY = bot->GetPositionY();
     float accumulated = 0.0f;
-    bool limitReached = false;
+    bool stop = false;
     for (PathSegment const& seg : segments)
     {
         // Anchored segments collapse to a single polyline point; non-anchored
@@ -495,9 +688,12 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
         // only if a segment somehow has no polyline at all.
         if (seg.polyline.empty())
         {
+            Seg2D const s{prevX, prevY, seg.ex, seg.ey};
+            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+                break;
             float const dx = seg.ex - prevX;
             float const dy = seg.ey - prevY;
-            segs.push_back(Seg2D{prevX, prevY, seg.ex, seg.ey});
+            segs.push_back(s);
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = seg.ex;
             prevY = seg.ey;
@@ -508,19 +704,25 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
 
         for (G3D::Vector3 const& pt : seg.polyline)
         {
+            Seg2D const s{prevX, prevY, pt.x, pt.y};
+            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+            {
+                stop = true;
+                break;
+            }
             float const dx = pt.x - prevX;
             float const dy = pt.y - prevY;
-            segs.push_back(Seg2D{prevX, prevY, pt.x, pt.y});
+            segs.push_back(s);
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = pt.x;
             prevY = pt.y;
             if (accumulated >= maxLookAhead)
             {
-                limitReached = true;
+                stop = true;
                 break;
             }
         }
-        if (limitReached)
+        if (stop)
             break;
     }
 

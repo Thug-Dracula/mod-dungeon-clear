@@ -109,6 +109,31 @@ public:
     static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                DungeonBossInfo const& boss, float staticRange);
 
+    // True if a closed `GAMEOBJECT_TYPE_DOOR` sits on the straight 2D line from
+    // the bot to (tx,ty), within `corridorWidth` of it. Used to veto engaging a
+    // boss/pack on the FAR side of a shut door (the navmesh may let the tank clip
+    // through, so it would otherwise bee-line onto/through the door). Computed
+    // FRESH per call on purpose — the cached "dungeon clear blocking door" value
+    // (500ms) can still read empty at the moment a scan first sees the far-side
+    // target, which let the tank run through, clear it, and walk back.
+    static bool ClosedDoorBetween(Player* bot, float tx, float ty,
+                                  float corridorWidth = 8.0f);
+
+    // Distance TRAVELLED ALONG the long-path (from the bot) to where the route
+    // first comes within the door band of the door at (doorX,doorY), or FLT_MAX
+    // if it never does within `maxLookAhead`. The door-blocked handler parks the
+    // tank a short stand-off before this so it stops on the NEAR side of the
+    // doorway. Measured along the path on purpose: GetExactDist to a door's GO
+    // origin (hinge/jamb) is unreliable — the origin can sit past the doorway
+    // gap, so "within Nyd of the origin" can require walking THROUGH the gap.
+    // Targets ONE specific door (the blocking one the caller already resolved):
+    // considering every nearby door returned whichever the path grazed first,
+    // often an off-route side door reached via a long detour, masking the real
+    // blocker until the tank was already on top of it.
+    static float DistAlongPathToClosedDoor(
+        Player* bot, ChunkedPathfinder::Result const& path,
+        float doorX, float doorY, float maxLookAhead);
+
     // --- Raid / multi-tank leadership ---------------------------------------
     // Elects the single tank that drives the clear for the whole group. A party
     // has one tank, but a raid can have several (one per sub-group); without a

@@ -121,6 +121,20 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
 
+    // A closed door between us and the boss means it's BEYOND it and not actually
+    // reachable yet — even when it's within straight-line engage range (a boss or
+    // its pack right behind the door). Without this, IsAtBossEngage (a pure
+    // distance+floor test, door-blind) fires the at-boss engage, which outranks
+    // door-blocked (30 vs 22) and bee-lines the tank onto/through the door. Stand
+    // down so door-blocked parks at its stand-off; re-evaluates the instant the
+    // door opens. Checked fresh, not via the 500ms-cached blocking-door value,
+    // which can still read empty the moment the boss first comes into range.
+    Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+    float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
+    float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
+    if (DungeonClearUtil::ClosedDoorBetween(bot, bx, by))
+        return false;
+
     // When the long-path cache is anchored (registered route), make sure
     // all intermediate anchors have been resolved before firing. This
     // prevents the bot from "engaging" a boss it's geometrically near but
@@ -185,6 +199,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     GuidVector const& possibleTargets = AI_VALUE(GuidVector, "possible targets");
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
 
+    Unit* trash = nullptr;
     if (DC_USE_CORRIDOR_SCAN)
     {
         // Walk the cached long-path polyline. The polyline spans the
@@ -194,23 +209,42 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
             AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
         if (path.reachable && !path.segments.empty())
         {
-            return DungeonClearUtil::FindBlockingTrashOnPath(
-                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates) != nullptr;
+            trash = DungeonClearUtil::FindBlockingTrashOnPath(
+                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
         }
         // No usable long-path cache — fall back to a single-shot corridor
         // computed inline so the trigger stays live in degraded conditions.
-        Movement::PointsArray corridor;
-        if (DungeonClearUtil::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
+        else
         {
-            return DungeonClearUtil::FindBlockingTrashCorridor(
-                bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates) != nullptr;
+            Movement::PointsArray corridor;
+            if (DungeonClearUtil::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
+                trash = DungeonClearUtil::FindBlockingTrashCorridor(
+                    bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
+            else
+                trash = DungeonClearUtil::FindBlockingTrash(
+                    bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
         }
-        // Fall through to the cone scan below.
     }
+    else
+        trash = DungeonClearUtil::FindBlockingTrash(
+            bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
 
-    return DungeonClearUtil::FindBlockingTrash(bot, *next, DC_TRASH_CONE_RANGE,
-                                               DC_TRASH_CONE_HALF_ANGLE,
-                                               candidates) != nullptr;
+    if (!trash)
+        return false;
+
+    // Don't engage a pack on the FAR side of a closed door. Some doors aren't
+    // modeled as solid in the navmesh (the tank can clip through), so the scan
+    // finds the far-side pack and engage-trash (priority 25) would otherwise
+    // out-prioritise door-blocked (22) and run the tank through the door to it,
+    // dragging the group into the fight. Checked FRESH (not via the 500ms-cached
+    // blocking-door value), because the door often isn't flagged yet at the very
+    // tick the scan first sees the pack — which let the tank run through, clear
+    // it, and walk back. With the pack vetoed, door-blocked parks at the door;
+    // this re-evaluates the instant the door opens.
+    if (DungeonClearUtil::ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY()))
+        return false;
+
+    return true;
 }
 
 bool DungeonClearPartyDiedTrigger::IsActive()
