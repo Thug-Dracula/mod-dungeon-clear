@@ -82,6 +82,20 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear needs eat",
         { NextAction("food", 26.0f) }));
 
+    // Keep the DC loot policy (quality floor / IgnoreChests) enforced for the
+    // WHOLE party while the run is PAUSED — leader and followers alike. The
+    // driving ladder above is inert when paused and followers stop trailing the
+    // leader, so without this every member reverts to the stock playerbots loot
+    // pipeline and loots everything (and follower junk-looting stalls the tank
+    // via IsAnyPartyMemberLooting). Relevance 9 sits just above the stock loot
+    // actions (open loot is 8) so the filter prunes before they pick up; the
+    // action returns false so the surviving loot is still collected this tick.
+    // Inert unless paused — when active the same filter runs inline in
+    // advance/follow-tank. See DungeonClearFilterLootTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear filter loot",
+        { NextAction("dungeon clear filter loot", 9.0f) }));
+
     // Chat-keyword triggers (`dc on/off/skip/status/bosses` + long aliases).
     // Folded in here so there is a single "dungeon clear" strategy: one name to
     // apply (via config or the login hook), which is what lets self-bots —

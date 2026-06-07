@@ -418,3 +418,22 @@ bool DungeonClearNeedsEatTrigger::IsActive()
         return false;
     return bot->GetHealthPct() < static_cast<float>(target);
 }
+
+bool DungeonClearFilterLootTrigger::IsActive()
+{
+    if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+    // Fires on EVERY member of a paused run — the leader AND its followers (the
+    // helper resolves the run owner cross-context, so it is true for the whole
+    // party while paused). Followers are the point: they never set `enabled` and,
+    // while paused, "dungeon clear party tank" goes null so the follow-tank
+    // action that runs their inline loot filter stops firing — they revert to
+    // the stock loot pipeline and grab below-floor junk, which keeps
+    // IsAnyPartyMemberLooting true and stalls the tank. Covers ONLY the paused
+    // gap: during an active run the inline filters in advance/follow-tank already
+    // run. `dc off` clears `enabled`, handing loot fully back to stock.
+    return DungeonClearUtil::IsInPausedDungeonClearRun(bot);
+}

@@ -2346,3 +2346,23 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     DungeonClearUtil::MarkFollowing(bot->GetGUID());
     return Follow(tank, dist);
 }
+
+bool DungeonClearFilterLootAction::Execute(Event /*event*/)
+{
+    // Same loot-floor enforcement the advance/follow-tank actions run inline
+    // while active (see TryLootYield), lifted out so it keeps running while the
+    // run is paused. Drop anything already given up from the stock stack/target,
+    // proactively skip any in-range corpse/chest below DungeonClear.LootMinQuality
+    // (or an un-finishable group-roll, or any chest while IgnoreChests is set),
+    // and time out a corpse we've been camped on. All three only prune the stock
+    // loot stack/target — no movement here.
+    DungeonClearUtil::StripSkippedLoot(botAI);
+    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
+    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
+    // Return false: we only removed loot the bot must NOT take. Returning false
+    // lets the engine fall through to the stock loot pipeline (open loot 8, move
+    // to loot 7, ...) this same tick so whatever survived the filter is still
+    // collected. This action sits just above that pipeline (relevance 9) so the
+    // prune always runs first.
+    return false;
+}

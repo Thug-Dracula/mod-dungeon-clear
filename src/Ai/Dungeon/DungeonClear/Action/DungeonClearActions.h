@@ -123,4 +123,17 @@ public:
     bool Execute(Event event) override;
 };
 
+// Keeps the DC loot policy (DungeonClear.LootMinQuality / IgnoreChests) enforced
+// while the run is PAUSED. The driving ladder is inert when paused, so the
+// loot-floor filter that normally runs inline in advance/follow-tank never gets
+// a tick and the bot reverts to the stock playerbots loot pipeline. This action
+// runs that same filter above the loot pipeline's relevance, then returns false
+// so the stock loot actions still collect whatever survives the filter.
+class DungeonClearFilterLootAction : public Action
+{
+public:
+    DungeonClearFilterLootAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear filter loot") {}
+    bool Execute(Event event) override;
+};
+
 #endif

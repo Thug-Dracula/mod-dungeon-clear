@@ -26,6 +26,7 @@ public:
         creators["dungeon clear disable on cleared"] = &DungeonClearActionContext::disable_on_cleared;
         creators["dungeon clear door blocked"] = &DungeonClearActionContext::door_blocked;
         creators["dungeon clear door reopened"] = &DungeonClearActionContext::door_reopened;
+        creators["dungeon clear filter loot"] = &DungeonClearActionContext::filter_loot;
 
         creators["dc on"] = &DungeonClearActionContext::dc_on;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
@@ -52,6 +53,7 @@ private:
     static Action* disable_on_cleared(PlayerbotAI* ai) { return new DungeonClearDisableOnClearedAction(ai); }
     static Action* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedAction(ai); }
     static Action* door_reopened(PlayerbotAI* ai) { return new DcResumeOnDoorOpenedAction(ai); }
+    static Action* filter_loot(PlayerbotAI* ai) { return new DungeonClearFilterLootAction(ai); }
 
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }

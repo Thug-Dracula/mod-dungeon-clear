@@ -108,4 +108,22 @@ public:
     bool IsActive() override;
 };
 
+// Fires on EVERY member of a DC run that is PAUSED — the leader AND its
+// followers (see DungeonClearUtil::IsInPausedDungeonClearRun). While paused the
+// driving ladder goes inert and "dungeon clear party tank" goes null, so the
+// loot-floor filter that normally runs inline in the advance (leader) and
+// follow-tank (follower) actions never gets a tick: the party reverts to the
+// stock playerbots loot pipeline and loots everything, ignoring the DC loot
+// policy (DungeonClear.LootMinQuality / IgnoreChests). Followers grabbing
+// below-floor junk also keep IsAnyPartyMemberLooting true, which stalls the
+// tank. This trigger fills that gap: it keeps the same filter running every
+// non-combat tick while paused, so the DC loot settings stay in force for the
+// whole party exactly as they do during an active run.
+class DungeonClearFilterLootTrigger : public Trigger
+{
+public:
+    DungeonClearFilterLootTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear filter loot", 1) {}
+    bool IsActive() override;
+};
+
 #endif

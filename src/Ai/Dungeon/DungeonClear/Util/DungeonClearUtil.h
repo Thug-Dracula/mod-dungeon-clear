@@ -164,6 +164,20 @@ public:
     // AND non-leader (off-)tanks alike — follows it via the follow-tank trigger.
     static bool IsDungeonClearLeader(Player* bot);
 
+    // True when `bot` belongs to a dungeon-clear run that is currently PAUSED —
+    // either it is the elected leader and its own run is paused, or it is a
+    // follower whose elected leader's run is paused. Reads the leader's
+    // enabled+paused flags cross-context (same pattern as DungeonClearPartyTankValue).
+    //
+    // Unlike the "dungeon clear party tank" value — which deliberately resolves
+    // to null while paused so followers STOP trailing the leader and revert to
+    // the player — this stays true through a pause. The loot-floor filter (see
+    // DungeonClearFilterLootTrigger) uses it so DC's loot policy keeps applying
+    // to the WHOLE party while paused: without it, paused followers fall back to
+    // the stock playerbots loot pipeline, grab below-floor junk, and keep
+    // IsAnyPartyMemberLooting true — which stalls the tank.
+    static bool IsInPausedDungeonClearRun(Player* bot);
+
     // The HP/mana percentages the between-pulls rest gate (IsPartyReady) holds
     // for. These default to mod-playerbots' own drink/eat stop thresholds
     // (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana): a stock bot only eats

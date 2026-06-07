@@ -855,6 +855,25 @@ bool DungeonClearUtil::IsDungeonClearLeader(Player* bot)
     return bot && FindLeaderTank(bot) == bot;
 }
 
+bool DungeonClearUtil::IsInPausedDungeonClearRun(Player* bot)
+{
+    if (!bot)
+        return false;
+
+    // Resolve the run owner from any member (the leader resolves to itself).
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* leaderCtx = leaderAI->GetAiObjectContext();
+    return leaderCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
+           leaderCtx->GetValue<bool>("dungeon clear paused")->Get();
+}
+
 bool DungeonClearUtil::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread)
 {
     if (!bot)
