@@ -321,6 +321,7 @@ namespace
             DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
         ctx->GetValue<bool>("dungeon clear paused")->Set(false);
         ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
+        ctx->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
         ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
@@ -2029,6 +2030,12 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             // than a generic hold (manual pause stamps its own reason instead).
             context->GetValue<std::string&>("dungeon clear pause reason")->Get() =
                 "a closed door is blocking the path";
+            // Stash THIS door's GUID so DungeonClearDoorReopenedTrigger can poll
+            // it and auto-resume the instant a player opens it (door is non-null
+            // here — the can-open branch above already required it). The null-door
+            // fallback path below leaves this empty, so it simply stays manual.
+            context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(
+                door ? door->GetGUID() : ObjectGuid::Empty);
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
             bot->StopMovingOnCurrentPos();

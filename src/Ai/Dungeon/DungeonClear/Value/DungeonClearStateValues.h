@@ -58,6 +58,25 @@ private:
     std::string data;
 };
 
+// GUID of the closed door the tank auto-paused in front of (see
+// DungeonClearDoorBlockedAction's can't-open branch). Empty unless the run is
+// paused specifically for an unopenable door. While it is set,
+// DungeonClearDoorReopenedTrigger polls this one door every tick; the moment it
+// reads OPEN — a human walked up and opened it — or it despawns/unresolves, the
+// trigger auto-resumes the clear so the player doesn't ALSO have to hit Resume.
+// Stamped ONLY by the door auto-pause site: a manual `dc pause` deliberately
+// leaves it empty so opening some unrelated door can never auto-resume a
+// hand-held pause. Cleared alongside the paused flag on resume / dc on / dc off
+// / death / cleared so a stale door can't trigger a phantom resume next pause.
+class DungeonClearPausedDoorValue : public ManualSetValue<ObjectGuid>
+{
+public:
+    DungeonClearPausedDoorValue(PlayerbotAI* botAI)
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear paused door")
+    {
+    }
+};
+
 class DungeonClearSkippedValue : public ManualSetValue<std::unordered_set<uint32>&>
 {
 public:

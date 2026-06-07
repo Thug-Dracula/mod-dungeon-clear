@@ -46,6 +46,15 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear door blocked",
         { NextAction("dungeon clear door blocked", 22.0f) }));
 
+    // Auto-resume once a player opens the door we auto-paused at. Fires only
+    // while paused for that specific door (see DungeonClearDoorReopenedTrigger),
+    // when the rest of the driving ladder is inert, so its relevance only has to
+    // clear the stock wander/idle actions — keep it high so nothing preempts the
+    // resume.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear door reopened",
+        { NextAction("dungeon clear door reopened", 90.0f) }));
+
     // Default: walk toward the next boss. Lowest of the bunch but above
     // grind (4) / new rpg (11). Wander strategies are also suppressed by
     // DungeonClearMultiplier while enabled.

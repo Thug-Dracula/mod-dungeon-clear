@@ -142,16 +142,7 @@ namespace
         for (auto const& kv : map->GetGameObjectBySpawnIdStore())
         {
             GameObject* go = kv.second;
-            if (!go || !go->IsInWorld())
-                continue;
-            GameObjectTemplate const* info = go->GetGOInfo();
-            if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
-                continue;
-            if (info->door.ignoredByPathing)
-                continue;
-            bool const startOpen = info->door.startOpen != 0;
-            bool const closed = (go->GetGoState() == GO_STATE_READY) != startOpen;
-            if (!closed)
+            if (!DungeonClearUtil::IsDoorClosed(go))
                 continue;
             float const gx = go->GetPositionX();
             float const gy = go->GetPositionY();
@@ -474,6 +465,24 @@ bool DungeonClearUtil::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
     return true;
 }
 
+bool DungeonClearUtil::IsDoorClosed(GameObject const* go)
+{
+    if (!go || !go->IsInWorld())
+        return false;
+    GameObjectTemplate const* info = go->GetGOInfo();
+    if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
+        return false;
+    // Authored non-blocking (decorative / always-passable) doors never count.
+    if (info->door.ignoredByPathing)
+        return false;
+    // The GOState->open/closed mapping is inverted by the door.startOpen
+    // template flag: a normal door (startOpen=0) is closed at GO_STATE_READY,
+    // but a gate that spawns open (startOpen=1) also sits at GO_STATE_READY
+    // while appearing OPEN. So closed iff GO_STATE_READY xor startOpen.
+    bool const startOpen = info->door.startOpen != 0;
+    return (go->GetGoState() == GO_STATE_READY) != startOpen;
+}
+
 bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
                                          float corridorWidth)
 {
@@ -490,19 +499,7 @@ bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
     for (auto const& kv : map->GetGameObjectBySpawnIdStore())
     {
         GameObject* go = kv.second;
-        if (!go || !go->IsInWorld())
-            continue;
-        GameObjectTemplate const* info = go->GetGOInfo();
-        if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
-            continue;
-        // Authored non-blocking (decorative / always-passable) doors never count.
-        if (info->door.ignoredByPathing)
-            continue;
-        // Closed iff GO_STATE_READY xor startOpen (mirrors the client; same
-        // inversion handled in DungeonClearBlockingDoorValue::Calculate).
-        bool const startOpen = info->door.startOpen != 0;
-        bool const closed = (go->GetGoState() == GO_STATE_READY) != startOpen;
-        if (!closed)
+        if (!IsDoorClosed(go))
             continue;
 
         // Within corridorWidth of the bot->target segment? DistSqToSegment2D

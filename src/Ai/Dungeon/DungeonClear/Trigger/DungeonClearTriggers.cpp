@@ -330,6 +330,28 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     return !door.IsEmpty();
 }
 
+bool DungeonClearDoorReopenedTrigger::IsActive()
+{
+    if (!bot || bot->isDead())
+        return false;
+    // Only meaningful while THIS bot's own run is paused for a door (the leader's
+    // paused flag). A manual `dc pause` leaves the paused-door GUID empty, so
+    // opening some unrelated door never auto-resumes a hand-held pause.
+    if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
+    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear paused door");
+    if (doorGuid.IsEmpty())
+        return false;
+
+    // Resume once the blocker is gone: the door now reads OPEN (a player opened
+    // it), or it despawned / its grid unloaded (GetGameObject returns null). In
+    // either case the corridor is no longer held — IsDoorClosed treats a null GO
+    // as not-closed, so the single test covers both.
+    GameObject* door = botAI->GetGameObject(doorGuid);
+    return !DungeonClearUtil::IsDoorClosed(door);
+}
+
 bool DungeonClearFollowTankTrigger::IsActive()
 {
     if (!bot || bot->isDead() || bot->IsInCombat())

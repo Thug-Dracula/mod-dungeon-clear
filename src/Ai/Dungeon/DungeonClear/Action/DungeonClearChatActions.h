@@ -42,6 +42,18 @@ public:
     bool Execute(Event event) override;
 };
 
+// Auto-resume fired by DungeonClearDoorReopenedTrigger: when the run is paused
+// for a door the tank couldn't open and a player then opens it, this resumes on
+// the same boss without the player also hitting Resume. Shares the manual
+// resume's cache-rebuild path; refuses (and the trigger retries) while a party
+// member is dead. Not a chat keyword — driven only by the trigger.
+class DcResumeOnDoorOpenedAction : public Action
+{
+public:
+    DcResumeOnDoorOpenedAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear door reopened") {}
+    bool Execute(Event event) override;
+};
+
 class DcStatusAction : public Action
 {
 public:

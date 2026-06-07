@@ -15,6 +15,7 @@
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
 
 namespace
@@ -120,26 +121,12 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     for (auto const& kv : map->GetGameObjectBySpawnIdStore())
     {
         GameObject* go = kv.second;
-        if (!go || !go->IsInWorld())
+        // Blocking door currently shut (the "block the corridor" state). The
+        // helper folds the type / ignoredByPathing / startOpen-inverted GOState
+        // checks; see DungeonClearUtil::IsDoorClosed.
+        if (!DungeonClearUtil::IsDoorClosed(go))
             continue;
         GameObjectTemplate const* info = go->GetGOInfo();
-        if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
-            continue;
-        // Doors flagged ignoredByPathing are authored as non-blocking for
-        // navigation (decorative / always-passable) — never stall on them.
-        if (info->door.ignoredByPathing)
-            continue;
-        // Is the door VISUALLY shut (the "block the corridor" state)? The
-        // GOState→open/closed mapping is inverted by the door.startOpen
-        // template flag: for a normal door (startOpen=0) GO_STATE_READY is
-        // closed and GO_STATE_ACTIVE is open, but a gate that spawns open
-        // (startOpen=1) sits at GO_STATE_READY while appearing OPEN. So a
-        // raw "state == GO_STATE_READY" test false-positives on every
-        // spawn-open gate. Mirror the client: closed iff READY xor startOpen.
-        bool const startOpen = info->door.startOpen != 0;
-        bool const closed = (go->GetGoState() == GO_STATE_READY) != startOpen;
-        if (!closed)
-            continue;
 
         float const gx = go->GetPositionX();
         float const gy = go->GetPositionY();

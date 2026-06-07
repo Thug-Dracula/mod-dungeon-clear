@@ -114,6 +114,37 @@ namespace
             mm->Clear();
         bot->StopMovingOnCurrentPos();
     }
+
+    // Shared resume path. Rebuilds the transient navigation cache so Advance
+    // restarts fresh from the bot's current position, then clears the pause
+    // flags (paused / reason / the auto-paused door). Boss progress (selected
+    // boss, skipped set, sticky boss) is deliberately left intact — that is the
+    // whole point of resume vs. a fresh `dc on`. Used by both the manual
+    // `dc pause` resume branch and the door auto-resume; the caller announces
+    // afterward (the two phrase it differently).
+    void ResetForResume(AiObjectContext* context)
+    {
+        context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
+        context->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
+        context->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
+        context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
+        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
+        context->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
+        context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
+        context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+        context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
+        context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+        context->GetValue<Position&>("dungeon clear last position")->Get() = Position();
+        context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
+        context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+        context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
+        context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
+        context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+
+        context->GetValue<bool>("dungeon clear paused")->Set(false);
+        context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
+        context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+    }
 }
 
 bool DcOnAction::Execute(Event event)
@@ -176,6 +207,7 @@ bool DcOnAction::Execute(Event event)
     DungeonClearUtil::MarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
+    context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
@@ -226,6 +258,7 @@ bool DcOffAction::Execute(Event event)
     DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
+    context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
@@ -629,6 +662,9 @@ bool DcPauseAction::Execute(Event event)
         // tank auto-pausing on a door it can't open. Read by BuildStatusPayload.
         context->GetValue<std::string&>("dungeon clear pause reason")->Get() =
             "paused at your request";
+        // A manual hold is never tied to a door — clear any stale auto-paused
+        // door so opening some unrelated door can't auto-resume this pause.
+        context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
 
         // Stop the in-flight advance glide so it doesn't coast to its endpoint.
         // Only out of combat: mid-fight the combat engine owns movement and we
@@ -649,33 +685,38 @@ bool DcPauseAction::Execute(Event event)
         return false;
     }
 
-    // Rebuild the transient navigation cache so Advance starts fresh from the
-    // bot's current position. Boss progress (selected boss, skipped set, sticky
-    // boss) is deliberately left intact — that's the whole point of resume vs.
-    // a fresh dc on.
-    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-    context->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
-    context->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
-    context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
-    context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-    context->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
-    context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
-    context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
-    context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
-    context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    context->GetValue<Position&>("dungeon clear last position")->Get() = Position();
-    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
-    context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-    context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
-    context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
-
-    context->GetValue<bool>("dungeon clear paused")->Set(false);
-    context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
+    // Rebuild the transient navigation cache and clear the pause flags. Boss
+    // progress is preserved (see ResetForResume).
+    ResetForResume(context);
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
     DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tResumed. Heading to " + target + ".");
+    botAI->DoSpecificAction("dc status", event, true);
+    return true;
+}
+
+bool DcResumeOnDoorOpenedAction::Execute(Event event)
+{
+    // Leader-only: a follower has no paused flag of its own to clear — it mirrors
+    // the leader via the multiplier / party-tank value.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return false;
+    if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
+    // Don't unpause straight into a wipe (mirrors `dc on` / the manual resume).
+    // The trigger keeps firing while the door stays open, so this retries on its
+    // own once everyone is back up.
+    if (AnyPartyMemberDead(bot))
+        return false;
+
+    ResetForResume(context);
+
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::string const target = next.has_value() ? next->name : "the next boss";
+    DungeonClearUtil::SendAddonMessage(
+        botAI, "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

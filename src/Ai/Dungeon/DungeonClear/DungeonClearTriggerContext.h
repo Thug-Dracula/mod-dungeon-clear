@@ -24,6 +24,7 @@ public:
         creators["dungeon clear stalled"] = &DungeonClearTriggerContext::stalled;
         creators["dungeon clear follow tank"] = &DungeonClearTriggerContext::follow_tank;
         creators["dungeon clear door blocked"] = &DungeonClearTriggerContext::door_blocked;
+        creators["dungeon clear door reopened"] = &DungeonClearTriggerContext::door_reopened;
         creators["dungeon clear needs drink"] = &DungeonClearTriggerContext::needs_drink;
         creators["dungeon clear needs eat"] = &DungeonClearTriggerContext::needs_eat;
 
@@ -46,6 +47,7 @@ private:
     static Trigger* stalled(PlayerbotAI* ai) { return new DungeonClearStalledTrigger(ai); }
     static Trigger* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankTrigger(ai); }
     static Trigger* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedTrigger(ai); }
+    static Trigger* door_reopened(PlayerbotAI* ai) { return new DungeonClearDoorReopenedTrigger(ai); }
     static Trigger* needs_drink(PlayerbotAI* ai) { return new DungeonClearNeedsDrinkTrigger(ai); }
     static Trigger* needs_eat(PlayerbotAI* ai) { return new DungeonClearNeedsEatTrigger(ai); }
 

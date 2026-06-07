@@ -16,6 +16,7 @@
 class Player;
 class Unit;
 class Creature;
+class GameObject;
 class InstanceScript;
 class PlayerbotAI;
 class AiObjectContext;
@@ -108,6 +109,16 @@ public:
     // all gate on this so they agree on "are we at the boss".
     static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                DungeonBossInfo const& boss, float staticRange);
+
+    // True when `go` is a navigation-blocking door currently in its CLOSED
+    // (corridor-blocking) visual state. Encapsulates the startOpen-inverted
+    // GOState test shared by the blocking-door scan and the door-reopened
+    // auto-resume trigger: the GOState->open/closed mapping is inverted by the
+    // door.startOpen template flag, so "closed" is `GO_STATE_READY xor
+    // startOpen` (mirrors the client). Non-door GOs, doors flagged
+    // ignoredByPathing (authored always-passable), and null/out-of-world GOs
+    // all read NOT closed.
+    static bool IsDoorClosed(GameObject const* go);
 
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits on the straight 2D line from
     // the bot to (tx,ty), within `corridorWidth` of it. Used to veto engaging a

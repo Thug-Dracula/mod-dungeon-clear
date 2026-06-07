@@ -74,6 +74,19 @@ public:
     bool IsActive() override;
 };
 
+// Fires only while the run is PAUSED for a door the tank couldn't open
+// (DungeonClearDoorBlockedAction stashed its GUID in "dungeon clear paused
+// door"). Returns true the moment that specific door reads OPEN — a human
+// walked up and opened it — or it despawns/unresolves, so the tank can
+// auto-resume the route without the player also hitting Resume. Inert for a
+// manual `dc pause` (which leaves the paused-door GUID empty).
+class DungeonClearDoorReopenedTrigger : public Trigger
+{
+public:
+    DungeonClearDoorReopenedTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear door reopened", 1) {}
+    bool IsActive() override;
+};
+
 // Rest-target triggers. Fire on every bot in an active DC run (tank AND
 // followers) while out of combat and below the run's chosen rest target
 // (DungeonClear.RestManaPct / RestHealthPct). They drive the stock playerbots
