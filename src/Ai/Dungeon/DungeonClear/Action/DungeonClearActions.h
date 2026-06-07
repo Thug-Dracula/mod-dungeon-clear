@@ -136,4 +136,78 @@ public:
     bool Execute(Event event) override;
 };
 
+// --- Advanced pulls -------------------------------------------------------
+// Leader-only, non-combat. The out-of-combat half of the pull-to-camp maneuver:
+//   Idle      -> stamp camp at the tank's spot, signal Forming.
+//   Forming   -> hold a beat so followers go passive, then -> Advancing.
+//   Advancing -> run in to the trash pack to grab aggro. The moment combat
+//                starts, control passes to DungeonClearPullManeuverAction on the
+//                combat engine. Aborts (-> normal walk-in engage) if the run-in
+//                wedges or overshoots without aggroing.
+//   Engage    -> out-of-combat cleanup: reset to Idle so the next pull is fresh.
+class DungeonClearPullAction : public DungeonClearEngageActionBase
+{
+public:
+    DungeonClearPullAction(PlayerbotAI* botAI) : DungeonClearEngageActionBase(botAI, "dungeon clear pull") {}
+    bool Execute(Event event) override;
+};
+
+// Leader-only, COMBAT engine. The in-combat half of the maneuver: once aggro is
+// confirmed it runs the tank back to the camp (suppressing stock chase/attack by
+// owning the tick), then hands the fight to stock combat at camp (phase Engage),
+// which is also when ReapStrandedPassives releases the party. Gives up to fight
+// in place if the return leg wedges.
+class DungeonClearPullManeuverAction : public MovementAction
+{
+public:
+    DungeonClearPullManeuverAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear pull maneuver") {}
+    bool Execute(Event event) override;
+};
+
+// Shared body for the two follower-only "hold the party at camp" actions. Puts
+// the bot passive (DungeonClearUtil::ApplyFollowerPassive), cancels any stale
+// follow generator, walks it to the leader's camp, and OWNS the tick (always
+// returns true while the leader is in a holding pull phase) so neither
+// follow-tank nor stock follow can drag the follower off camp. The two concrete
+// subclasses below register this same body under different names on different
+// engines.
+class DungeonClearCampHoldActionBase : public MovementAction
+{
+public:
+    DungeonClearCampHoldActionBase(PlayerbotAI* botAI, std::string const& name)
+        : MovementAction(botAI, name)
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// Non-combat engine: holds the party at camp while the leader pulls and the
+// follower is OUT of combat (DungeonClearHoldAtCampTrigger).
+class DungeonClearHoldAtCampAction : public DungeonClearCampHoldActionBase
+{
+public:
+    DungeonClearHoldAtCampAction(PlayerbotAI* botAI)
+        : DungeonClearCampHoldActionBase(botAI, "dungeon clear hold at camp")
+    {
+    }
+};
+
+// Combat engine: the same hold, for when the follower is IN combat. A held
+// follower enters combat the instant the tank does (group combat), which
+// switches it to the combat engine where the non-combat hold can't run AND
+// PassiveMultiplier explicitly green-lights stock "follow" — so without this the
+// party trails the tank the moment a pull aggros. The action NAME deliberately
+// contains "stay" so PassiveMultiplier's substring whitelist lets it run while
+// the follower is +passive; registered above the stock combat movers so it owns
+// the tick and pins the follower at camp until release. See
+// DungeonClearHoldAtCampCombatTrigger.
+class DungeonClearStayAtCampAction : public DungeonClearCampHoldActionBase
+{
+public:
+    DungeonClearStayAtCampAction(PlayerbotAI* botAI)
+        : DungeonClearCampHoldActionBase(botAI, "dungeon clear stay at camp")
+    {
+    }
+};
+
 #endif

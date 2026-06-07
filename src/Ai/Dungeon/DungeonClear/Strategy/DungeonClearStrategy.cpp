@@ -20,6 +20,15 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear all cleared",
         { NextAction("dungeon clear disable on cleared", 50.0f) }));
 
+    // Advanced pull (LOS pull-to-camp). Sits ABOVE the engage triggers so, when
+    // pull mode is on, the tank runs the pull-to-camp maneuver instead of the
+    // normal walk-in — but it is trash-only (its trigger stands down at the boss),
+    // so the at-boss engage below still owns boss pulls. Inert when pull mode is
+    // off. See DungeonClearPullTrigger / DungeonClearPullAction.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear pull",
+        { NextAction("dungeon clear pull", 35.0f) }));
+
     // Within engage range of next boss.
     triggers.push_back(new TriggerNode(
         "dungeon clear at boss",
@@ -69,6 +78,13 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear follow tank",
         { NextAction("dungeon clear follow tank", 25.0f) }));
 
+    // While the leader is mid-pull, non-leader followers hold passive at the camp
+    // instead of trailing the tank into the pull. Relevance above follow-tank (25)
+    // so it preempts the trail for the duration of the maneuver; inert otherwise.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hold at camp",
+        { NextAction("dungeon clear hold at camp", 28.0f) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance above advance (15) and follow-tank (25) so a bot below target
     // sits and rests instead of walking; safely below the engage triggers,
@@ -112,6 +128,11 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     // Single toggle: pauses when running, resumes when paused.
     triggers.push_back(new TriggerNode("dc pause",            { NextAction("dc pause", chatRel) }));
     triggers.push_back(new TriggerNode("dungeon clear pause", { NextAction("dc pause", chatRel) }));
+    // Advanced-pull toggle (`dc pull [on|off]`). The keyword trigger keys differ
+    // from the engine "dungeon clear pull" trigger to avoid a creator collision:
+    // "dungeon clear pull keyword" listens for the chat phrase "dungeon clear pull".
+    triggers.push_back(new TriggerNode("dc pull",                  { NextAction("dc pull", chatRel) }));
+    triggers.push_back(new TriggerNode("dungeon clear pull keyword", { NextAction("dc pull", chatRel) }));
     triggers.push_back(new TriggerNode("dc status",         { NextAction("dc status", chatRel) }));
     triggers.push_back(new TriggerNode("dc bosses",         { NextAction("dc bosses", chatRel) }));
 }
@@ -119,4 +140,30 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 void DungeonClearStrategy::InitMultipliers(std::vector<Multiplier*>& multipliers)
 {
     multipliers.push_back(new DungeonClearMultiplier(botAI));
+}
+
+void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
+{
+    // The in-combat half of the advanced pull: once the tank aggros, run it back
+    // to the camp before releasing the party. Relevance above the stock combat
+    // movement/attack actions (MoveChase ~30, attack lines) so the maneuver owns
+    // the tick and the tank doesn't fight at the pack. Inert unless the bot is the
+    // leader and mid-pull (see DungeonClearPullManeuverTrigger).
+    triggers.push_back(new TriggerNode(
+        "dungeon clear pull maneuver",
+        { NextAction("dungeon clear pull maneuver", 60.0f) }));
+
+    // Combat-engine hold for held FOLLOWERS. A held follower enters combat the
+    // instant the tank aggros (group combat) and switches to this engine, where
+    // the non-combat hold-at-camp can't run and PassiveMultiplier explicitly
+    // permits stock "follow" while the bot is +passive — so without this the
+    // party trails the tank the moment a pull starts (the "passive isn't enough"
+    // bug). The action name contains "stay" so PassiveMultiplier's substring
+    // whitelist lets it through; relevance above the stock combat movers (follow
+    // 1.0, move-from-group 1.0, MoveChase ~30) so it owns the tick and pins the
+    // follower at camp. Inert at Engage (not a holding phase), so the released
+    // party fights normally. Leader-exempt via the trigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear stay at camp",
+        { NextAction("dungeon clear stay at camp", 60.0f) }));
 }

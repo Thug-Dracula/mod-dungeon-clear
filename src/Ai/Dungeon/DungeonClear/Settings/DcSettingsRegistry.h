@@ -56,6 +56,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "DynamicAggroRange",     DcType::Bool,   1,   0,   1,  true  },
     { "AggroRangeMargin",      DcType::Float,  2,   0,  10,  true  },
 
+    // Advanced pull (LOS pull-to-camp). Setback is how far BACK along the cleared
+    // route the camp is placed (and therefore how far the tank drags the pack) —
+    // dungeon mobs have no leash, so this is purely "how much room the party
+    // gets". SafeRadius is the clearance the camp keeps from any OTHER pack so the
+    // fight can't aggro a neighbour; if the setback point isn't clear the placer
+    // walks further back (up to MaxDrag) until it is. See ComputeSafeCamp.
+    { "PullSetback",           DcType::Float, 40,  10, 100,  true  },
+    { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
+    { "PullMaxDrag",           DcType::Float,100,  20, 200,  true  },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

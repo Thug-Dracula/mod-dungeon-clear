@@ -43,6 +43,14 @@ namespace
     // the same FindBlockingTrashOnPath band, so these must stay in sync.
     constexpr float DC_CORRIDOR_WIDTH = 18.0f;
 
+    // Advanced-pull commit range: a pull is only STARTED once its target pack is
+    // within this distance, so the camp (stamped at the tank's spot) stays close
+    // enough that the run-in reaches the pack and the drag-back is short. The
+    // corridor scan sees packs out to ~35yd, so without this the camp lands in
+    // the run-in's overshoot dead band and every pull after the first whiffs.
+    // Must stay aligned with DC_PULL_START_RANGE in DungeonClearActions.cpp.
+    constexpr float DC_PULL_START_RANGE = 20.0f;
+
     // Between-pulls wait policy. Tank holds advance/trash-engage until the party
     // has caught up, rested, and tank-side loot is collected. The HP/mana
     // recovery thresholds come from DungeonClearUtil::RestMin{Hp,Mp}Pct(), which
@@ -73,8 +81,17 @@ namespace
     {
         if (AI_VALUE(bool, "has available loot"))
             return false;
-        float const maxSpread = sConfigMgr->GetOption<float>(
+        float maxSpread = sConfigMgr->GetOption<float>(
             "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
+        // In advanced-pull mode the party deliberately holds back at the camp while
+        // the tank scouts ahead, so a spread check measured against the TANK would
+        // never pass once the tank moves out — and the tank would stop pulling
+        // after the first camp. Drop the spread requirement here; the Forming
+        // party-set gate ensures the party is actually at the (new) camp before the
+        // tag, and the rest (HP/mana) check below still holds the pull until the
+        // party has recovered at camp.
+        if (AI_VALUE(bool, "dungeon clear pull mode"))
+            maxSpread = 100000.0f;
         return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
                                               DungeonClearUtil::RestMinMpPct(bot), maxSpread);
     }
@@ -252,6 +269,22 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
     }
 
+    // In advanced-pull mode the pull pipeline OWNS trash packs: it LOS-pulls them
+    // to camp rather than engaging in place. Stand down so the tank glides in
+    // under Advance until the pull-start range, instead of walking up and fighting
+    // here (engage-trash outranks advance, so without this it would preempt the
+    // pull for any pack in the 20-35yd band the pull is deliberately waiting to
+    // close). The one exception is a pack a prior pull gave up on (abort target):
+    // fall through to the normal walk-in so the run never livelocks on it.
+    if (AI_VALUE(bool, "dungeon clear pull mode") &&
+        trash->GetGUID() != AI_VALUE(ObjectGuid, "dungeon clear pull abort target"))
+    {
+        DC_PULL_DEBUG("[DC:{}] blocking-trash: pull mode owns pack {} ({:.1f}yd) -> "
+                      "stand down for the pull pipeline",
+                      bot->GetName(), trash->GetGUID().ToString(), bot->GetExactDist(trash));
+        return false;
+    }
+
     return true;
 }
 
@@ -365,6 +398,18 @@ bool DungeonClearFollowTankTrigger::IsActive()
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
 
+    // In advanced-pull mode the party HOLDS and leapfrogs camp-to-camp instead of
+    // following the tank (see DungeonClearHoldAtCampTrigger) — following would
+    // trail the tank forward into every pull, which is the "party piles onto the
+    // pull" chaos. Stand down whenever a camp is established so hold-at-camp owns
+    // the follower; it also tears down any leftover MoveFollow generator itself.
+    {
+        Position camp;
+        bool passive = false;
+        if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+            return false;
+    }
+
     // Redirect every non-leader bot to the leader — non-tanks AND non-leader
     // (off-)tanks in a raid. The leader resolves "party tank" to itself, so the
     // `tank != bot` guard below excludes only the leader (it doesn't follow
@@ -425,6 +470,137 @@ bool DungeonClearNeedsEatTrigger::IsActive()
     if (target == 0)
         return false;
     return bot->GetHealthPct() < static_cast<float>(target);
+}
+
+bool DungeonClearPullTrigger::IsActive()
+{
+    if (!IsEnabled(context, bot))  // enabled, not paused, leader
+        return false;
+    if (!bot || bot->isDead())
+        return false;
+    if (!AI_VALUE(bool, "dungeon clear pull mode"))
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");
+
+    // Mid-pull pre-combat (Forming/Advancing) and the post-fight Engage cleanup
+    // run on this non-combat engine, but only while out of combat — the instant
+    // the tank aggros, control passes to the combat maneuver trigger.
+    if (phase != static_cast<uint32>(DcPullPhase::Idle))
+        return !bot->IsInCombat();
+
+    // Idle: decide whether to START a pull. Must be out of combat, not at the
+    // boss (trash-only), and the between-pulls gates clear (loot/rest/catch-up).
+    if (bot->IsInCombat())
+        return false;
+
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    if (!next.has_value())
+        return false;
+    if (DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+        return false;
+    if (!IsBetweenPullsReady(bot, context))
+        return false;
+
+    Unit* trash = DungeonClearUtil::FindPullTarget(botAI, *next);
+    if (!trash)
+        return false;
+
+    // Don't loop on a pack a previous pull gave up on — let engage-trash walk in.
+    if (AI_VALUE(ObjectGuid, "dungeon clear pull abort target") == trash->GetGUID())
+    {
+        DC_PULL_DEBUG("[DC:{}] pull trigger: target {} is the abort target -> defer "
+                      "to normal engage", bot->GetName(), trash->GetGUID().ToString());
+        return false;
+    }
+
+    // Only commit to a pull once the pack is within run-in reach. Until then the
+    // blocking-trash trigger stands down in pull mode (see below) and Advance
+    // glides the tank closer, so the camp stamped at commit time is always close
+    // enough for the run-in to reach the pack and the drag-back to stay short.
+    float const toTrash = bot->GetExactDist2d(trash);
+    if (toTrash > DC_PULL_START_RANGE)
+    {
+        DC_PULL_DEBUG("[DC:{}] pull trigger: target {} at {:.1f}yd > start range {:.1f} "
+                      "-> hold, glide closer", bot->GetName(),
+                      trash->GetGUID().ToString(), toTrash, DC_PULL_START_RANGE);
+        return false;
+    }
+
+    DC_PULL_DEBUG("[DC:{}] pull trigger: commit to pull — target {} at {:.1f}yd",
+                  bot->GetName(), trash->GetGUID().ToString(), toTrash);
+    return true;
+}
+
+bool DungeonClearPullManeuverTrigger::IsActive()
+{
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return false;
+    if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear pull mode"))
+        return false;
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return false;
+
+    uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");
+    // Forming is included so combat taken DURING the pre-run-in retreat/dwell is
+    // not a dead zone: the non-combat pull trigger goes silent the instant the
+    // tank is in combat (it returns !IsInCombat for any non-Idle phase), and if
+    // the maneuver didn't pick Forming up here NOTHING would drive the pull —
+    // the party would stay passive while the tank solos until the mob dies. With
+    // Forming handled, an early aggro hands straight to the drag-back maneuver.
+    //
+    // Idle is included for the SAME reason one phase earlier: while the tank is
+    // merely scouting toward the next pack (phase Idle, not yet committed) a
+    // patrol/add can aggro it. Without this the maneuver wouldn't fire and stock
+    // combat would fight in place wherever the tank happened to be — the "starts
+    // combat right here instead of moving back to camp" bug. With Idle handled,
+    // any unplanned aggro also drags back to the held party at camp first.
+    // (Engage is deliberately still excluded so the camp fight itself runs
+    // normally — by then the phase is Engage, never Idle.)
+    return phase == static_cast<uint32>(DcPullPhase::Idle) ||
+           phase == static_cast<uint32>(DcPullPhase::Forming) ||
+           phase == static_cast<uint32>(DcPullPhase::Advancing) ||
+           phase == static_cast<uint32>(DcPullPhase::Returning);
+}
+
+bool DungeonClearHoldAtCampTrigger::IsActive()
+{
+    if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+    // The leader drives the pull; it never holds at its own camp.
+    if (DungeonClearUtil::IsDungeonClearLeader(bot))
+        return false;
+
+    // Hold at camp throughout pull mode (NOT just mid-maneuver): in pull mode the
+    // party leapfrogs camp-to-camp and never follows the tank, so this fires while
+    // the tank is merely scouting between pulls too. Passive is applied by the
+    // action only during the holding phases (see GetLeaderCampHold's passiveOut).
+    Position camp;
+    bool passive = false;
+    return DungeonClearUtil::GetLeaderCampHold(bot, camp, passive);
+}
+
+bool DungeonClearHoldAtCampCombatTrigger::IsActive()
+{
+    // Combat-engine twin of DungeonClearHoldAtCampTrigger, but it fires ONLY
+    // during the holding pull phases (passiveOut) — when the tank is tagging and
+    // the party must stay pinned and passive across the combat boundary the pull
+    // drags it over. During the camp fight (Engage) and any unplanned aggro while
+    // scouting (Idle) it deliberately does NOT fire, so the party fights normally.
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return false;
+    // The leader drives the pull; it never holds at its own camp.
+    if (DungeonClearUtil::IsDungeonClearLeader(bot))
+        return false;
+
+    Position camp;
+    bool passive = false;
+    if (!DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+        return false;
+    return passive;
 }
 
 bool DungeonClearFilterLootTrigger::IsActive()

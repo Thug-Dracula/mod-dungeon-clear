@@ -6,12 +6,33 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARUTIL_H
 #define _PLAYERBOT_DUNGEONCLEARUTIL_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "Log.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectGuid.h"
+#include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+
+// --- Advanced-pull log channel --------------------------------------------
+// Pull mode (LOS pull-to-camp) gets its OWN log category, a child of the main
+// DungeonClear channel (playerbots.dungeonclear.pull). It inherits the parent
+// appender by default, but can be split to its own file and raised to Debug /
+// Trace independently — without flooding the main channel — via
+// Logger.playerbots.dungeonclear.pull in mod_dungeon_clear.conf. The feature is
+// young and chatty to debug, so every pull state-machine transition, camp
+// decision, leg watchdog, and passive-management step routes through these.
+//
+//   DC_PULL_INFO  — milestones a maintainer wants even at the default level
+//                   (camp marked, aggro confirmed, party released, aborts).
+//   DC_PULL_DEBUG — per-decision detail (distances, gate outcomes, phase math).
+//   DC_PULL_TRACE — per-tick spam (run-in/return movement, hold-at-camp parking).
+#define DC_PULL_LOG_CATEGORY "playerbots.dungeonclear.pull"
+#define DC_PULL_INFO(...)  LOG_INFO(DC_PULL_LOG_CATEGORY, __VA_ARGS__)
+#define DC_PULL_DEBUG(...) LOG_DEBUG(DC_PULL_LOG_CATEGORY, __VA_ARGS__)
+#define DC_PULL_TRACE(...) LOG_TRACE(DC_PULL_LOG_CATEGORY, __VA_ARGS__)
 
 class Player;
 class Unit;
@@ -21,6 +42,21 @@ class InstanceScript;
 class PlayerbotAI;
 class AiObjectContext;
 struct DungeonBossInfo;
+struct Position;
+
+// Advanced-pull (LOS pull-to-camp) sub-phase. Stored in the leader's
+// "dungeon clear pull phase" value as a uint32 and read cross-context by
+// followers. Forming/Advancing/Returning are the "holding" phases that keep the
+// party passive at camp; Idle and Engage release them. See
+// DungeonClearPullPhaseValue and DungeonClearUtil::IsPullPhaseHolding.
+enum class DcPullPhase : uint32
+{
+    Idle      = 0,
+    Forming   = 1,
+    Advancing = 2,
+    Returning = 3,
+    Engage    = 4,
+};
 
 class DungeonClearUtil
 {
@@ -55,6 +91,14 @@ public:
                                            float maxLookAhead,
                                            float corridorWidth,
                                            GuidVector const& possibleTargets);
+
+    // The trash pack the advanced-pull maneuver should grab, or nullptr. Mirrors
+    // the blocking-trash trigger's primary detection (corridor scan along the
+    // cached long-path, falling back to the geometric cone) plus the closed-door
+    // veto, so the pull aims at the same pack the normal flow would walk in to.
+    // Shared by the pull trigger (decide to start) and the pull action (where to
+    // run). Reads the bot's AI values via `botAI`.
+    static Unit* FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& next);
 
     // Returns a live spawned creature with the given entry on the bot's map, or
     // nullptr if none exists or all are dead.
@@ -437,6 +481,92 @@ public:
     static void MarkFollowing(ObjectGuid player);
     static void UnmarkFollowing(ObjectGuid player);
     static void ReapOrphanedFollows();
+
+    // --- Advanced pulls -----------------------------------------------------
+    // True for the "holding" pull phases (Forming/Advancing/Returning) during
+    // which the party stays passive and camped; false for Idle/Engage.
+    static bool IsPullPhaseHolding(uint32 phase);
+
+    // Picks the advanced-pull camp: a rally point `setback` yards BACK along the
+    // already-cleared route, where the tank drags the pulled pack and the party
+    // waits. Dungeon mobs have no leash, so the camp is placed a generous fixed
+    // distance back for room rather than the minimum that "works". If the point
+    // `setback` back is still within `safeRadius` of another pack (any live
+    // hostile that is not `target` and not one of `target`'s packmates) the search
+    // keeps walking back, up to `maxDrag`, until clear. Cleared route behind the
+    // tank is inherently safe ground (we already killed through it). When the
+    // cleared route behind is too short (e.g. the first pull near the entrance) it
+    // falls back to a straight line away from the target, snapped to the navmesh.
+    // Returns nullopt only when there is no usable position at all (no bot/target).
+    // The chosen point's clearance is written to `clearanceOut` (FLT_MAX when no
+    // other pack exists) and how far back it sits to `dragOut`, for the plan log.
+    static std::optional<Position> ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
+                                                   float setback, float safeRadius,
+                                                   float maxDrag,
+                                                   float& clearanceOut, float& dragOut);
+
+    // True when the party is "set" for the tank to pull: every living, on-map,
+    // non-leader BOT follower is within `setRadius` of `camp` AND currently
+    // running the combat-engine "passive" strategy (so it won't break the pull).
+    // Real-player members (no PlayerbotAI) are not waited on. Solo (no group)
+    // returns true. Lets the Forming gate hold the tag until the party has
+    // actually parked and gone passive, instead of pulling into open ground.
+    static bool IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius);
+
+    // Resolves `bot`'s elected leader and, if that leader has advanced-pull mode
+    // on and is in a non-Idle phase, writes the leader's pull phase and camp
+    // position out and returns true. Returns false (outputs untouched) when there
+    // is no leader, the run is off/paused, pull mode is off, or the phase is
+    // Idle. Reads the leader's context cross-bot (same pattern as
+    // IsInPausedDungeonClearRun); pass any group member.
+    static bool GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& campOut);
+
+    // True when `bot` is a non-leader follower whose elected leader is running
+    // advanced-pull mode with a camp marked — in which case, in pull mode, the
+    // party HOLDS at the camp and leapfrogs camp-to-camp instead of following the
+    // tank (which would trail it forward into every pull). Writes the leader's
+    // current camp to `campOut` and whether the party must be PASSIVE right now to
+    // `passiveOut` (true only during the holding pull phases Forming/Advancing/
+    // Returning; outside those the party holds at camp but stays ready to defend).
+    // Returns false (outputs untouched) when there is no leader, the run is
+    // off/paused, pull mode is off, `bot` is the leader, or no camp is marked yet.
+    // Unlike GetLeaderPullInfo (which is true only mid-maneuver, for the passive
+    // teardown), this is true throughout pull mode so the party never follows.
+    static bool GetLeaderCampHold(Player* bot, Position& campOut, bool& passiveOut);
+
+    // Force the leader of `bot`'s group to abandon the current pull and release
+    // the party (sets the leader's pull phase to Engage). Used by the camp-safety
+    // valve when a held, passive follower is taking unexpected damage. No-op if
+    // there is no leader or it isn't mid-pull.
+    static void AbortLeaderPull(Player* bot);
+
+    // Grant (or revoke) the leader tank immunity to the Daze mechanic for the
+    // duration of an advanced-pull session. A creature hitting a moving target
+    // from behind has up to a 40% chance to Daze it (spell 1604, -50% move
+    // speed) — which cripples the pull-to-camp drag-back exactly when the tank
+    // most needs to retreat (it is running AWAY from the pack, so every hit
+    // lands from behind). We "cheat a little" per design and make the driving
+    // tank daze-proof while pull mode is on. Idempotent; also strips any Daze
+    // aura already on the tank when applied. Paired with the pull-mode toggle.
+    static void SetLeaderDazeImmunity(Player* leader, bool apply);
+
+    // --- Advanced-pull passive management -----------------------------------
+    // Followers go passive (attack nothing, just hold at camp) during a pull by
+    // having the mod-playerbots "passive" strategy added to their COMBAT engine.
+    // ApplyFollowerPassive adds it (and sets the bot's pet passive) once, and
+    // records the player in a registry; RemoveFollowerPassive reverses both. Both
+    // are idempotent and only touch passive that DC itself applied — a passive a
+    // player set manually is left alone. ReapStrandedPassives runs every world
+    // tick (from the same PlayerbotScript as ReapOrphanedFollows) and is the
+    // SINGLE authoritative teardown: it removes DC passive from any registered
+    // player whose leader is no longer in a holding pull phase (pull released /
+    // dc off / paused / death / leader gone), which reliably un-passives even a
+    // follower that got dragged into combat — its own non-combat engine can't run
+    // a teardown while the combat engine is passive-locked. The valve also aborts
+    // the pull when a held, passive follower drops below the safety HP floor.
+    static void ApplyFollowerPassive(Player* follower);
+    static void RemoveFollowerPassive(Player* follower);
+    static void ReapStrandedPassives();
 };
 
 #endif

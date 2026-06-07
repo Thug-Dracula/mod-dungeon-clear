@@ -103,6 +103,18 @@ public:
     // Clears offPathTicks on success.
     static bool Resnap(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
 
+    // Returns a point on the ALREADY-TRAVELED route roughly `distance` yards
+    // behind the follower's current cursor, measured along the polyline from
+    // the bot's live position back through the cleared corridor. Used by the
+    // advanced pull to set its camp back along the spline so the party has
+    // room to work and the tank drags the pack away from its spawn cluster —
+    // the one place the otherwise one-way escort is allowed to look behind the
+    // cursor. Returns nullopt when there's no cleared route behind the bot
+    // (freshly built path / very start of the run); callers fall back to the
+    // bot's own position. Pure read of `state` (does not move the cursor).
+    static std::optional<G3D::Vector3> PointBehind(Player* bot,
+        ChunkedPathfinder::Result const& path, DungeonFollowerState const& state, float distance);
+
     // Collects a run of upcoming polyline points, starting at the follower's
     // current cursor, for one continuous-spline issuance (MoveSplinePath).
     // The returned array's [0] is the bot's live position (the escort

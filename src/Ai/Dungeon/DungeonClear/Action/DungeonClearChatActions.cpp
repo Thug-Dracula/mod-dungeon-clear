@@ -115,6 +115,19 @@ namespace
         bot->StopMovingOnCurrentPos();
     }
 
+    // Clears the in-flight advanced-pull maneuver (phase / dwell timer / camp /
+    // abort target) WITHOUT touching the pull-mode toggle. Used wherever the run
+    // is interrupted (pause, skip, resume, go) so any maneuver mid-flight ends and
+    // the party is released (the reaper sees a non-holding phase next tick), while
+    // the player's pull-mode preference for the rest of the run is preserved.
+    void ResetPullTransient(AiObjectContext* context)
+    {
+        context->GetValue<uint32>("dungeon clear pull phase")->Set(0u);
+        context->GetValue<uint32>("dungeon clear pull since")->Set(0u);
+        context->GetValue<Position&>("dungeon clear camp position")->Get() = Position();
+        context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(ObjectGuid::Empty);
+    }
+
     // Shared resume path. Rebuilds the transient navigation cache so Advance
     // restarts fresh from the bot's current position, then clears the pause
     // flags (paused / reason / the auto-paused door). Boss progress (selected
@@ -144,6 +157,7 @@ namespace
         context->GetValue<bool>("dungeon clear paused")->Set(false);
         context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
         context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+        ResetPullTransient(context);
     }
 }
 
@@ -168,6 +182,8 @@ bool DcOnAction::Execute(Event event)
     {
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
             botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
+        if (!botAI->HasStrategy("dungeon clear combat", BOT_STATE_COMBAT))
+            botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
         return true;
     }
     if (!bot->GetMap() || !bot->GetMap()->IsDungeon())
@@ -197,6 +213,8 @@ bool DcOnAction::Execute(Event event)
     // here so both input paths (chat keyword and `.dc` command) work.
     if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
         botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
+    if (!botAI->HasStrategy("dungeon clear combat", BOT_STATE_COMBAT))
+        botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
 
     // Reset transient state and enable.
     context->GetValue<bool>("dungeon clear enabled")->Set(true);
@@ -208,6 +226,10 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+    // Advanced pull resets each run (the toggle is a per-run preference).
+    context->GetValue<bool>("dungeon clear pull mode")->Set(false);
+    DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
+    ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
@@ -226,6 +248,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
+    context->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get().clear();
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
@@ -259,6 +282,9 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+    context->GetValue<bool>("dungeon clear pull mode")->Set(false);
+    DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
+    ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
@@ -320,7 +346,8 @@ bool DcSkipAction::Execute(Event event)
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get();
     skipped.insert(current->entry);
 
-    // New target gets a clean slate.
+    // New target gets a clean slate (abort any in-flight pull on the old target).
+    ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
@@ -604,6 +631,8 @@ bool DcGoAction::Execute(Event event)
     // Explicitly targeting a boss is a "go now" intent — clear any pause so the
     // tank actually starts moving toward it instead of holding.
     context->GetValue<bool>("dungeon clear paused")->Set(false);
+    // Abort any in-flight pull on the old target before routing to the new one.
+    ResetPullTransient(context);
 
     context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
     context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
@@ -665,6 +694,10 @@ bool DcPauseAction::Execute(Event event)
         // A manual hold is never tied to a door — clear any stale auto-paused
         // door so opening some unrelated door can't auto-resume this pause.
         context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+        // Abort any in-flight pull so the party is released as we hold (the reaper
+        // un-passives once the phase is no longer holding). Pull mode itself is
+        // kept so resume re-enables the feature.
+        ResetPullTransient(context);
 
         // Stop the in-flight advance glide so it doesn't coast to its endpoint.
         // Only out of combat: mid-fight the combat engine owns movement and we
@@ -717,6 +750,60 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
     std::string const target = next.has_value() ? next->name : "the next boss";
     DungeonClearUtil::SendAddonMessage(
         botAI, "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
+    botAI->DoSpecificAction("dc status", event, true);
+    return true;
+}
+
+bool DcPullAction::Execute(Event event)
+{
+    if (!IsAuthorized(bot, event))
+    {
+        botAI->TellError("Not authorized to toggle advanced pull");
+        return false;
+    }
+
+    // Followers have nothing to toggle: pull behavior is driven entirely off the
+    // leader's flag (DungeonClearUtil::GetLeaderPullInfo). Stay quiet.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return true;
+
+    if (!AI_VALUE(bool, "dungeon clear enabled"))
+    {
+        botAI->TellError("Dungeon clear is not enabled.");
+        return false;
+    }
+
+    std::string const param = event.getParam();
+    bool const current = AI_VALUE(bool, "dungeon clear pull mode");
+    bool target;
+    if (param == "on")
+        target = true;
+    else if (param == "off")
+        target = false;
+    else
+        target = !current;
+
+    context->GetValue<bool>("dungeon clear pull mode")->Set(target);
+    // Make the driving tank daze-proof for the pull session so the pull-to-camp
+    // drag-back (run AWAY from the pack -> every hit lands from behind) can't be
+    // crippled by a Daze slow. Revoked when pull mode goes off.
+    DungeonClearUtil::SetLeaderDazeImmunity(bot, target);
+    // Seed the party camp at the tank's current spot so the party has somewhere to
+    // hold the instant pull mode comes on — before the first pull marks a real
+    // camp. In pull mode the party holds/leapfrogs camp-to-camp instead of
+    // following (see DungeonClearUtil::GetLeaderCampHold).
+    if (target)
+        context->GetValue<Position&>("dungeon clear camp position")->Get() =
+            Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    DC_PULL_INFO("[DC:{}] advanced-pull mode {} by {}", bot->GetName(),
+                 target ? "ENABLED" : "DISABLED", param.empty() ? "toggle" : param);
+    // Turning pull off (explicitly or by toggle) mid-maneuver aborts it: reset the
+    // phase so the combat maneuver stands down and the reaper releases the party.
+    if (!target)
+        ResetPullTransient(context);
+
+    DungeonClearUtil::SendAddonMessage(
+        botAI, std::string("CHAT\tAdvanced pull ") + (target ? "enabled." : "disabled."));
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

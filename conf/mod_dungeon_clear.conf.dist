@@ -185,6 +185,24 @@ Appender.DungeonClear=2,4,0,DungeonClear.log
 
 Logger.playerbots.dungeonclear=4,Console DungeonClear
 
+#
+#    Advanced-pull sub-channel (playerbots.dungeonclear.pull).
+#
+#        Advanced pull (LOS pull-to-camp) logs to its OWN child category so it
+#        can be debugged independently of the main, much busier DungeonClear
+#        channel — turn pull tracing all the way up without drowning in path/
+#        stall spam, or off entirely while pull mode matures. Because it's a
+#        child of playerbots.dungeonclear, leaving the two keys below commented
+#        out makes pull logs simply inherit the parent channel/level above.
+#
+#        Uncomment to split pull logs into their own file at Debug. Levels:
+#        4 = Info (camp marked, aggro confirmed, party released, aborts),
+#        5 = Debug (gate decisions, distances, phase math),
+#        6 = Trace (per-tick run-in / return / hold-at-camp movement).
+#
+#    Appender.DungeonClearPull=2,5,0,DungeonClearPull.log
+#    Logger.playerbots.dungeonclear.pull=5,Console DungeonClearPull
+
 ########################################
 # ADVANCED PATHING SETTINGS
 ########################################
@@ -252,3 +270,58 @@ DungeonClear.PathCenterMaxPush = 3.0
 #
 
 DungeonClear.PathCenterSmoothIters = 2
+
+#
+#    DungeonClear.PullSafetyHpPct
+#        Camp-safety valve for advanced pull mode (`dc pull`). While a pull is in
+#        progress the DPS and healer wait passive at the camp, so they can't
+#        defend themselves if a patrol clips the camp or the pull goes sideways.
+#        If a held, passive party member is in combat and drops below this health
+#        percent, the pull is aborted and the whole party is released to fight
+#        back. 0 disables the valve (rely only on the short pull window).
+#
+#        Default: 50.0
+#
+
+DungeonClear.PullSafetyHpPct = 50.0
+
+#
+#    DungeonClear.PullSetback
+#        Advanced pull (`dc pull`) camp distance. When the tank pulls a pack it
+#        marks a rally "camp" this many yards BACK along the already-cleared route
+#        and drags the pulled pack to it, where the party waits. Dungeon mobs have
+#        no leash (they chase the whole instance), so this is simply how far the
+#        fight is dragged from the next pack — bigger = more room and safer pulls,
+#        at the cost of a longer drag. If the point this far back still isn't clear
+#        of another pack (see PullCampSafeRadius) the tank keeps walking back until
+#        it is, up to PullMaxDrag.
+#
+#        Default: 40.0
+#
+
+DungeonClear.PullSetback = 40.0
+
+#
+#    DungeonClear.PullCampSafeRadius
+#        Minimum clearance (yards) the advanced-pull camp keeps from any OTHER
+#        (non-pulled) pack, so fighting at camp can't aggro a neighbour. The camp
+#        is first placed PullSetback yards back; if another pack is still within
+#        this radius the tank walks further back (up to PullMaxDrag) until clear.
+#
+#        Default: 25.0
+#
+
+DungeonClear.PullCampSafeRadius = 25.0
+
+#
+#    DungeonClear.PullMaxDrag
+#        Hard cap (yards, measured along the cleared route) on how far back the
+#        advanced-pull camp may be placed — i.e. how far the tank will keep walking
+#        back looking for clearance beyond PullSetback. Only a sanity bound so a
+#        pull can't drag a pack across the entire instance; with no leash to worry
+#        about it can be large.
+#
+#        Default: 100.0
+#
+
+DungeonClear.PullMaxDrag = 100.0

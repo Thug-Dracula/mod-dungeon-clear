@@ -9,7 +9,9 @@
 #include "FollowActions.h"
 #include "Player.h"
 #include "Playerbots.h"
+#include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 
 float DungeonClearMultiplier::GetValue(Action* action)
 {
@@ -44,13 +46,6 @@ float DungeonClearMultiplier::GetValue(Action* action)
         }
     }
 
-    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
-    bool const paused = AI_VALUE(bool, "dungeon clear paused");
-
-    // DC off: fully stock behavior, nothing suppressed.
-    if (!enabled)
-        return 1.0f;
-
     // Wander-style autonomous navigation (grind / rpg / travel). This is what
     // drives the bot around the world on its own.
     bool const isWander =
@@ -72,6 +67,30 @@ float DungeonClearMultiplier::GetValue(Action* action)
         name == "attack anything" ||
         name == "move random" ||
         name == "pull action" || name == "pull start" || name == "reach pull";
+
+    // FOLLOWER in advanced-pull camp-hold. Followers never set `enabled`, so this
+    // sits above the enabled gate below. In pull mode the party holds and
+    // leapfrogs camp-to-camp (DungeonClearHoldAtCampAction); when it is parked the
+    // hold action YIELDS the tick so the bot can rest/loot at camp — but that
+    // would also let stock follow-master / wander / self-pull drag it off toward
+    // the scouting tank. Suppress exactly those for a camp-held follower; food /
+    // drink / loot / reactive combat fall through untouched so the party still
+    // recovers. Only resolve the leader for an action we might actually suppress,
+    // so the per-tick leader lookup stays off the hot path.
+    if (isWander || isProactiveEngage || dynamic_cast<FollowAction*>(action))
+    {
+        Position camp;
+        bool passive = false;
+        if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+            return 0.0f;
+    }
+
+    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
+    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+
+    // DC off: fully stock behavior, nothing suppressed.
+    if (!enabled)
+        return 1.0f;
 
     // Paused is a HOLD, not a hand-back to stock AI. This used to return 1.0
     // (full stock), which let the tank grind/pull off on its own — that's how a

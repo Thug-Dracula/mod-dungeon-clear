@@ -126,4 +126,59 @@ public:
     bool IsActive() override;
 };
 
+// --- Advanced pulls -------------------------------------------------------
+// Leader-only, non-combat. Fires when advanced-pull mode is on and either a pull
+// is already mid-flight (phase Forming/Advancing, or a post-fight Engage cleanup
+// while out of combat) or a fresh, pullable trash pack is in range and the party
+// is ready. Drives DungeonClearPullAction, which marks the camp, runs the tank
+// in to grab aggro, and (on the combat engine) drags the pack back. Sits above
+// engage-trash so the pull preempts the normal walk-in; trash-only — never
+// preempts the at-boss engage.
+class DungeonClearPullTrigger : public Trigger
+{
+public:
+    DungeonClearPullTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear pull", 1) {}
+    bool IsActive() override;
+};
+
+// Leader-only, COMBAT engine. Fires once the tank is in combat during a pull
+// (phase Advancing or Returning) so DungeonClearPullManeuverAction can run the
+// tank back to camp instead of letting stock combat chase/fight at the pack.
+// Inert at phase Engage (tank is back at camp; stock combat takes the fight).
+class DungeonClearPullManeuverTrigger : public Trigger
+{
+public:
+    DungeonClearPullManeuverTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear pull maneuver", 1) {}
+    bool IsActive() override;
+};
+
+// Follower-only, non-combat. Fires while this bot's leader is in a holding pull
+// phase (Forming/Advancing/Returning). Drives DungeonClearHoldAtCampAction,
+// which puts the bot passive and parks it at the camp instead of trailing the
+// tank into the pull. Outranks follow-tank so the party stays put while the tank
+// pulls. (Passive removal is handled centrally by ReapStrandedPassives.)
+class DungeonClearHoldAtCampTrigger : public Trigger
+{
+public:
+    DungeonClearHoldAtCampTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear hold at camp", 1) {}
+    bool IsActive() override;
+};
+
+// Follower-only, COMBAT engine. The combat-side twin of the trigger above: fires
+// while this bot's leader is in a holding pull phase AND this bot is IN combat.
+// A held follower is dragged into combat the moment the tank aggros (group
+// combat), switching it to the combat engine where the non-combat hold can't
+// run; without a combat-side hold the follower then runs stock follow (which
+// PassiveMultiplier permits even while passive) and trails the tank. Drives
+// DungeonClearStayAtCampAction. Inert at Engage so the released party fights.
+class DungeonClearHoldAtCampCombatTrigger : public Trigger
+{
+public:
+    DungeonClearHoldAtCampCombatTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear stay at camp", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

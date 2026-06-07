@@ -62,6 +62,12 @@ public:
         creators["dungeon clear done-not-engaged ticks"] = &DungeonClearValueContext::dungeon_clear_done_not_engaged_ticks;
         creators["dungeon clear pursuit fail ticks"] = &DungeonClearValueContext::dungeon_clear_pursuit_fail_ticks;
         creators["dungeon clear followed tank"] = &DungeonClearValueContext::dungeon_clear_followed_tank;
+        creators["dungeon clear pull mode"] = &DungeonClearValueContext::dungeon_clear_pull_mode;
+        creators["dungeon clear pull phase"] = &DungeonClearValueContext::dungeon_clear_pull_phase;
+        creators["dungeon clear camp position"] = &DungeonClearValueContext::dungeon_clear_camp_position;
+        creators["dungeon clear pull since"] = &DungeonClearValueContext::dungeon_clear_pull_since;
+        creators["dungeon clear pull abort target"] = &DungeonClearValueContext::dungeon_clear_pull_abort_target;
+        creators["dungeon clear breadcrumbs"] = &DungeonClearValueContext::dungeon_clear_breadcrumbs;
     }
 
 private:
@@ -105,6 +111,12 @@ private:
     static UntypedValue* dungeon_clear_done_not_engaged_ticks(PlayerbotAI* ai) { return new DungeonClearDoneNotEngagedTicksValue(ai); }
     static UntypedValue* dungeon_clear_pursuit_fail_ticks(PlayerbotAI* ai) { return new DungeonClearPursuitFailTicksValue(ai); }
     static UntypedValue* dungeon_clear_followed_tank(PlayerbotAI* ai) { return new DungeonClearFollowedTankValue(ai); }
+    static UntypedValue* dungeon_clear_pull_mode(PlayerbotAI* ai) { return new DungeonClearPullModeValue(ai); }
+    static UntypedValue* dungeon_clear_pull_phase(PlayerbotAI* ai) { return new DungeonClearPullPhaseValue(ai); }
+    static UntypedValue* dungeon_clear_camp_position(PlayerbotAI* ai) { return new DungeonClearCampPositionValue(ai); }
+    static UntypedValue* dungeon_clear_pull_since(PlayerbotAI* ai) { return new DungeonClearPullSinceValue(ai); }
+    static UntypedValue* dungeon_clear_pull_abort_target(PlayerbotAI* ai) { return new DungeonClearPullAbortTargetValue(ai); }
+    static UntypedValue* dungeon_clear_breadcrumbs(PlayerbotAI* ai) { return new DungeonClearBreadcrumbsValue(ai); }
 };
 
 #endif

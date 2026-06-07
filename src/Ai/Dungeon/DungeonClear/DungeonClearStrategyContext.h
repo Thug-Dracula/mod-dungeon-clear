@@ -18,10 +18,13 @@ public:
         // Single consolidated strategy: chat keywords + driving ladder +
         // follow-tank. The former separate "dungeon clear chat" was folded in.
         creators["dungeon clear"] = &DungeonClearStrategyContext::dungeon_clear;
+        // Combat-engine companion holding the advanced-pull maneuver trigger.
+        creators["dungeon clear combat"] = &DungeonClearStrategyContext::dungeon_clear_combat;
     }
 
 private:
     static Strategy* dungeon_clear(PlayerbotAI* ai) { return new DungeonClearStrategy(ai); }
+    static Strategy* dungeon_clear_combat(PlayerbotAI* ai) { return new DungeonClearCombatStrategy(ai); }
 };
 
 #endif

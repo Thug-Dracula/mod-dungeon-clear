@@ -36,6 +36,7 @@
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
+#include "Pet.h"
 #include "PathGenerator.h"
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
@@ -46,6 +47,8 @@
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 
 Unit* DungeonClearUtil::FindBlockingTrash(Player* bot,
@@ -96,6 +99,58 @@ Unit* DungeonClearUtil::FindBlockingTrash(Player* bot,
         }
     }
     return best;
+}
+
+Unit* DungeonClearUtil::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& next)
+{
+    if (!botAI)
+        return nullptr;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return nullptr;
+    AiObjectContext* context = botAI->GetAiObjectContext();
+
+    // Same look-ahead / band the blocking-trash trigger uses; keep them aligned
+    // so the pull aims at the very pack the normal flow would otherwise pull.
+    constexpr float kLookAhead = 35.0f;
+    constexpr float kWidth = 18.0f;
+    constexpr float kConeRange = 35.0f;
+    float const kConeHalfAngle = static_cast<float>(M_PI) / 3.0f;  // 60°
+
+    GuidVector const& farTargets = context->GetValue<GuidVector>("dungeon clear far targets")->Get();
+    GuidVector const& possibleTargets = context->GetValue<GuidVector>("possible targets")->Get();
+    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
+
+    Unit* trash = nullptr;
+    ChunkedPathfinder::Result const& path =
+        context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+    if (path.reachable && !path.segments.empty())
+    {
+        trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates);
+    }
+    else
+    {
+        Movement::PointsArray corridor;
+        if (ComputeCorridor(bot, next.x, next.y, next.z, corridor))
+            trash = FindBlockingTrashCorridor(bot, corridor, kLookAhead, kWidth, candidates);
+        else
+            trash = FindBlockingTrash(bot, next, kConeRange, kConeHalfAngle, candidates);
+    }
+
+    if (!trash)
+        return nullptr;
+
+    // Never pull a pack on the far side of a closed door (mirrors the trigger's
+    // veto): some doors are navmesh-passable, so the tank would otherwise run
+    // through and drag the pack back through the doorway.
+    if (ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY(), trash->GetPositionZ()))
+    {
+        DC_PULL_TRACE("[DC:{}] pull target {} vetoed — closed door between us and it",
+                      bot->GetName(), trash->GetGUID().ToString());
+        return nullptr;
+    }
+
+    return trash;
 }
 
 bool DungeonClearUtil::ComputeCorridor(Player* bot,
@@ -976,6 +1031,293 @@ bool DungeonClearUtil::IsInPausedDungeonClearRun(Player* bot)
            leaderCtx->GetValue<bool>("dungeon clear paused")->Get();
 }
 
+bool DungeonClearUtil::IsPullPhaseHolding(uint32 phase)
+{
+    return phase == static_cast<uint32>(DcPullPhase::Forming) ||
+           phase == static_cast<uint32>(DcPullPhase::Advancing) ||
+           phase == static_cast<uint32>(DcPullPhase::Returning);
+}
+
+std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
+                                                          float setback, float safeRadius,
+                                                          float maxDrag,
+                                                          float& clearanceOut, float& dragOut)
+{
+    clearanceOut = std::numeric_limits<float>::max();
+    dragOut = 0.0f;
+    if (!botAI || !target)
+        return std::nullopt;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return std::nullopt;
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+
+    // Grouping radius: hostiles this close to the pulled target are its own
+    // packmates — they come along to camp anyway, so they don't count against
+    // camp clearance. Everything farther is an "other" pack we must stay clear of.
+    constexpr float kPackRadius = 12.0f;
+    // How far apart to sample candidate camp points walking back along the route.
+    constexpr float kStep = 4.0f;
+    if (maxDrag < setback)
+        maxDrag = setback;
+
+    // Resolve the other-pack hostiles once (alive, hostile, not the target, not a
+    // packmate). Same candidate set the pull / trash scans use.
+    GuidVector const& farTargets =
+        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
+    GuidVector const& possibleTargets =
+        ctx->GetValue<GuidVector>("possible targets")->Get();
+    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
+
+    std::vector<Unit*> others;
+    others.reserve(candidates.size());
+    for (ObjectGuid guid : candidates)
+    {
+        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+        if (!u || !u->IsAlive() || u == target)
+            continue;
+        if (!bot->IsHostileTo(u))
+            continue;
+        if (u->GetExactDist2d(target) <= kPackRadius)
+            continue;  // packmate — fought regardless of where camp sits
+        others.push_back(u);
+    }
+
+    auto clearanceAt = [&others](Position const& p) -> float
+    {
+        float nearest = std::numeric_limits<float>::max();
+        for (Unit* u : others)
+            nearest = std::min(nearest, p.GetExactDist2d(u));
+        return nearest;
+    };
+
+    std::vector<Position> const& crumbs =
+        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+
+    Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+    // --- Preferred: walk BACK along the breadcrumb trail ------------------
+    // The trail is the ground the tank actually walked (oldest -> newest), so it
+    // stays valid even though the pull drag-back resets the long-path cursor (the
+    // bug that made a cursor-based "point behind" find only a few yards after the
+    // first pull). Accumulate corridor distance from the tank backward through it.
+    // Dungeon mobs have no leash, so take the first point at least `setback` back
+    // that also clears safeRadius, walking further (up to maxDrag) only if a
+    // neighbour is still within safeRadius. A gap bigger than kJumpGuard means the
+    // trail isn't contiguous there (a drag/teleport boundary) — stop, nothing
+    // beyond it is really "behind us". Track the farthest point as the fallback.
+    constexpr float kJumpGuard = 12.0f;
+    Position best = tankPos;
+    float bestClear = clearanceAt(tankPos);
+    float bestDrag = 0.0f;
+    float bestAlong = 0.0f;
+    Position prev = tankPos;
+    float along = 0.0f;
+    for (std::size_t i = crumbs.size(); i-- > 0; )
+    {
+        Position const& c = crumbs[i];
+        float const seg = prev.GetExactDist2d(&c);
+        prev = c;
+        if (seg > kJumpGuard)
+            break;  // discontinuity behind us — stop here
+        along += seg;
+        float const clear = clearanceAt(c);
+        float const drag = tankPos.GetExactDist2d(&c);
+        if (along > bestAlong)  // farthest back so far (fallback)
+        {
+            best = c;
+            bestClear = clear;
+            bestDrag = drag;
+            bestAlong = along;
+        }
+        if (along >= setback && clear >= safeRadius)
+        {
+            clearanceOut = clear;
+            dragOut = drag;
+            return c;
+        }
+        if (along >= maxDrag)
+            break;
+    }
+
+    // Got a meaningful distance back along the trail (at least half the setback):
+    // use the farthest point even if a neighbour is within safeRadius — no leash,
+    // so far-and-imperfect beats close.
+    if (bestAlong >= setback * 0.5f)
+    {
+        clearanceOut = bestClear;
+        dragOut = bestDrag;
+        return best;
+    }
+
+    // --- Fallback: cleared route behind is too short (e.g. first pull) ------
+    // Pull straight back, directly away from the target, snapped to the navmesh.
+    // Try the full setback first, shrinking until a walkable point is found.
+    float dx = tankPos.GetPositionX() - target->GetPositionX();
+    float dy = tankPos.GetPositionY() - target->GetPositionY();
+    float const len = std::sqrt(dx * dx + dy * dy);
+    if (len > 0.1f)
+    {
+        dx /= len;
+        dy /= len;
+        for (float d = setback; d >= kStep; d -= kStep)
+        {
+            NavmeshSnap::Result snap = NavmeshSnap::Snap(
+                bot, tankPos.GetPositionX() + dx * d,
+                tankPos.GetPositionY() + dy * d, tankPos.GetPositionZ(), 10.0f);
+            if (!snap.ok)
+                continue;
+            Position cand(snap.x, snap.y, snap.z);
+            float const c = clearanceAt(cand);
+            float const drag = tankPos.GetExactDist2d(&cand);
+            if (drag > bestDrag)
+            {
+                best = cand;
+                bestClear = c;
+                bestDrag = drag;
+            }
+            if (c >= safeRadius)
+            {
+                clearanceOut = c;
+                dragOut = drag;
+                return cand;
+            }
+        }
+    }
+
+    clearanceOut = bestClear;
+    dragOut = bestDrag;
+    return best;
+}
+
+bool DungeonClearUtil::IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius)
+{
+    if (!leader)
+        return false;
+    Group* group = leader->GetGroup();
+    if (!group)
+        return true;  // solo tank — nobody to wait on
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || member == leader)
+            continue;
+        if (member->GetMapId() != leader->GetMapId())
+            continue;
+        if (member->isDead())
+            continue;  // dead members handled by the party-died trigger
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI)
+            continue;  // real player — never gate the pull on them
+        if (member->GetExactDist2d(&camp) > setRadius)
+            return false;
+        if (!memberAI->HasStrategy("passive", BOT_STATE_COMBAT))
+            return false;
+    }
+    return true;
+}
+
+bool DungeonClearUtil::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& campOut)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    // Pull behavior only matters while the run is live, unpaused, and pull mode
+    // is on. A paused/off leader holds the whole party via the normal gates.
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get() ||
+        !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
+        return false;
+
+    uint32 const phase = ctx->GetValue<uint32>("dungeon clear pull phase")->Get();
+    if (phase == static_cast<uint32>(DcPullPhase::Idle))
+        return false;
+
+    phaseOut = phase;
+    campOut = ctx->GetValue<Position&>("dungeon clear camp position")->Get();
+    return true;
+}
+
+bool DungeonClearUtil::GetLeaderCampHold(Player* bot, Position& campOut, bool& passiveOut)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader drives; it never holds at its own camp
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get() ||
+        !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
+        return false;
+
+    Position const camp = ctx->GetValue<Position&>("dungeon clear camp position")->Get();
+    // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
+    // is nothing to hold at, so let the caller fall back (briefly) to follow.
+    if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
+        camp.GetPositionZ() == 0.0f)
+        return false;
+
+    uint32 const phase = ctx->GetValue<uint32>("dungeon clear pull phase")->Get();
+    campOut = camp;
+    passiveOut = IsPullPhaseHolding(phase);
+    return true;
+}
+
+void DungeonClearUtil::AbortLeaderPull(Player* bot)
+{
+    if (!bot)
+        return;
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return;
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return;
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (IsPullPhaseHolding(ctx->GetValue<uint32>("dungeon clear pull phase")->Get()))
+    {
+        ctx->GetValue<uint32>("dungeon clear pull phase")
+            ->Set(static_cast<uint32>(DcPullPhase::Engage));
+        DC_PULL_INFO("[DC:{}] advanced-pull: leader pull aborted (forced to Engage) "
+                     "-> party released", leader->GetName());
+    }
+}
+
+void DungeonClearUtil::SetLeaderDazeImmunity(Player* leader, bool apply)
+{
+    if (!leader)
+        return;
+
+    // Block all spells carrying the Daze mechanic (spell 1604 is the only one
+    // creatures apply). spellId 0 = a blanket mechanic block. Pair add/remove
+    // exactly: remove first so a re-apply never stacks duplicate entries.
+    leader->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_DAZE, false);
+    if (apply)
+    {
+        leader->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_DAZE, true);
+        // Immunity only blocks FUTURE applications; clear any Daze already on
+        // the tank from before pull mode came on (or before the drag started).
+        leader->RemoveAurasDueToSpell(1604);
+    }
+}
+
 bool DungeonClearUtil::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread)
 {
     if (!bot)
@@ -1463,6 +1805,16 @@ namespace
     // anyway to stay correct if bot updates ever move off-thread.
     std::set<ObjectGuid> g_dcFollowingPlayers;
     std::mutex g_dcFollowingMutex;
+
+    // GUIDs of followers DC has put into the mod-playerbots "passive" combat
+    // strategy for an advanced pull. Tracked so ReapStrandedPassives is the
+    // single authoritative teardown — it removes passive the moment the leader
+    // leaves a holding pull phase, even for a follower that got dragged into
+    // combat (its own engines can't self-heal a passive-lock mid-fight). Only
+    // passive DC itself applied lives here; a player's manual passive is never
+    // recorded, so it's never clobbered.
+    std::set<ObjectGuid> g_dcPassivePlayers;
+    std::mutex g_dcPassiveMutex;
 }
 
 void DungeonClearUtil::MarkFollowing(ObjectGuid player)
@@ -1519,6 +1871,121 @@ void DungeonClearUtil::ReapOrphanedFollows()
         }
 
         it = g_dcFollowingPlayers.erase(it);
+    }
+}
+
+void DungeonClearUtil::ApplyFollowerPassive(Player* follower)
+{
+    if (!follower)
+        return;
+    PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower);
+    if (!botAI)
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+        // Already DC-managed — nothing to do (idempotent across hold ticks).
+        if (g_dcPassivePlayers.count(follower->GetGUID()))
+            return;
+    }
+
+    // A passive the player set themselves is left entirely alone: don't add a
+    // duplicate, and don't record it (so we never strip it on release).
+    if (botAI->HasStrategy("passive", BOT_STATE_COMBAT))
+        return;
+
+    botAI->ChangeStrategy("+passive", BOT_STATE_COMBAT);
+    if (Pet* pet = follower->GetPet())
+        pet->SetReactState(REACT_PASSIVE);
+
+    {
+        std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+        g_dcPassivePlayers.insert(follower->GetGUID());
+    }
+
+    DC_PULL_DEBUG("[DC:{}] advanced-pull: held passive at camp", follower->GetName());
+}
+
+void DungeonClearUtil::RemoveFollowerPassive(Player* follower)
+{
+    if (!follower)
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+        // Only strip passive we applied; a manual passive was never recorded.
+        if (!g_dcPassivePlayers.erase(follower->GetGUID()))
+            return;
+    }
+
+    if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower))
+    {
+        if (botAI->HasStrategy("passive", BOT_STATE_COMBAT))
+            botAI->ChangeStrategy("-passive", BOT_STATE_COMBAT);
+        if (Pet* pet = follower->GetPet())
+            pet->SetReactState(REACT_DEFENSIVE);
+
+        DC_PULL_DEBUG("[DC:{}] advanced-pull: released from passive", follower->GetName());
+    }
+}
+
+void DungeonClearUtil::ReapStrandedPassives()
+{
+    std::vector<ObjectGuid> marked;
+    {
+        std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+        if (g_dcPassivePlayers.empty())
+            return;
+        marked.assign(g_dcPassivePlayers.begin(), g_dcPassivePlayers.end());
+    }
+
+    float const safetyHp = sConfigMgr->GetOption<float>("DungeonClear.PullSafetyHpPct", 50.0f);
+
+    for (ObjectGuid guid : marked)
+    {
+        Player* player = ObjectAccessor::FindPlayer(guid);
+
+        // Player gone, or its AI was deleted (self-bot left bot mode): we can no
+        // longer drive a ChangeStrategy, so just drop the mark. The strategy was
+        // never persisted to the DB (direct ChangeStrategy doesn't Save), so it
+        // evaporates with the engine anyway.
+        if (!player || !player->IsInWorld() || !GET_PLAYERBOT_AI(player))
+        {
+            std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+            g_dcPassivePlayers.erase(guid);
+            continue;
+        }
+
+        uint32 phase = 0;
+        Position camp;
+        bool const inPull = GetLeaderPullInfo(player, phase, camp);
+
+        // Release this follower the moment the leader leaves a holding phase.
+        // GetLeaderPullInfo returns true for Engage too (only Idle returns
+        // false), so a plain !inPull test would keep the party passive through
+        // the entire camp fight: the tank flips to Engage on arrival but only
+        // drops to Idle out of combat — which never happens while it's tanking.
+        // Gate on IsPullPhaseHolding instead so Engage releases the party (per
+        // the DcPullPhase contract: "Idle and Engage release them"), along with
+        // pull off / dc off / paused / leader gone. The single authoritative
+        // teardown — fires regardless of the follower's own engine state.
+        if (!inPull || !IsPullPhaseHolding(phase))
+        {
+            RemoveFollowerPassive(player);
+            continue;
+        }
+
+        // Camp-safety valve: a held, passive follower taking real damage (a
+        // patrol clipped camp, or the pull went sideways) can't defend itself —
+        // abort the pull so the whole party drops passive and fights back.
+        if (player->IsInCombat() && safetyHp > 0.0f &&
+            player->GetHealthPct() < safetyHp)
+        {
+            DC_PULL_INFO("[DC:{}] advanced-pull SAFETY: passive follower at {:.0f}% in "
+                         "combat -> aborting pull, releasing party",
+                         player->GetName(), player->GetHealthPct());
+            AbortLeaderPull(player);
+        }
     }
 }
 
@@ -1615,6 +2082,8 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
     std::string stateStr = "off";
     std::string detail;
     bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
+    uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
     std::string const bossName = next.has_value() ? next->name : "the boss";
 
     if (enabled && paused)
@@ -1628,6 +2097,16 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
         stateStr = "paused";
         std::string const& pauseReason = AI_VALUE(std::string&, "dungeon clear pause reason");
         detail = pauseReason.empty() ? "holding position" : pauseReason;
+    }
+    else if (enabled && bot && pullMode && DungeonClearUtil::IsPullPhaseHolding(pullPhase))
+    {
+        // Mid advanced-pull. Takes precedence over the combat sub-state — during
+        // the return leg the tank is in combat but we want to report the pull.
+        stateStr = "pulling";
+        if (pullPhase == static_cast<uint32>(DcPullPhase::Returning))
+            detail = "Pulling the pack back to camp.";
+        else
+            detail = "Pulling — party holding at camp.";
     }
     else if (enabled && bot)
     {
@@ -1718,7 +2197,11 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
              << (stall.empty() ? "" : stall) << "\t"
              << skipped.size() << "\t"
              << stateStr << "\t"
-             << detail;
+             << detail << "\t"
+             // Trailing field (index 8): advanced-pull toggle, for the addon's
+             // Pull button + readout. Appended so older addons ignoring it stay
+             // compatible (same pattern as the BOSS wing field).
+             << (pullMode ? "1" : "0");
 
     return addonMsg.str();
 }

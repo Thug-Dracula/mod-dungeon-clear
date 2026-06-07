@@ -54,6 +54,17 @@ public:
     bool Execute(Event event) override;
 };
 
+// Toggles advanced-pull (LOS pull-to-camp) mode for the run. `dc pull on` /
+// `dc pull off` set it explicitly; a bare `dc pull` flips it. Leader-owned, like
+// pause; turning it off mid-pull also aborts the in-flight maneuver (releasing
+// the party) via a phase reset.
+class DcPullAction : public Action
+{
+public:
+    DcPullAction(PlayerbotAI* botAI) : Action(botAI, "dc pull") {}
+    bool Execute(Event event) override;
+};
+
 class DcStatusAction : public Action
 {
 public:

@@ -27,11 +27,16 @@ public:
         creators["dungeon clear door blocked"] = &DungeonClearActionContext::door_blocked;
         creators["dungeon clear door reopened"] = &DungeonClearActionContext::door_reopened;
         creators["dungeon clear filter loot"] = &DungeonClearActionContext::filter_loot;
+        creators["dungeon clear pull"] = &DungeonClearActionContext::pull;
+        creators["dungeon clear pull maneuver"] = &DungeonClearActionContext::pull_maneuver;
+        creators["dungeon clear hold at camp"] = &DungeonClearActionContext::hold_at_camp;
+        creators["dungeon clear stay at camp"] = &DungeonClearActionContext::stay_at_camp;
 
         creators["dc on"] = &DungeonClearActionContext::dc_on;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
         creators["dc skip"] = &DungeonClearActionContext::dc_skip;
         creators["dc pause"] = &DungeonClearActionContext::dc_pause;
+        creators["dc pull"] = &DungeonClearActionContext::dc_pull;
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
         creators["dc go"] = &DungeonClearActionContext::dc_go;
@@ -54,11 +59,16 @@ private:
     static Action* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedAction(ai); }
     static Action* door_reopened(PlayerbotAI* ai) { return new DcResumeOnDoorOpenedAction(ai); }
     static Action* filter_loot(PlayerbotAI* ai) { return new DungeonClearFilterLootAction(ai); }
+    static Action* pull(PlayerbotAI* ai) { return new DungeonClearPullAction(ai); }
+    static Action* pull_maneuver(PlayerbotAI* ai) { return new DungeonClearPullManeuverAction(ai); }
+    static Action* hold_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampAction(ai); }
+    static Action* stay_at_camp(PlayerbotAI* ai) { return new DungeonClearStayAtCampAction(ai); }
 
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }
     static Action* dc_skip(PlayerbotAI* ai) { return new DcSkipAction(ai); }
     static Action* dc_pause(PlayerbotAI* ai) { return new DcPauseAction(ai); }
+    static Action* dc_pull(PlayerbotAI* ai) { return new DcPullAction(ai); }
     static Action* dc_status(PlayerbotAI* ai) { return new DcStatusAction(ai); }
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
     static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }

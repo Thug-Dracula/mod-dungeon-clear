@@ -28,6 +28,10 @@ public:
         creators["dungeon clear needs drink"] = &DungeonClearTriggerContext::needs_drink;
         creators["dungeon clear needs eat"] = &DungeonClearTriggerContext::needs_eat;
         creators["dungeon clear filter loot"] = &DungeonClearTriggerContext::filter_loot;
+        creators["dungeon clear pull"] = &DungeonClearTriggerContext::pull;
+        creators["dungeon clear pull maneuver"] = &DungeonClearTriggerContext::pull_maneuver;
+        creators["dungeon clear hold at camp"] = &DungeonClearTriggerContext::hold_at_camp;
+        creators["dungeon clear stay at camp"] = &DungeonClearTriggerContext::stay_at_camp;
 
         // Chat-command triggers (one per keyword/alias).
         creators["dc on"] = &DungeonClearTriggerContext::dc_on;
@@ -37,6 +41,10 @@ public:
         creators["dc skip"] = &DungeonClearTriggerContext::dc_skip;
         creators["dc status"] = &DungeonClearTriggerContext::dc_status;
         creators["dc bosses"] = &DungeonClearTriggerContext::dc_bosses;
+        creators["dc pause"] = &DungeonClearTriggerContext::dc_pause;
+        creators["dungeon clear pause"] = &DungeonClearTriggerContext::dungeon_clear_pause;
+        creators["dc pull"] = &DungeonClearTriggerContext::dc_pull;
+        creators["dungeon clear pull keyword"] = &DungeonClearTriggerContext::dungeon_clear_pull_keyword;
     }
 
 private:
@@ -52,6 +60,10 @@ private:
     static Trigger* needs_drink(PlayerbotAI* ai) { return new DungeonClearNeedsDrinkTrigger(ai); }
     static Trigger* needs_eat(PlayerbotAI* ai) { return new DungeonClearNeedsEatTrigger(ai); }
     static Trigger* filter_loot(PlayerbotAI* ai) { return new DungeonClearFilterLootTrigger(ai); }
+    static Trigger* pull(PlayerbotAI* ai) { return new DungeonClearPullTrigger(ai); }
+    static Trigger* pull_maneuver(PlayerbotAI* ai) { return new DungeonClearPullManeuverTrigger(ai); }
+    static Trigger* hold_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampTrigger(ai); }
+    static Trigger* stay_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampCombatTrigger(ai); }
 
     static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }
     static Trigger* dungeon_clear_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear on"); }
@@ -60,6 +72,10 @@ private:
     static Trigger* dc_skip(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc skip"); }
     static Trigger* dc_status(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc status"); }
     static Trigger* dc_bosses(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc bosses"); }
+    static Trigger* dc_pause(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc pause"); }
+    static Trigger* dungeon_clear_pause(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear pause"); }
+    static Trigger* dc_pull(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc pull"); }
+    static Trigger* dungeon_clear_pull_keyword(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear pull"); }
 };
 
 #endif

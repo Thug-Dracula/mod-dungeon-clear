@@ -165,6 +165,13 @@ public:
 
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
             botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
+
+        // Combat-engine companion: holds only the advanced-pull maneuver, inert
+        // unless this bot is the leader mid-pull. Resident on every bot so the
+        // leader can run the pull-to-camp once it aggros (the non-combat strategy
+        // can't, since the combat engine takes over the instant combat starts).
+        if (!botAI->HasStrategy("dungeon clear combat", BOT_STATE_COMBAT))
+            botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
     }
 };
 
@@ -187,6 +194,12 @@ public:
     void OnPlayerbotUpdate(uint32 diff) override
     {
         DungeonClearUtil::ReapOrphanedFollows();
+        // Authoritative advanced-pull passive teardown: release any follower DC
+        // put passive once its leader is no longer mid-pull (released / dc off /
+        // paused / death / gone), and trip the camp-safety valve for a held,
+        // passive follower taking damage. Runs on the global tick so it fires even
+        // for a follower whose own engines are passive-locked in combat.
+        DungeonClearUtil::ReapStrandedPassives();
         // Drop async path results that were never collected (the bot logged out
         // or toggled dc off before polling). Bounds the mailbox; cheap no-op
         // when empty.

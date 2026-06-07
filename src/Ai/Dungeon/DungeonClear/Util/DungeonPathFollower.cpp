@@ -383,3 +383,58 @@ std::vector<G3D::Vector3> DungeonPathFollower::BuildSplineWindow(Player* bot,
 
     return window;
 }
+
+std::optional<G3D::Vector3> DungeonPathFollower::PointBehind(Player* bot,
+    ChunkedPathfinder::Result const& path, DungeonFollowerState const& state, float distance)
+{
+    if (!bot || path.segments.empty() || distance <= 0.0f)
+        return std::nullopt;
+
+    // Walk backward from the bot's live position through the polyline points
+    // strictly BEHIND the cursor, accumulating 3D distance until we've covered
+    // `distance` of cleared route. The cursor (segmentIdx, pointIdx) is the NEXT
+    // point to walk to, so PrevPoint(cursor) is the first already-traveled point.
+    G3D::Vector3 prev(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    uint32 seg = state.segmentIdx;
+    uint32 pt = state.pointIdx;
+    float accumulated = 0.0f;
+    std::optional<G3D::Vector3> best;  // last point we backed onto
+
+    while (std::optional<G3D::Vector3> p = PrevPoint(path, seg, pt))
+    {
+        accumulated += (*p - prev).length();
+        prev = *p;
+        best = p;
+        if (accumulated >= distance)
+            return best;
+
+        // Step the (seg, pt) cursor back by one point so the next PrevPoint
+        // call walks further behind, crossing segment boundaries like PrevPoint
+        // itself does.
+        if (pt > 0)
+        {
+            --pt;
+        }
+        else
+        {
+            bool stepped = false;
+            for (uint32 i = seg; i > 0; --i)
+            {
+                if (!path.segments[i - 1].polyline.empty())
+                {
+                    seg = i - 1;
+                    pt = static_cast<uint32>(path.segments[seg].polyline.size()) - 1;
+                    stepped = true;
+                    break;
+                }
+            }
+            if (!stepped)
+                break;  // reached the route start
+        }
+    }
+
+    // Ran out of cleared route before reaching the full setback: return the
+    // earliest point we backed onto (some room is better than none), or nullopt
+    // if there was nothing behind the cursor at all.
+    return best;
+}

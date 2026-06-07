@@ -222,6 +222,7 @@ public:
         else if (subCmd == "off")   action = "dc off";
         else if (subCmd == "skip")  action = "dc skip";
         else if (subCmd == "pause") action = "dc pause";
+        else if (subCmd == "pull")  action = "dc pull";
         else if (subCmd == "status") action = "dc status";
         else if (subCmd == "bosses") action = "dc bosses";
         else if (subCmd == "go")    action = "dc go";

@@ -9,6 +9,7 @@
 #include <map>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -502,6 +503,108 @@ class DungeonClearLootCampStartValue : public ManualSetValue<uint32>
 public:
     DungeonClearLootCampStartValue(PlayerbotAI* botAI)
         : ManualSetValue<uint32>(botAI, 0u, "dungeon clear loot camp start")
+    {
+    }
+};
+
+// --- Advanced pulls -------------------------------------------------------
+// Per-run toggle for "advanced pull" (LOS pull-to-camp) mode. When on, instead
+// of the tank walking up to a trash pack and fighting in place, it marks a camp
+// where the party holds (DPS/healers passive), runs in just far enough to grab
+// aggro, then runs back to camp before the rest of the group engages. Leader-
+// owned like `dungeon clear enabled`; reset to false alongside it (dc on / dc
+// off / death / cleared) so a fresh run never starts mid-feature. Toggled by
+// DcPullAction (chat keyword / `.dc pull` / addon button).
+class DungeonClearPullModeValue : public ManualSetValue<bool>
+{
+public:
+    DungeonClearPullModeValue(PlayerbotAI* botAI)
+        : ManualSetValue<bool>(botAI, false, "dungeon clear pull mode")
+    {
+    }
+};
+
+// Current advanced-pull sub-phase (DcPullPhase cast to uint32):
+//   0 Idle      — no pull in progress.
+//   1 Forming   — camp stamped; holding a beat so followers go passive first.
+//   2 Advancing — tank running into the pack to grab aggro (non-combat engine).
+//   3 Returning — aggro confirmed; tank running back to camp (COMBAT engine).
+//   4 Engage    — tank back at camp; release the party to fight.
+// Leader-owned and read cross-context by followers (see
+// DungeonClearUtil::GetLeaderPullInfo) to decide when to hold+passive at camp.
+// Holding phases (Forming/Advancing/Returning) keep followers passive; Idle and
+// Engage release them. Reset to 0 alongside the run state.
+class DungeonClearPullPhaseValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPullPhaseValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull phase")
+    {
+    }
+};
+
+// World position the tank marked as the pull camp — where the party holds and
+// where the tank drags the pack back to before releasing. Stamped when a pull
+// begins (phase Idle -> Forming) at the tank's current position. Default
+// (0,0,0) = no camp set.
+class DungeonClearCampPositionValue : public ManualSetValue<Position&>
+{
+public:
+    DungeonClearCampPositionValue(PlayerbotAI* botAI)
+        : ManualSetValue<Position&>(botAI, data, "dungeon clear camp position")
+    {
+    }
+
+private:
+    Position data;
+};
+
+// Trail of the tank's recently-walked positions while advancing (oldest ->
+// newest), recorded by DungeonClearAdvanceAction roughly every few yards of
+// real forward progress. The advanced pull uses it to place the camp a generous
+// distance BACK along ground the tank actually cleared — independent of the
+// long-path follower cursor, which is reset every time the pull drags the tank
+// backward off its route (that reset is why a cursor-based "point behind" only
+// found a few yards after the first pull). Recording resets the trail on a large
+// jump between samples (a drag-back / teleport) so it stays spatially
+// contiguous, and is capped so it can't grow without bound. Cleared on dc
+// on/off / death alongside the rest of the run state.
+class DungeonClearBreadcrumbsValue : public ManualSetValue<std::vector<Position>&>
+{
+public:
+    DungeonClearBreadcrumbsValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::vector<Position>&>(botAI, data, "dungeon clear breadcrumbs")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::vector<Position> data;
+};
+
+// Millisecond timestamp of the most recent pull-phase transition. Drives the
+// Forming dwell (give followers a tick to go passive before pulling) and the
+// per-leg watchdogs (abort a pull whose advance/return makes no progress).
+class DungeonClearPullSinceValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPullSinceValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull since")
+    {
+    }
+};
+
+// GUID of a trash pack the advanced-pull maneuver gave up trying to pull (the
+// run-in or return leg wedged / the mob never aggroed). While set, the pull
+// trigger won't re-initiate on this same target — it falls through to the
+// normal walk-in engage so the run never livelocks on an un-pullable pack.
+// Cleared on target change / combat end / run reset.
+class DungeonClearPullAbortTargetValue : public ManualSetValue<ObjectGuid>
+{
+public:
+    DungeonClearPullAbortTargetValue(PlayerbotAI* botAI)
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear pull abort target")
     {
     }
 };

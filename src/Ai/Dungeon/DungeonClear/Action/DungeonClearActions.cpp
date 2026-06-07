@@ -6,6 +6,7 @@
 #include "DungeonClearActions.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -344,6 +345,7 @@ namespace
         ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
         ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get().clear();
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
     }
@@ -495,8 +497,17 @@ namespace
     // the loot-yield block there.
     bool IsBetweenPullsReady(Player* bot)
     {
-        float const maxSpread = sConfigMgr->GetOption<float>(
+        float maxSpread = sConfigMgr->GetOption<float>(
             "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
+        // In advanced-pull mode the party deliberately holds back at the camp while
+        // the tank scouts ahead, so a spread check measured against the TANK would
+        // never pass once it moves out — and the tank would stop advancing for good
+        // (the reported stall). Drop the spread requirement here; the tank still
+        // waits for the party to REST (HP/mana) before scouting on, and the pull
+        // itself is gated separately (pull trigger + Forming party-set gate).
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
+            if (botAI->GetAiObjectContext()->GetValue<bool>("dungeon clear pull mode")->Get())
+                maxSpread = 100000.0f;
         return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
                                               DungeonClearUtil::RestMinMpPct(bot), maxSpread);
     }
@@ -789,6 +800,41 @@ namespace
             if (AiObjectContext* ctx = botAI->GetAiObjectContext())
                 ctx->GetValue<LastMovement&>("last movement")->Get().lastdelayTime = 0.0f;
         }
+    }
+
+    // Drop a breadcrumb of the tank's current position onto the trail the advanced
+    // pull walks back to place its camp (see DungeonClearBreadcrumbsValue). Called
+    // each forward-advance tick; samples only every kSpacing yards of real
+    // movement, and RESTARTS the trail on a kJump-sized gap (a pull drag-back or a
+    // teleport) so the stored trail is always spatially contiguous behind the
+    // tank — independent of the long-path follower cursor, which the drag resets.
+    void RecordBreadcrumb(AiObjectContext* ctx, Player* bot)
+    {
+        if (!ctx || !bot)
+            return;
+        constexpr float kSpacing = 4.0f;   // min real movement between samples
+        constexpr float kJump = 12.0f;     // gap that means a drag/teleport -> reset
+        constexpr size_t kMax = 128;       // history cap (~ kMax*kSpacing yd)
+        std::vector<Position>& crumbs =
+            ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+        Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        if (crumbs.empty())
+        {
+            crumbs.push_back(cur);
+            return;
+        }
+        float const d = crumbs.back().GetExactDist2d(&cur);
+        if (d < kSpacing)
+            return;
+        if (d > kJump)
+        {
+            crumbs.clear();  // discontinuity — restart the contiguous trail
+            crumbs.push_back(cur);
+            return;
+        }
+        crumbs.push_back(cur);
+        if (crumbs.size() > kMax)
+            crumbs.erase(crumbs.begin());
     }
 }
 
@@ -1098,6 +1144,24 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // from a capture: PARK -> auto-pausing -> "advance tick" -> "spline issued".)
     if (AI_VALUE(bool, "dungeon clear paused"))
         return false;
+
+    // Lay down the breadcrumb trail the advanced pull places its camp from. Only
+    // while out of combat (forward route progress) so the trail stays the cleared
+    // path, not a combat-chase scribble.
+    if (!bot->IsInCombat())
+        RecordBreadcrumb(context, bot);
+
+    // In pull mode the party holds at a camp and leapfrogs camp-to-camp while the
+    // tank scouts ahead alone. Make sure a camp always exists for them to hold at:
+    // seed it at our current spot whenever it's unset (pull mode just toggled on,
+    // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
+    if (AI_VALUE(bool, "dungeon clear pull mode"))
+    {
+        Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
+        if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
+            camp.GetPositionZ() == 0.0f)
+            camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    }
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
@@ -2404,4 +2468,479 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
     // collected. This action sits just above that pipeline (relevance 9) so the
     // prune always runs first.
     return false;
+}
+
+// --- Advanced pulls -------------------------------------------------------
+//
+// The maneuver, top to bottom (leader-owned phase, read cross-bot by followers):
+//
+//   Idle      The tank glides the route normally. When a pullable pack comes
+//             within DC_PULL_START_RANGE, pick a SAFE camp back along the already
+//             -cleared route (ComputeSafeCamp keeps it clear of other packs and
+//             bounds the drag), stamp it, halt the escort glide, -> Forming.
+//   Forming   The tank holds where it committed (just outside aggro); the party
+//             walks back to the camp and goes passive (hold-at-camp). The tank
+//             waits here until the party is actually set at camp (or a timeout),
+//             then -> Advancing. The party — not the tank — does the repositioning.
+//   Advancing The tank tags the pack: a ranged class pull if it has one and is in
+//             range+LOS, else it closes to body-tag. The moment combat starts,
+//             control passes to DungeonClearPullManeuverAction on the combat engine.
+//   Returning (combat engine) Drag the pack back to the waiting party at camp.
+//   Engage    At camp: hand the fight to stock combat; ReapStrandedPassives sees
+//             the non-holding phase and releases the party. Out of combat -> Idle.
+//
+// Camp is anchored in cleared ground BEHIND the tank (where the party already
+// trails) rather than at the tank's forward commit spot, and is chosen so the
+// fight can't aggro a neighbouring pack — so the tank pulls TOWARD the party
+// instead of the party running out to the tank.
+namespace
+{
+    // How close the pull target must be before a pull is COMMITTED. The corridor
+    // scan detects packs out to ~35yd; committing only once the pack is this close
+    // keeps the tag a short, consistent run on EVERY pull (first and subsequent
+    // alike). Until then Advance glides the tank closer (blocking-trash stands
+    // down in pull mode so it can't engage first). Kept in sync with the copy in
+    // DungeonClearTriggers.cpp.
+    constexpr float DC_PULL_START_RANGE = 20.0f;
+    // Per-leg watchdog (tag / return) — abort a leg that makes no progress so a
+    // navmesh wedge can never freeze the pull.
+    constexpr uint32 DC_PULL_LEG_TIMEOUT_MS = 10000;
+    // Longest the tank waits in Forming for the party to park+go passive at camp
+    // before tagging anyway. Sized to cover the party walking back to a far camp
+    // (PullSetback can be tens of yards); past it the tank tags regardless and the
+    // party finishes converging on camp during the drag-back. The between-pulls
+    // gate already ensured the party was close and rested before the pull began.
+    constexpr uint32 DC_PULL_PARTY_SET_TIMEOUT_MS = 8000;
+    // How close to camp the tank must get on the return before releasing.
+    constexpr float DC_PULL_CAMP_ARRIVE = 5.0f;
+    // Follower camp tolerance — within this, hold; otherwise walk to camp.
+    constexpr float DC_PULL_HOLD_RADIUS = 4.0f;
+    // "Party is set" tolerance for the Forming gate. A touch wider than the hold
+    // radius so a follower parked at the boundary reliably counts as set instead
+    // of flickering in/out and never letting the tank tag.
+    constexpr float DC_PULL_SET_RADIUS = 8.0f;
+
+    void DcSetPullPhase(AiObjectContext* context, DcPullPhase p)
+    {
+        context->GetValue<uint32>("dungeon clear pull phase")->Set(static_cast<uint32>(p));
+        context->GetValue<uint32>("dungeon clear pull since")->Set(getMSTime());
+    }
+}
+
+bool DungeonClearPullAction::Execute(Event /*event*/)
+{
+    Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
+    uint32 const since = AI_VALUE(uint32, "dungeon clear pull since");
+    uint32 const now = getMSTime();
+    DcPullPhase const phase = static_cast<DcPullPhase>(AI_VALUE(uint32, "dungeon clear pull phase"));
+
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+
+    switch (phase)
+    {
+        case DcPullPhase::Idle:
+        {
+            // Begin a pull: choose a SAFE camp back along the cleared route, hold
+            // here, and let the party reposition to it (the tank doesn't retreat).
+            Unit* trash = next.has_value()
+                ? DungeonClearUtil::FindPullTarget(botAI, *next) : nullptr;
+            if (!trash)
+            {
+                DC_PULL_TRACE("[DC:{}] pull idle: no pull target -> yield to advance",
+                              bot->GetName());
+                return false;
+            }
+            // Don't commit until the pack is within reach (the trigger gates on the
+            // same range). While it's farther, yield to Advance to glide closer.
+            float const toTrash = bot->GetExactDist2d(trash);
+            if (toTrash > DC_PULL_START_RANGE)
+            {
+                DC_PULL_DEBUG("[DC:{}] pull idle: target {} at {:.1f}yd > start range "
+                              "{:.1f} -> glide closer before committing",
+                              bot->GetName(), trash->GetGUID().ToString(), toTrash,
+                              DC_PULL_START_RANGE);
+                return false;
+            }
+            // Pick the camp: a generous distance back along the cleared route
+            // (PullSetback) so the party gets real room, extended further only if
+            // another pack is still within PullCampSafeRadius (ComputeSafeCamp).
+            // Dungeon mobs have no leash, so far-back is good; PullMaxDrag is just a
+            // sanity cap.
+            float const setback = DcSettings::GetFloat(bot, "PullSetback");
+            float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+            float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+            float clearance = 0.0f;
+            float drag = 0.0f;
+            std::optional<Position> camped = DungeonClearUtil::ComputeSafeCamp(
+                botAI, trash, setback, safeRadius, maxDrag, clearance, drag);
+            if (camped.has_value())
+                camp = *camped;
+            else
+                camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+            // Halt the escort glide for real before committing. A plain StopMoving
+            // does NOT cancel a launched escort spline (see StopActiveSplineGlide /
+            // the door-blocked park), so without this the tank keeps gliding
+            // forward past the commit spot and the camp is stamped behind a
+            // position it's already leaving — the old overshoot / wrong-target pull.
+            StopActiveSplineGlide(bot);
+            if (bot->isMoving())
+                bot->StopMoving();
+            DcSetPullPhase(context, DcPullPhase::Forming);
+            // clearance == -1 means no other pack is anywhere near the camp.
+            float const clrDisp =
+                clearance >= std::numeric_limits<float>::max() ? -1.0f : clearance;
+            size_t const trailLen =
+                AI_VALUE(std::vector<Position>&, "dungeon clear breadcrumbs").size();
+            DC_PULL_INFO("[DC:{}] advanced-pull plan: target {} at {:.1f}yd | camp "
+                         "({:.1f},{:.1f},{:.1f}) drag {:.1f}yd | clearance {:.1f}yd "
+                         "(safe {:.0f}, setback {:.0f}, trail {}) -> forming, "
+                         "waiting for party",
+                         bot->GetName(), trash->GetGUID().ToString(), toTrash,
+                         camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
+                         drag, clrDisp, safeRadius, setback, trailLen);
+            return true;
+        }
+
+        case DcPullPhase::Forming:
+        {
+            // The tank HOLDS where it committed (just outside aggro). The party
+            // walks back to the camp and goes passive (hold-at-camp). Tag only once
+            // the party is actually set, so the pull never drags into open ground.
+            if (bot->isMoving())
+                bot->StopMoving();
+
+            bool const partySet =
+                DungeonClearUtil::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
+            bool const formingTimedOut = (now - since) > DC_PULL_PARTY_SET_TIMEOUT_MS;
+            if (!partySet && !formingTimedOut)
+            {
+                DC_PULL_TRACE("[DC:{}] pull forming: waiting for party to set at camp "
+                              "({}/{} ms)", bot->GetName(), now - since,
+                              DC_PULL_PARTY_SET_TIMEOUT_MS);
+                return true;
+            }
+            DcSetPullPhase(context, DcPullPhase::Advancing);
+            DC_PULL_DEBUG("[DC:{}] pull forming complete ({}) -> advancing (tag)",
+                          bot->GetName(),
+                          partySet ? "party set" : "timed out waiting for party");
+            return true;
+        }
+
+        case DcPullPhase::Advancing:
+        {
+            // Tag the pack. The moment combat starts the non-combat trigger stops
+            // firing and DungeonClearPullManeuverAction drags it back to camp.
+            Unit* trash = next.has_value() ? DungeonClearUtil::FindPullTarget(botAI, *next) : nullptr;
+            if (!trash)
+            {
+                // Pack died / despawned before we tagged it — nothing to pull.
+                DcSetPullPhase(context, DcPullPhase::Idle);
+                DC_PULL_DEBUG("[DC:{}] pull advancing: target gone -> idle",
+                              bot->GetName());
+                return false;
+            }
+
+            if ((now - since) > DC_PULL_LEG_TIMEOUT_MS)
+            {
+                // Stalled without aggro (e.g. the tag resisted and we never closed).
+                // Hand this pack to the normal walk-in engage so the run never hangs.
+                context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(trash->GetGUID());
+                DcSetPullPhase(context, DcPullPhase::Idle);
+                DC_PULL_INFO("[DC:{}] advanced-pull: tag timed out (target {} at "
+                             "{:.1f}yd) -> normal engage", bot->GetName(),
+                             trash->GetGUID().ToString(), bot->GetExactDist(trash));
+                return false;
+            }
+
+            // Prefer a RANGED tag: pull from spell range so the tank tags and the
+            // pack comes to it, instead of running into the middle of the pack.
+            ObjectGuid const lastPull = AI_VALUE(ObjectGuid, "dungeon clear last pull target");
+            if (DC_TRY_PULL_SPELL)
+            {
+                if (auto pick = PickPullSpell(bot))
+                {
+                    if (lastPull == trash->GetGUID())
+                    {
+                        // Already tagged — hold and let aggro flip us to the
+                        // combat-engine drag-back. The leg timeout above is the
+                        // backstop if the tag somehow drew no aggro.
+                        if (bot->isMoving())
+                            bot->StopMoving();
+                        DC_PULL_TRACE("[DC:{}] pull advancing: tagged, holding for aggro "
+                                      "({:.1f}yd to target)", bot->GetName(),
+                                      bot->GetExactDist(trash));
+                        return true;
+                    }
+                    float const d = bot->GetExactDist(trash);
+                    if (d >= pick->minRange && d <= pick->maxRange &&
+                        bot->IsWithinLOSInMap(trash))
+                    {
+                        bot->SetSelection(trash->GetGUID());
+                        if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, trash))
+                            ServerFacade::instance().SetFacingTo(bot, trash);
+                        if (botAI->CastSpell(pick->name, trash))
+                        {
+                            context->GetValue<ObjectGuid>("dungeon clear last pull target")
+                                ->Set(trash->GetGUID());
+                            if (bot->isMoving())
+                                bot->StopMoving();
+                            DC_PULL_INFO("[DC:{}] advanced-pull: ranged tag '{}' at "
+                                         "{:.1f}yd", bot->GetName(), pick->name, d);
+                            return true;
+                        }
+                        // Cast failed (cooldown/silence) — fall through to body-tag.
+                    }
+                    // Not in range/LOS yet — fall through to close the gap; we'll
+                    // re-enter and cast once within range and line of sight.
+                }
+            }
+
+            // No ranged option (or out of range/LOS / cast failed): close in to
+            // body-tag. COMBAT priority so the approach isn't interrupted.
+            DC_PULL_TRACE("[DC:{}] pull advancing: closing to tag ({:.1f}yd)",
+                          bot->GetName(), bot->GetExactDist(trash));
+            bool const moved = MoveTo(trash->GetMapId(), trash->GetPositionX(),
+                                      trash->GetPositionY(), trash->GetPositionZ(),
+                                      /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                                      /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
+            if (moved || bot->isMoving() || IsWaitingForLastMove(MovementPriority::MOVEMENT_COMBAT))
+                return true;
+
+            // Couldn't move and not moving: navmesh wedge. Abort to normal engage.
+            context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(trash->GetGUID());
+            DcSetPullPhase(context, DcPullPhase::Idle);
+            DC_PULL_INFO("[DC:{}] advanced-pull: tag navmesh-wedged ({:.1f}yd to "
+                         "target) -> normal engage", bot->GetName(),
+                         bot->GetExactDist(trash));
+            return false;
+        }
+
+        case DcPullPhase::Returning:
+            // Reached here only out of combat (the maneuver runs in combat): the
+            // pack leashed / evaded mid-return. Release the party and reset.
+            DcSetPullPhase(context, DcPullPhase::Engage);
+            DC_PULL_INFO("[DC:{}] advanced-pull: out of combat mid-return (pack "
+                         "leashed/evaded) -> release party", bot->GetName());
+            return false;
+
+        case DcPullPhase::Engage:
+        default:
+            // Out-of-combat cleanup: the camp fight is over, ready the next pull.
+            context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(ObjectGuid::Empty);
+            DcSetPullPhase(context, DcPullPhase::Idle);
+            DC_PULL_DEBUG("[DC:{}] advanced-pull: camp fight done -> idle, ready for "
+                          "next pull", bot->GetName());
+            return false;
+    }
+}
+
+bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
+{
+    Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
+    uint32 const now = getMSTime();
+    DcPullPhase const phase = static_cast<DcPullPhase>(AI_VALUE(uint32, "dungeon clear pull phase"));
+
+    // Keep the tank daze-proof for the whole drag. Immunity (set with pull mode)
+    // should stop Daze landing at all; strip it here too as a backstop so a
+    // retreat is never slowed to a crawl by a hit from behind.
+    bot->RemoveAurasDueToSpell(1604);
+
+    // First combat tick of the pull: aggro confirmed, turn around for camp.
+    // Forming counts too — combat can be taken while the tank holds at the commit
+    // spot waiting for the party to set (the pack wandered into it / a patrol).
+    // Idle counts as well: an unplanned aggro while merely scouting toward the
+    // next pack must ALSO retreat to the held party rather than fight in place.
+    // Either way we drag back to the camp and release the party there rather than
+    // letting the tank solo in place.
+    if (phase == DcPullPhase::Advancing || phase == DcPullPhase::Forming ||
+        phase == DcPullPhase::Idle)
+    {
+        // Unplanned aggro while scouting (Idle): stamp a FRESH safe camp just
+        // behind the tank (away from the aggressor) and drag the pack THERE. The
+        // party then converges on the NEW camp via hold-at-camp — we deliberately
+        // do NOT haul the pack all the way back to the stale camp the party still
+        // sits at. The fight happens on safe ground near where the aggro started
+        // and the party comes up to it, even though it isn't there yet.
+        // Forming/Advancing already carry the freshly-committed pull camp.
+        if (phase == DcPullPhase::Idle)
+        {
+            Unit* aggressor = bot->GetVictim();
+            for (Unit* a : bot->getAttackers())
+            {
+                if (!a || !a->IsAlive())
+                    continue;
+                if (!aggressor ||
+                    bot->GetExactDist2d(a) < bot->GetExactDist2d(aggressor))
+                    aggressor = a;
+            }
+            if (aggressor)
+            {
+                float const setback = DcSettings::GetFloat(bot, "PullSetback");
+                float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+                float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+                float clr = 0.0f;
+                float drag = 0.0f;
+                if (std::optional<Position> fresh = DungeonClearUtil::ComputeSafeCamp(
+                        botAI, aggressor, setback, safeRadius, maxDrag, clr, drag))
+                {
+                    camp = *fresh;
+                    DC_PULL_INFO("[DC:{}] advanced-pull: unplanned aggro while scouting "
+                                 "-> fresh camp ({:.1f},{:.1f},{:.1f}) drag {:.1f}yd, "
+                                 "party converges", bot->GetName(),
+                                 camp.GetPositionX(), camp.GetPositionY(),
+                                 camp.GetPositionZ(), drag);
+                }
+            }
+        }
+
+        // If the camp was never stamped and none could be computed, fall back to
+        // fighting in place rather than dragging the pack to the map origin.
+        if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
+            camp.GetPositionZ() == 0.0f)
+            camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+        DcSetPullPhase(context, DcPullPhase::Returning);
+        DC_PULL_INFO("[DC:{}] advanced-pull: aggro confirmed at {:.1f}yd from camp "
+                     "(from {}) -> dragging to camp", bot->GetName(),
+                     bot->GetExactDist(&camp),
+                     phase == DcPullPhase::Forming ? "forming"
+                         : phase == DcPullPhase::Idle ? "scouting" : "tag");
+    }
+
+    uint32 const since = AI_VALUE(uint32, "dungeon clear pull since");
+    float const dist = bot->GetExactDist(&camp);
+
+    if (dist <= DC_PULL_CAMP_ARRIVE)
+    {
+        // Back at camp: stop and hand the fight to stock combat. Flipping to
+        // Engage is also what makes ReapStrandedPassives release the party.
+        if (bot->isMoving())
+            bot->StopMoving();
+        DcSetPullPhase(context, DcPullPhase::Engage);
+        DC_PULL_INFO("[DC:{}] advanced-pull: at camp ({:.1f}yd) -> engaging, party "
+                     "released", bot->GetName(), dist);
+        return false;
+    }
+
+    if ((now - since) > DC_PULL_LEG_TIMEOUT_MS)
+    {
+        // Return leg wedged — fight where we are rather than freeze.
+        DcSetPullPhase(context, DcPullPhase::Engage);
+        DC_PULL_INFO("[DC:{}] advanced-pull: return leg wedged at {:.1f}yd from camp "
+                     "after {} ms -> fighting in place",
+                     bot->GetName(), dist, now - since);
+        return false;
+    }
+
+    // Run to camp. Own the tick (return true even on a duplicate move) so stock
+    // combat chase/attack can't grab the tank and fight at the pack instead.
+    DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
+                  bot->GetName(), dist, now - since);
+    MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
+           /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+           /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
+    return true;
+}
+
+bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
+{
+    Position camp;
+    bool passive = false;
+    if (!DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+        return false;
+
+    // Go passive (attack nothing) ONLY while the tank is actually tagging (a
+    // holding phase). While merely holding at camp between pulls the party stays
+    // ready to defend; the reaper strips any DC passive once we leave a holding
+    // phase. Idempotent; the matching release is centralized in
+    // ReapStrandedPassives so it fires on every exit.
+    if (passive)
+        DungeonClearUtil::ApplyFollowerPassive(bot);
+
+    // Loot yield (scout phase only). The pack dies AT camp, so its corpses sit
+    // right where the party holds. Without this the camp hold and the stock loot
+    // pipeline fight each other: move-to-loot walks a follower a few yards to a
+    // corpse, hold-at-camp yanks it back (corpse just outside the hold radius),
+    // and un-finishable / below-floor corpses keep the loot flags armed forever —
+    // the ping-pong the player saw. Mirror the follow-tank loot yield exactly:
+    // prune corpses we must not take (skipped / below DungeonClear.LootMinQuality /
+    // camped too long), then step ASIDE (return false, don't pull back to camp)
+    // while a takeable corpse is in progress, bounded by a commit timeout. Skip
+    // entirely while the tank is tagging (passive) — the party must stay pinned.
+    if (!passive)
+    {
+        DungeonClearUtil::StripSkippedLoot(botAI);
+        DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
+        DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS,
+                                                DC_LOOT_GIVEUP_TTL_MS);
+        uint32& lootYieldStart =
+            context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
+        bool const lootYield =
+            AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot");
+        if (lootYield)
+        {
+            uint32 const nowMs = getMSTime();
+            if (lootYieldStart == 0)
+                lootYieldStart = nowMs;
+            if (nowMs - lootYieldStart < DC_LOOT_YIELD_TIMEOUT_MS)
+            {
+                // Hand the tick to move-to-loot / open-loot; do NOT yank back to
+                // camp (that is the ping-pong).
+                DC_PULL_TRACE("[DC:{}] hold-at-camp yielding: loot in progress ({}ms)",
+                              bot->GetName(), nowMs - lootYieldStart);
+                return false;
+            }
+            // Waited long enough — blacklist THIS corpse so the flags drop and we
+            // stop being drawn back to it, then resume holding at camp.
+            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+            DC_PULL_TRACE("[DC:{}] hold-at-camp loot-yield timed out -> giving up corpse",
+                          bot->GetName());
+        }
+        else
+        {
+            lootYieldStart = 0;  // not looting -> reset the commit timer
+        }
+    }
+
+    // Cancel any persistent MoveFollow that follow-tank installed before the
+    // pull. While holding we own this bot's movement, but MoveFollow lives in
+    // the same ACTIVE MotionMaster slot and StopMoving does NOT remove the
+    // generator — it re-asserts on the next motion update and walks the
+    // follower right back out after the advancing tank (this is exactly how the
+    // party ended up trailing the tank to the mob). Clear it once; follow-tank
+    // re-installs it when the pull releases. Same persistent-generator gotcha as
+    // the DC-tank-gone teardown / [[selfbot-stale-movefollow]].
+    if (bot->GetMotionMaster() &&
+        bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+    {
+        if (bot->isMoving())
+            bot->StopMoving();
+        bot->GetMotionMaster()->Clear();
+        context->GetValue<ObjectGuid>("dungeon clear followed tank")->Set(ObjectGuid::Empty);
+        DungeonClearUtil::UnmarkFollowing(bot->GetGUID());
+    }
+
+    // Park at the leader's camp.
+    float const toCamp = bot->GetExactDist(&camp);
+    if (toCamp <= DC_PULL_HOLD_RADIUS)
+    {
+        if (bot->isMoving())
+            bot->StopMoving();
+        DC_PULL_TRACE("[DC:{}] hold-at-camp: parked ({:.1f}yd, passive={})",
+                      bot->GetName(), toCamp, passive);
+        // During a holding phase (the tank is tagging) OWN the tick so nothing can
+        // break the hold while the pull is live. While merely camped between pulls
+        // (scout phase, passive==false) YIELD so the party can rest / loot at camp
+        // — the multiplier suppresses wander / follow / self-pull for a camp-held
+        // follower, so yielding here can't let it drift off toward the tank.
+        return passive;
+    }
+    bool const moved =
+        MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
+               /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+               /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    DC_PULL_TRACE("[DC:{}] hold-at-camp: walking to camp ({:.1f}yd, passive={}, moved={})",
+                  bot->GetName(), toCamp, passive, moved);
+    return true;
 }

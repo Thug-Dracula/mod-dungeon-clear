@@ -43,8 +43,32 @@ being inside a dungeon.
 | `.dc on` | `dc on` / `dungeon clear on` |
 | `.dc off` | `dc off` / `dungeon clear off` |
 | `.dc skip` | `dc skip` |
+| `.dc pause` | `dc pause` / `dungeon clear pause` |
+| `.dc pull` | `dc pull` / `dungeon clear pull` |
 | `.dc status` | `dc status` |
 | `.dc bosses` | `dc bosses` |
+
+### Advanced pull (`dc pull`)
+
+A toggle that changes how the tank takes trash packs. Instead of walking into a
+pack and fighting on top of it, the tank:
+
+1. marks a **camp** a good distance back along the already-cleared route
+   (`DungeonClear.PullSetback`), pushed further if needed so the fight won't aggro
+   a neighbouring pack (`DungeonClear.PullCampSafeRadius`, capped by
+   `DungeonClear.PullMaxDrag`) — dungeon mobs have no leash, so the camp is placed
+   for room, not to avoid an evade;
+2. sends the DPS and healers to the camp and holds them there — in pull mode the
+   party **never follows the tank**, it holds at the camp and leapfrogs
+   camp-to-camp as each pull marks a new one, so it can't pile onto a pull;
+3. once the party is set, **tags** the pack — a ranged class pull (Heroic Throw,
+   Avenger's Shield, Death Grip, Faerie Fire) when it has one, otherwise it steps
+   in — and immediately **drags** the pack back to the waiting party;
+4. **releases** the party to fight the moment the tank reaches camp.
+
+If a held, passive member is hurt (a patrol clipped the camp) the pull aborts and
+the whole party is released to defend (`DungeonClear.PullSafetyHpPct`). Pull mode
+is per-run and resets with the clear.
 
 The `.dc` slash command always works. **Chat keywords and follow-tank need the
 `dungeon clear` strategy applied** — the login hook applies it to bots present
