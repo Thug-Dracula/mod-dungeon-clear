@@ -314,6 +314,36 @@ namespace
         }
     }
 
+    // The class opener resolved to a concrete spell the BOT has actually LEARNED.
+    struct ResolvedPullSpell
+    {
+        uint32 spellId;
+        float  minRange;
+        float  maxRange;
+    };
+
+    // Resolve PickPullSpell to a usable spell id, but ONLY if the tank itself
+    // trained it. botAI->CastSpell(name) is NOT a sufficient gate on its own:
+    // the "spell id" value falls back to the bot's PET spellbook when the bot
+    // doesn't know the spell, and CastSpell then builds the spell on the bot
+    // regardless of knowledge — i.e. the server quietly FORCES the tank to "cast"
+    // a pull it never learned. Resolving the id here and requiring
+    // bot->HasSpell(id) (player-only; never the pet) means an untrained tank
+    // returns nullopt and just walks in to body-tag instead.
+    std::optional<ResolvedPullSpell> ResolvePullSpell(PlayerbotAI* botAI, Player* bot)
+    {
+        if (!botAI || !bot)
+            return std::nullopt;
+        auto pick = PickPullSpell(bot);
+        if (!pick)
+            return std::nullopt;
+        uint32 const spellId =
+            botAI->GetAiObjectContext()->GetValue<uint32>("spell id", pick->name)->Get();
+        if (!spellId || !bot->HasSpell(spellId))
+            return std::nullopt;
+        return ResolvedPullSpell{spellId, pick->minRange, pick->maxRange};
+    }
+
     void DisableDungeonClear(PlayerbotAI* botAI, std::string const& reason)
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
@@ -852,8 +882,9 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
     if (distance > attackRange)
     {
         // Optional: try a single class pull-spell opener before walking in.
-        // Fire-and-forget — if CastSpell returns false (out of range, on
-        // cooldown, silenced, not known), we just fall through to the walk.
+        // Fire-and-forget — if the cast fails (out of range, on cooldown,
+        // silenced) we just fall through to the walk; ResolvePullSpell already
+        // dropped the opener entirely if the tank never trained it.
         // Suppress repeats while we're closing on the same target so we
         // don't spam casts each tick.
         if (DC_TRY_PULL_SPELL)
@@ -862,13 +893,13 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
                 AI_VALUE(ObjectGuid, "dungeon clear last pull target");
             if (lastPullTarget != target->GetGUID())
             {
-                if (auto pick = PickPullSpell(bot))
+                if (auto pick = ResolvePullSpell(botAI, bot))
                 {
                     if (distance >= pick->minRange && distance <= pick->maxRange &&
                         bot->IsWithinLOSInMap(target))
                     {
                         bot->SetSelection(target->GetGUID());
-                        if (botAI->CastSpell(pick->name, target))
+                        if (botAI->CastSpell(pick->spellId, target))
                         {
                             context->GetValue<ObjectGuid>("dungeon clear last pull target")
                                 ->Set(target->GetGUID());
@@ -2551,11 +2582,52 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 return false;
             }
             // Don't commit until the pack is within reach (the trigger gates on the
-            // same range). While it's farther, yield to Advance to glide closer.
+            // same range). While it's farther, yield to Advance to glide closer —
+            // but PUBLISH a prospective camp NOW so the party walks up to it IN
+            // PARALLEL with the tank's approach, instead of holding at the stale
+            // camp until the tank arrives and only THEN trudging forward (the old
+            // robotic "tank scouts, wait, party moves, wait" stall the player saw).
+            //
+            // ComputeSafeCamp returns a point `setback` behind the tank along the
+            // breadcrumb trail; as the tank glides in it creeps forward, so the
+            // party trails at a roughly fixed standoff. We only ADOPT a candidate
+            // that sits closer to the pack than the current camp (with a little
+            // hysteresis), so the party advances monotonically and is never dragged
+            // backward early in the glide — when "setback behind the tank" can still
+            // fall behind the previous/seed camp. We still yield (return false) so
+            // Advance keeps gliding the tank; the camp update is a pure side effect.
             float const toTrash = bot->GetExactDist2d(trash);
             if (toTrash > DC_PULL_START_RANGE)
             {
-                DC_PULL_DEBUG("[DC:{}] pull idle: target {} at {:.1f}yd > start range "
+                float const setback = DcSettings::GetFloat(bot, "PullSetback");
+                float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+                float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+                float clrAhead = 0.0f;
+                float dragAhead = 0.0f;
+                if (std::optional<Position> ahead = DungeonClearUtil::ComputeSafeCamp(
+                        botAI, trash, setback, safeRadius, maxDrag, clrAhead, dragAhead))
+                {
+                    bool const campUnset =
+                        camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
+                        camp.GetPositionZ() == 0.0f;
+                    float const candToTrash = ahead->GetExactDist2d(trash);
+                    // +3yd hysteresis: only rewrite when the candidate is meaningfully
+                    // more forward, so the party isn't churned by tick-to-tick jitter.
+                    if (campUnset || candToTrash + 3.0f < camp.GetExactDist2d(trash))
+                    {
+                        camp = *ahead;
+                        DC_PULL_DEBUG("[DC:{}] pull idle: target {} at {:.1f}yd > start "
+                                      "range {:.1f} -> party advances to camp "
+                                      "({:.1f},{:.1f},{:.1f}) {:.1f}yd from pack while "
+                                      "tank closes", bot->GetName(),
+                                      trash->GetGUID().ToString(), toTrash,
+                                      DC_PULL_START_RANGE, camp.GetPositionX(),
+                                      camp.GetPositionY(), camp.GetPositionZ(),
+                                      candToTrash);
+                        return false;
+                    }
+                }
+                DC_PULL_TRACE("[DC:{}] pull idle: target {} at {:.1f}yd > start range "
                               "{:.1f} -> glide closer before committing",
                               bot->GetName(), trash->GetGUID().ToString(), toTrash,
                               DC_PULL_START_RANGE);
@@ -2658,7 +2730,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             ObjectGuid const lastPull = AI_VALUE(ObjectGuid, "dungeon clear last pull target");
             if (DC_TRY_PULL_SPELL)
             {
-                if (auto pick = PickPullSpell(bot))
+                if (auto pick = ResolvePullSpell(botAI, bot))
                 {
                     if (lastPull == trash->GetGUID())
                     {
@@ -2679,14 +2751,14 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         bot->SetSelection(trash->GetGUID());
                         if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, trash))
                             ServerFacade::instance().SetFacingTo(bot, trash);
-                        if (botAI->CastSpell(pick->name, trash))
+                        if (botAI->CastSpell(pick->spellId, trash))
                         {
                             context->GetValue<ObjectGuid>("dungeon clear last pull target")
                                 ->Set(trash->GetGUID());
                             if (bot->isMoving())
                                 bot->StopMoving();
-                            DC_PULL_INFO("[DC:{}] advanced-pull: ranged tag '{}' at "
-                                         "{:.1f}yd", bot->GetName(), pick->name, d);
+                            DC_PULL_INFO("[DC:{}] advanced-pull: ranged tag spell {} at "
+                                         "{:.1f}yd", bot->GetName(), pick->spellId, d);
                             return true;
                         }
                         // Cast failed (cooldown/silence) — fall through to body-tag.
