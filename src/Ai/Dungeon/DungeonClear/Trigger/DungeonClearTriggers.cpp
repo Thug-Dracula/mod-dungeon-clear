@@ -478,10 +478,19 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
     if (!bot || bot->isDead())
         return false;
-    if (!AI_VALUE(bool, "dungeon clear pull mode"))
-        return false;
     Map* map = bot->GetMap();
     if (!map || !map->IsDungeon())
+        return false;
+
+    // Dynamic mode (pull setting == 2): size up the next pack and drive the
+    // `dungeon clear pull mode` bool to Leeroy or Advanced for THIS tick. Run here
+    // because the engine evaluates every trigger's IsActive() up front in
+    // registration order, and this pull trigger is registered before the engage
+    // triggers — so the bool is current when they (and the multiplier) read it.
+    // No-op for Off/On, where DcPullAction owns the bool.
+    DungeonClearUtil::UpdateDynamicPullMode(botAI, context);
+
+    if (!AI_VALUE(bool, "dungeon clear pull mode"))
         return false;
 
     uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");

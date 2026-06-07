@@ -96,3 +96,92 @@ TEST(DungeonClearMathTest, DiagonalSegment)
     // Point (3,3) is on the diagonal -> distance should be 0
     EXPECT_NEAR(DungeonClearMath::DistSqToSegment2D(3.0f, 3.0f, ax, ay, bx, by), 0.0f, 1e-5f);
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic pull classifier (Leeroy vs Advanced). packRadius 12, chainRadius 15,
+// largePackThreshold 5 mirror the shipped defaults.
+// ---------------------------------------------------------------------------
+namespace
+{
+    using DungeonClearMath::DynPullMob;
+    constexpr float kPackR = 12.0f;
+    constexpr float kChainR = 15.0f;
+    constexpr unsigned kLarge = 5u;
+
+    bool Classify(std::vector<DynPullMob> const& m, std::size_t t)
+    {
+        return DungeonClearMath::ClassifyDynamicPull(m, t, kPackR, kChainR, kLarge);
+    }
+}
+
+// A single lone mob -> Leeroy.
+TEST(DungeonClearDynamicPullTest, SingleMobLeeroy)
+{
+    std::vector<DynPullMob> mobs = { {0.0f, 0.0f, false} };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// One bunched pack, nothing else -> Leeroy.
+TEST(DungeonClearDynamicPullTest, LoneSmallPackLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, false}, {3.0f, 0.0f, false}, {0.0f, 4.0f, false}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// Two DISTINCT packs whose nearest mobs are 13yd apart (> packRadius so they
+// don't merge into one cluster, <= chainRadius) and chain-eligible -> Advanced.
+TEST(DungeonClearDynamicPullTest, TwoPacksNearbyAdvanced)
+{
+    std::vector<DynPullMob> mobs = {
+        // target pack near origin
+        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
+        // second pack: nearest mob (16,0) is 13yd from target mob (3,0)
+        {16.0f, 0.0f, true}, {19.0f, 0.0f, true}
+    };
+    EXPECT_TRUE(Classify(mobs, 0));
+}
+
+// Second pack just beyond chainRadius -> Leeroy.
+TEST(DungeonClearDynamicPullTest, NeighbourBeyondChainRadiusLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
+        {30.0f, 0.0f, true}, {33.0f, 0.0f, true}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// Distinct second pack within chainRadius but NOT chain-eligible (behind a wall
+// / door / a floor away) -> Leeroy. Nearest cross distance 13yd keeps them as
+// separate clusters; the gate is what suppresses the Advanced verdict.
+TEST(DungeonClearDynamicPullTest, NeighbourNotEligibleLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
+        {16.0f, 0.0f, false}, {19.0f, 0.0f, false}  // 13yd away but gated out
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// A single oversized lone pack (> threshold) -> Advanced via the size override.
+TEST(DungeonClearDynamicPullTest, LargeLonePackAdvanced)
+{
+    // 6 mobs all within pack radius of each other, no other pack.
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, false}, {2.0f, 0.0f, false}, {4.0f, 0.0f, false},
+        {0.0f, 2.0f, false}, {2.0f, 2.0f, false}, {4.0f, 2.0f, false}
+    };
+    EXPECT_TRUE(Classify(mobs, 0));
+}
+
+// Exactly at the threshold (5 mobs) with no neighbour -> still Leeroy.
+TEST(DungeonClearDynamicPullTest, ThresholdSizedLonePackLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, false}, {2.0f, 0.0f, false}, {4.0f, 0.0f, false},
+        {0.0f, 2.0f, false}, {2.0f, 2.0f, false}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}

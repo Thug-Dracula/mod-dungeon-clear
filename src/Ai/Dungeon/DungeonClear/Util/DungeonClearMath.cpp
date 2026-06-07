@@ -5,6 +5,70 @@
 
 #include "DungeonClearMath.h"
 
+#include <cmath>
+#include <cstddef>
+
+bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
+                                           std::size_t targetIdx, float packRadius,
+                                           float chainRadius,
+                                           std::uint32_t largePackThreshold)
+{
+    std::size_t const n = mobs.size();
+    if (n == 0 || targetIdx >= n)
+        return false;
+
+    auto dist2d = [&](std::size_t a, std::size_t b)
+    {
+        float const dx = mobs[a].x - mobs[b].x;
+        float const dy = mobs[a].y - mobs[b].y;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+
+    // Union-Find connected components at packRadius. n is tiny, so O(n^2) is fine.
+    std::vector<std::size_t> parent(n);
+    for (std::size_t i = 0; i < n; ++i)
+        parent[i] = i;
+    auto find = [&parent](std::size_t a)
+    {
+        while (parent[a] != a)
+        {
+            parent[a] = parent[parent[a]];
+            a = parent[a];
+        }
+        return a;
+    };
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = i + 1; j < n; ++j)
+            if (dist2d(i, j) <= packRadius)
+                parent[find(i)] = find(j);
+
+    std::size_t const targetRoot = find(targetIdx);
+
+    // Size override: a big lone pack still earns the careful Advanced pull.
+    std::uint32_t packSize = 0;
+    for (std::size_t i = 0; i < n; ++i)
+        if (find(i) == targetRoot)
+            ++packSize;
+    if (packSize > largePackThreshold)
+        return true;
+
+    // Threatening neighbours: an OTHER pack with a chainEligible mob within
+    // chainRadius of any target-pack mob.
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (find(i) == targetRoot || !mobs[i].chainEligible)
+            continue;
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            if (find(j) != targetRoot)
+                continue;
+            if (dist2d(i, j) <= chainRadius)
+                return true;
+        }
+    }
+    return false;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)

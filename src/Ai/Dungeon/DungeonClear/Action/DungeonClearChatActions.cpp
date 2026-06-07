@@ -126,6 +126,10 @@ namespace
         context->GetValue<uint32>("dungeon clear pull since")->Set(0u);
         context->GetValue<Position&>("dungeon clear camp position")->Get() = Position();
         context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(ObjectGuid::Empty);
+        // Dynamic-pull verdict + its per-pack latch: clear so the next pull is
+        // sized up fresh rather than inheriting the interrupted engagement's call.
+        context->GetValue<uint32>("dungeon clear pull decision")->Set(0u);
+        context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Set(ObjectGuid::Empty);
     }
 
     // Shared resume path. Rebuilds the transient navigation cache so Advance
@@ -790,10 +794,11 @@ bool DcPullAction::Execute(Event event)
     else
         setting = (current + 1u) % 3u;  // bare toggle cycles the three states
 
-    // Dynamic is not yet implemented, so it drives no behavior: only the explicit
-    // "On" state arms the actual pull-to-camp maneuver. Keep the behavioral bool
-    // in lock-step so every existing reader (triggers, multiplier, GetLeaderPull-
-    // Info) stays untouched — Dynamic simply reads as "pull off" for now.
+    // "On" (1) arms the pull-to-camp maneuver unconditionally; the behavioral bool
+    // is true. "Dynamic" (2) leaves the bool false HERE and hands control to the
+    // per-tick governor (DungeonClearUtil::UpdateDynamicPullMode in the pull
+    // trigger), which sets the bool to Leeroy/Advanced per pack — so at toggle time
+    // Dynamic, like Off, starts with the maneuver disarmed. Off (0) is bool false.
     bool const active = (setting == 1u);
 
     context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
@@ -823,7 +828,7 @@ bool DcPullAction::Execute(Event event)
     if (setting == 1u)
         chat += "enabled.";
     else if (setting == 2u)
-        chat += "set to dynamic (auto-pull; not yet active, holding off).";
+        chat += "set to dynamic (auto-deciding Leeroy vs pull per pack).";
     else
         chat += "disabled.";
     DungeonClearUtil::SendAddonMessage(botAI, chat);

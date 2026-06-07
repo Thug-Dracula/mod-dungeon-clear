@@ -1038,6 +1038,134 @@ bool DungeonClearUtil::IsPullPhaseHolding(uint32 phase)
            phase == static_cast<uint32>(DcPullPhase::Returning);
 }
 
+bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
+{
+    if (!botAI || !target)
+        return false;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return false;
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+
+    // Same intra-pack grouping ComputeSafeCamp uses, so "pack" means the same
+    // thing across the feature.
+    constexpr float kPackRadius = 12.0f;
+    float const chainRadius = DcSettings::GetFloat(bot, "PullDynamicChainRadius");
+    uint32 const largePack = DcSettings::GetUInt(bot, "PullDynamicLargePackThreshold");
+
+    // Candidate hostiles ahead — the same set the pull / camp scans read.
+    GuidVector const& farTargets =
+        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
+    GuidVector const& possibleTargets =
+        ctx->GetValue<GuidVector>("possible targets")->Get();
+    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
+
+    std::vector<Unit*> hostiles;
+    hostiles.reserve(candidates.size() + 1);
+    for (ObjectGuid guid : candidates)
+    {
+        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+        if (!u || !u->IsAlive() || !bot->IsHostileTo(u))
+            continue;
+        hostiles.push_back(u);
+    }
+    // The target must be in the set so its pack is well-defined even if the scan
+    // missed it this cache cycle.
+    if (std::find(hostiles.begin(), hostiles.end(), target) == hostiles.end())
+        hostiles.push_back(target);
+
+    // Resolve game state (positions + the per-mob LOS/door gate) here, then hand
+    // the pure clustering/threshold decision to DungeonClearMath::ClassifyDynamic-
+    // Pull (unit-tested). The gate uses the target itself as the pack's stand-in:
+    // packmates sit within a pack radius of it, so LOS to the target ~= LOS to the
+    // pack, and it keeps the eligibility precomputable before clustering.
+    std::vector<DungeonClearMath::DynPullMob> mobs;
+    mobs.reserve(hostiles.size());
+    std::size_t targetIdx = 0;
+    for (std::size_t i = 0; i < hostiles.size(); ++i)
+    {
+        Unit* u = hostiles[i];
+        if (u == target)
+            targetIdx = i;
+        bool const chainEligible =
+            u != target && target->IsWithinLOSInMap(u) &&
+            !ClosedDoorBetween(bot, u->GetPositionX(), u->GetPositionY(),
+                               u->GetPositionZ());
+        mobs.push_back({u->GetPositionX(), u->GetPositionY(), chainEligible});
+    }
+
+    bool const advanced = DungeonClearMath::ClassifyDynamicPull(
+        mobs, targetIdx, kPackRadius, chainRadius, largePack);
+    DC_PULL_DEBUG("[DC:{}] dynamic: classified target {} among {} forward hostiles "
+                  "(chain {:.1f}, large-pack {}) -> {}", bot->GetName(),
+                  target->GetGUID().ToString(), mobs.size(), chainRadius, largePack,
+                  advanced ? "ADVANCED" : "LEEROY");
+    return advanced;
+}
+
+void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* context)
+{
+    if (!botAI || !context)
+        return;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return;
+
+    // Off / On are driven by DcPullAction; only Dynamic auto-decides per pack.
+    if (context->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
+        return;
+
+    uint32 const phase = context->GetValue<uint32>("dungeon clear pull phase")->Get();
+    bool const curBool = context->GetValue<bool>("dungeon clear pull mode")->Get();
+
+    // Never flip the verdict mid-engagement: in combat or any non-Idle pull phase
+    // the standing decision is latched until the fight resolves.
+    if (bot->IsInCombat() || phase != static_cast<uint32>(DcPullPhase::Idle))
+        return;
+
+    auto apply = [&](bool want, uint32 decision)
+    {
+        context->GetValue<uint32>("dungeon clear pull decision")->Set(decision);
+        if (want == curBool)
+            return;
+        context->GetValue<bool>("dungeon clear pull mode")->Set(want);
+        SetLeaderDazeImmunity(bot, want);
+        // Switching to Advanced: seed a camp at the tank so followers have an
+        // immediate hold point (mirrors DcPullAction's On activation); the pull
+        // pipeline overwrites it with the real safe camp on commit.
+        if (want)
+            context->GetValue<Position&>("dungeon clear camp position")->Get() =
+                Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    };
+
+    std::optional<DungeonBossInfo> next =
+        context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+    Unit* target = next.has_value() ? FindPullTarget(botAI, *next) : nullptr;
+    if (!target)
+    {
+        // Nothing to size up: fall back to the Leeroy ladder and drop the latch.
+        context->GetValue<ObjectGuid>("dungeon clear pull decision target")
+            ->Set(ObjectGuid::Empty);
+        apply(false, 0u);
+        return;
+    }
+
+    // Per-pack latch: keep the standing verdict while approaching the SAME pack,
+    // so the party isn't churned between follow and hold each tick as neighbouring
+    // packs drift in and out of the far-targets scan.
+    ObjectGuid const latched =
+        context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
+    if (latched == target->GetGUID())
+        return;
+
+    bool const advanced = ClassifyPullAdvanced(botAI, target);
+    context->GetValue<ObjectGuid>("dungeon clear pull decision target")
+        ->Set(target->GetGUID());
+    apply(advanced, advanced ? 2u : 1u);
+    DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
+                 target->GetGUID().ToString(), advanced ? "ADVANCED" : "LEEROY");
+}
+
 namespace
 {
     // True only when a COMPLETE navmesh route (PATHFIND_NORMAL) exists from the
@@ -2203,9 +2331,11 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
     // `pullMode` is the behavioral gate (a pull maneuver is actually armed) and
     // drives the state/detail wording below; `pullSetting` is the user's tri-state
     // preference (Off/On/Dynamic) reported to the addon's control. They differ for
-    // Dynamic, which is a stored preference with no behavior yet (bool stays off).
+    // Dynamic, where the governor flips the bool per pack — `pullDecision` (0 none /
+    // 1 Leeroy / 2 Advanced) is the live verdict the addon shows under "Dynamic".
     bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
     uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
+    uint32 const pullDecision = AI_VALUE(uint32, "dungeon clear pull decision");
     uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
     std::string const bossName = next.has_value() ? next->name : "the boss";
 
@@ -2329,9 +2459,13 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
              // Trailing field (index 8): advanced-pull preference as a tri-state
              // (0 Off / 1 On / 2 Dynamic) for the addon's segmented control + tiny
              // cycle. Appended so older addons ignoring it stay compatible (same
-             // pattern as the BOSS wing field); they read "2" as not-"1" = off,
-             // which is the correct behavior while Dynamic is a no-op stub.
-             << pullSetting;
+             // pattern as the BOSS wing field).
+             << pullSetting << "\t"
+             // Trailing field (index 9): live Dynamic verdict for the pack the tank
+             // is sizing up (0 none / 1 Leeroy / 2 Advanced). Only meaningful when
+             // pullSetting == 2; the addon shows it as the Dynamic sub-label.
+             // Appended last so older addons ignore it.
+             << pullDecision;
 
     return addonMsg.str();
 }

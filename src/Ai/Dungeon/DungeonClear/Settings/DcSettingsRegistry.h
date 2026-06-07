@@ -66,6 +66,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
     { "PullMaxDrag",           DcType::Float,100,  20, 200,  true  },
 
+    // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack.
+    // ChainRadius is how close ANOTHER pack must be to the target pack before the
+    // pull is treated as a multi-pack room and handled with the careful Advanced
+    // maneuver; below it (an isolated pack) the tank just Leeroys it. Smaller =
+    // Leeroys more. LargePackThreshold forces Advanced for a single big pack even
+    // with no neighbour. See DungeonClearUtil::ClassifyPullAdvanced.
+    { "PullDynamicChainRadius",     DcType::Float, 15,  5,  40,  true  },
+    { "PullDynamicLargePackThreshold", DcType::UInt, 5,  1,  20,  true  },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

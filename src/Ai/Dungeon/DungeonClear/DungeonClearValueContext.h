@@ -64,6 +64,8 @@ public:
         creators["dungeon clear followed tank"] = &DungeonClearValueContext::dungeon_clear_followed_tank;
         creators["dungeon clear pull mode"] = &DungeonClearValueContext::dungeon_clear_pull_mode;
         creators["dungeon clear pull setting"] = &DungeonClearValueContext::dungeon_clear_pull_setting;
+        creators["dungeon clear pull decision"] = &DungeonClearValueContext::dungeon_clear_pull_decision;
+        creators["dungeon clear pull decision target"] = &DungeonClearValueContext::dungeon_clear_pull_decision_target;
         creators["dungeon clear pull phase"] = &DungeonClearValueContext::dungeon_clear_pull_phase;
         creators["dungeon clear camp position"] = &DungeonClearValueContext::dungeon_clear_camp_position;
         creators["dungeon clear pull since"] = &DungeonClearValueContext::dungeon_clear_pull_since;
@@ -114,6 +116,8 @@ private:
     static UntypedValue* dungeon_clear_followed_tank(PlayerbotAI* ai) { return new DungeonClearFollowedTankValue(ai); }
     static UntypedValue* dungeon_clear_pull_mode(PlayerbotAI* ai) { return new DungeonClearPullModeValue(ai); }
     static UntypedValue* dungeon_clear_pull_setting(PlayerbotAI* ai) { return new DungeonClearPullSettingValue(ai); }
+    static UntypedValue* dungeon_clear_pull_decision(PlayerbotAI* ai) { return new DungeonClearPullDecisionValue(ai); }
+    static UntypedValue* dungeon_clear_pull_decision_target(PlayerbotAI* ai) { return new DungeonClearPullDecisionTargetValue(ai); }
     static UntypedValue* dungeon_clear_pull_phase(PlayerbotAI* ai) { return new DungeonClearPullPhaseValue(ai); }
     static UntypedValue* dungeon_clear_camp_position(PlayerbotAI* ai) { return new DungeonClearCampPositionValue(ai); }
     static UntypedValue* dungeon_clear_pull_since(PlayerbotAI* ai) { return new DungeonClearPullSinceValue(ai); }

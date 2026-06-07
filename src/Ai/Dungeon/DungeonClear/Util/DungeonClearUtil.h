@@ -482,6 +482,29 @@ public:
     static void UnmarkFollowing(ObjectGuid player);
     static void ReapOrphanedFollows();
 
+    // --- Dynamic pull (auto Leeroy vs Advanced) -----------------------------
+    // Classifies the pull on `target`: true => use the careful Advanced pull-to-
+    // camp (the pack sits in a multi-pack room, or is a single oversized pack);
+    // false => Leeroy it (lone small pack / single mob). Clusters the forward
+    // hostiles at a 12yd pack radius (connected components), then counts OTHER
+    // packs whose nearest mob is within PullDynamicChainRadius of the target's
+    // pack AND is in line of sight with no closed door between — the far-targets
+    // scan ignores LOS, so that gate rejects packs through a wall / a floor away /
+    // behind a door that won't actually chain. See the Dynamic Pull plan doc.
+    static bool ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target);
+
+    // Per-tick governor for Dynamic mode (pull setting == 2). No-op for Off/On
+    // (DcPullAction owns the bool there). Out of combat with no pull maneuver in
+    // flight, it sizes up the next pull target (ClassifyPullAdvanced), latches the
+    // verdict per target GUID (so a single approaching pack isn't re-judged every
+    // tick and the party isn't churned between follow/hold), and drives `dungeon
+    // clear pull mode` (+ leader daze immunity + camp seed) so the rest of the
+    // existing pipeline runs the chosen maneuver. Called at the top of
+    // DungeonClearPullTrigger::IsActive, which the engine evaluates before the
+    // engage triggers each tick. Publishes the verdict to `dungeon clear pull
+    // decision` for the addon. Leader-only (the caller has already gated on that).
+    static void UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* context);
+
     // --- Advanced pulls -----------------------------------------------------
     // True for the "holding" pull phases (Forming/Advancing/Returning) during
     // which the party stays passive and camped; false for Idle/Engage.

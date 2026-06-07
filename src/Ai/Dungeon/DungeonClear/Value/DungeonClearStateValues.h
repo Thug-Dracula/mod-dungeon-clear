@@ -543,6 +543,34 @@ public:
     }
 };
 
+// Dynamic-pull decision (setting == 2) for the most recent pack the tank sized
+// up: 0 None (no target / not Dynamic), 1 Leeroy (run in), 2 Advanced (careful
+// pull-to-camp). Written by DungeonClearUtil::UpdateDynamicPullMode and surfaced
+// in the STATUS payload so the addon can show what Dynamic chose. Reset to 0
+// with the rest of the pull transient state.
+class DungeonClearPullDecisionValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPullDecisionValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull decision")
+    {
+    }
+};
+
+// The pack the current Dynamic decision applies to. The governor re-decides only
+// when the target changes (or the engagement resolves), so a single approaching
+// pack gets ONE stable Leeroy/Advanced verdict instead of flapping tick-to-tick
+// as neighbouring packs drift in and out of the far-targets scan. Reset with the
+// pull transient state.
+class DungeonClearPullDecisionTargetValue : public ManualSetValue<ObjectGuid>
+{
+public:
+    DungeonClearPullDecisionTargetValue(PlayerbotAI* botAI)
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear pull decision target")
+    {
+    }
+};
+
 // Current advanced-pull sub-phase (DcPullPhase cast to uint32):
 //   0 Idle      — no pull in progress.
 //   1 Forming   — camp stamped; holding a beat so followers go passive first.
