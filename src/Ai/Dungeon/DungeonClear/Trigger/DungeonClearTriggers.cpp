@@ -106,7 +106,7 @@ bool DungeonClearAtBossTrigger::IsActive()
 
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
-    if (!DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    if (!DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
 
     // A closed door between us and the boss means it's BEYOND it and not actually
@@ -121,7 +121,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bz = liveBoss ? liveBoss->GetPositionZ() : next->z;
-    if (DungeonClearUtil::ClosedDoorBetween(bot, bx, by, bz))
+    if (DcEngageGeometry::ClosedDoorBetween(bot, bx, by, bz))
         return false;
 
     // When the long-path cache is anchored (registered route), make sure
@@ -172,7 +172,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // pull — don't also scan for blocking trash. While merely passing under an
     // upper-floor boss this is false, so trash on the way to the ramp still gets
     // cleared. See IsAtBossEngage.
-    if (DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.
@@ -206,7 +206,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         else
         {
             Movement::PointsArray corridor;
-            if (DungeonClearUtil::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
+            if (DcEngageGeometry::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
                 trash = DungeonClearUtil::FindBlockingTrashCorridor(
                     bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
             else
@@ -230,7 +230,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // tick the scan first sees the pack — which let the tank run through, clear
     // it, and walk back. With the pack vetoed, door-blocked parks at the door;
     // this re-evaluates the instant the door opens.
-    if (DungeonClearUtil::ClosedDoorBetween(bot, trash->GetPositionX(),
+    if (DcEngageGeometry::ClosedDoorBetween(bot, trash->GetPositionX(),
                                             trash->GetPositionY(), trash->GetPositionZ()))
     {
         LOG_DEBUG("playerbots.dungeonclear",
@@ -361,7 +361,7 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
     // either case the corridor is no longer held — IsDoorClosed treats a null GO
     // as not-closed, so the single test covers both.
     GameObject* door = botAI->GetGameObject(doorGuid);
-    return !DungeonClearUtil::IsDoorClosed(door);
+    return !DcEngageGeometry::IsDoorClosed(door);
 }
 
 bool DungeonClearFollowTankTrigger::IsActive()
@@ -479,7 +479,7 @@ bool DungeonClearPullTrigger::IsActive()
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
         return false;
-    if (DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
     if (!IsBetweenPullsReady(bot, context))
         return false;
@@ -505,7 +505,7 @@ bool DungeonClearPullTrigger::IsActive()
     // still stands down in pull mode, so Advance keeps driving the glide.
     float const toTrash = bot->GetExactDist2d(trash);
     float const commitRange =
-        DungeonClearUtil::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
+        DcEngageGeometry::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
     DC_PULL_DEBUG("[DC:{}] pull trigger: active — target {} at {:.1f}yd (commit {:.1f}, {})",
                   bot->GetName(), trash->GetGUID().ToString(), toTrash, commitRange,
                   toTrash > commitRange ? "glide + advance party camp" : "commit");

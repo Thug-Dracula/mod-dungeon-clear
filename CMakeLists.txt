@@ -29,4 +29,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Util/SwimPathfinder.{h,cpp}
 #   (Tier A greedy 3D swim navigator for submerged tunnels; driven via a raw
 #    3D escort spline off the new DungeonClearSwimState value)
+# Util/DungeonClearTuning.h
+#   (single home for shared DC_* tuning constants — constant-centralization)
+# Util/DcEngageGeometry.{h,cpp}
+#   (DungeonClearUtil decomposition: ranges/doors/reachability/corridor unit)
 # (this comment bumps mtime to force CMake re-glob on next build)

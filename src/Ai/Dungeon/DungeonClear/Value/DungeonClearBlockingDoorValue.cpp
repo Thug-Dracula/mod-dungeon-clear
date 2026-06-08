@@ -183,8 +183,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         GameObject* go = kv.second;
         // Blocking door currently shut (the "block the corridor" state). The
         // helper folds the type / ignoredByPathing / startOpen-inverted GOState
-        // checks; see DungeonClearUtil::IsDoorClosed.
-        if (!DungeonClearUtil::IsDoorClosed(go))
+        // checks; see DcEngageGeometry::IsDoorClosed.
+        if (!DcEngageGeometry::IsDoorClosed(go))
             continue;
         GameObjectTemplate const* tmpl = go->GetGOInfo();
 

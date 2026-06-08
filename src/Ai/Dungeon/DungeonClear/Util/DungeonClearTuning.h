@@ -70,4 +70,35 @@ constexpr float DC_PULL_START_RANGE = 26.0f;
 // live in DungeonClearUtil::RestMin{Hp,Mp}Pct().
 constexpr float DC_PARTY_MAX_SPREAD_DEFAULT = 25.0f;
 
+// --- Shared geometry bands -------------------------------------------------
+// These three were file-local to DungeonClearUtil.cpp but are now shared across
+// the split util units (DcEngageGeometry door/level tests, DcTargeting corridor
+// scans, DcPullPlanner classification), so they live here as the single home
+// (Bucket A of the constant-centralization plan).
+
+// 2D half-width band around the walked route within which a closed door counts
+// as sitting "on the corridor". Matches DOOR_CORRIDOR_WIDTH in
+// DungeonClearBlockingDoorValue — a door's GO origin (its hinge/jamb) can be
+// several yards off the line the bot actually walks through, so a tighter band
+// misses wide gates.
+constexpr float DC_DOOR_BAND = 8.0f;
+
+// Vertical tolerance for matching a door to a leg of the route (or to a target).
+// A door's GO origin Z sits at its OWN floor; the route point we test it against
+// is on the walking surface. Beyond this gap the door is on a different level — a
+// stacked ship deck, a ramp above/below — and must not count as blocking. The
+// door tests are otherwise 2D, so without this a door directly over or under a
+// point that is merely near in plan-view falsely blocks the corridor (parks the
+// tank short, vetoes near-side packs). Wide enough to absorb a doorway
+// threshold/lip and minor navmesh-vs-GO Z drift, tight enough to keep adjacent
+// floors apart.
+constexpr float DC_DOOR_Z_BAND = 6.0f;
+
+// Below this vertical offset a candidate is treated as on the bot's own level:
+// slopes, stairs and ramps stay under it within a corridor lookahead. WotLK
+// inter-floor gaps are larger, so a genuine other-level mob always exceeds it.
+// Shared by IsLevelReachable (trash), IsAtBossEngage (boss-arrival floor guard),
+// and the dynamic-pull classification.
+constexpr float DC_Z_LEVEL_TOLERANCE = 5.0f;
+
 #endif  // _DUNGEON_CLEAR_TUNING_H

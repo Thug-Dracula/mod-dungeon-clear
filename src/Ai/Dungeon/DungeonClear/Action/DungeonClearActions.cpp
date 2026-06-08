@@ -105,7 +105,7 @@ namespace
 
     // Stand-off before a blocking door, as distance TRAVELLED ALONG the path to
     // where the route first reaches the doorway (see
-    // DungeonClearUtil::DistAlongPathToClosedDoor) — NOT straight-line to the
+    // DcEngageGeometry::DistAlongPathToClosedDoor) — NOT straight-line to the
     // door's GO origin, which can sit past the gap and made the walk-in glide
     // straight through it. The door-blocked action parks when the remaining
     // along-path travel to the door drops to this, every tick before the glide is
@@ -1450,7 +1450,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // the old fixed 22yd hand-off produced. Must match the trigger ladder's
     // BossEngageRange so action and triggers agree on "are we at the boss".
     float const engageRange =
-        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
+        DcEngageGeometry::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
 
     // "At the boss" for the route->engage handoff: close enough AND on the
     // boss's own floor. Distinct from engageDist < engageRange (pure 3D), which
@@ -1458,7 +1458,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // ramp — honoring it there stops the tank dead under the boss forever. Must
     // match the trigger ladder, which gates on the same predicate.
     bool const atBoss =
-        DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+        DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
 
     // Dead-end escalation counter (see DC_DONE_NOT_ENGAGED_LIMIT). Cleared the
     // moment we're back inside engage range so it only ever counts a continuous
@@ -2175,7 +2175,7 @@ namespace
             // A mob a floor above/below can sit inside the proximity bubble and
             // pass LOS through a railing/gap yet have no path — engaging it
             // wedges the tank. Require a real route before letting it preempt.
-            if (!DungeonClearUtil::IsLevelReachable(bot, u))
+            if (!DcEngageGeometry::IsLevelReachable(bot, u))
                 continue;
             best = u;
             bestDist = dist;
@@ -2224,7 +2224,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         {
             // No usable long-path cache — fall back to single-shot corridor.
             Movement::PointsArray corridor;
-            if (DungeonClearUtil::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
+            if (DcEngageGeometry::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
             {
                 fresh = DungeonClearUtil::FindBlockingTrashCorridor(
                     bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
@@ -2542,7 +2542,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // walk-in glided through the gap to get "close to the origin", then the pack
     // beyond aggroed the now-through tank.
     float const distAlongToDoor =
-        DungeonClearUtil::DistAlongPathToClosedDoor(
+        DcEngageGeometry::DistAlongPathToClosedDoor(
             bot, path, door->GetPositionX(), door->GetPositionY(),
             door->GetPositionZ(), /*lookAhead*/ 100.0f);
     if (distAlongToDoor <= DC_DOOR_STOP_DISTANCE)
@@ -2918,7 +2918,7 @@ namespace
     // STATIC FALLBACK commit range (DC_PULL_START_RANGE) — the distance at which
     // the tank stops gliding, holds, and waits in Forming for the party to set at
     // the camp BEFORE it steps in to tag. The live value is normally
-    // DungeonClearUtil::PullCommitRange, sized to the pack's REAL aggro radius so
+    // DcEngageGeometry::PullCommitRange, sized to the pack's REAL aggro radius so
     // the tank Forms just outside where it would face-pull; this constant only
     // applies when DynamicAggroRange is off or the target isn't a creature. It
     // still sits outside a same-level mob's ~20yd aggro so even the fallback
@@ -3001,7 +3001,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // Commit only once the pack is within its OWN aggro range (+ margin), so
             // the tank stops to Form just outside where it would otherwise face-pull.
             float const commitRange =
-                DungeonClearUtil::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
+                DcEngageGeometry::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
             if (toTrash > commitRange)
             {
                 float const setback = DcSettings::GetFloat(bot, "PullSetback");
