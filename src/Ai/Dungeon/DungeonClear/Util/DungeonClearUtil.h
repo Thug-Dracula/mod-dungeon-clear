@@ -609,13 +609,24 @@ public:
     // aura already on the tank when applied. Paired with the pull-mode toggle.
     static void SetLeaderDazeImmunity(Player* leader, bool apply);
 
+    // Keep a DRUID tank in (dire) bear form. No-op for any other class, or if
+    // the bot is already shifted. Used during the advanced-pull drag-back so the
+    // druid tank takes the run-home hits in bear form (extra armor/HP) instead of
+    // caster form. Prefers dire bear form, falling back to bear form when dire
+    // bear isn't trained. Shapeshift is instant and not movement-interrupted, so
+    // it's safe to call every tick while the tank runs back to camp.
+    static void EnsureTankBearForm(Player* bot);
+
     // --- Advanced-pull passive management -----------------------------------
     // Followers go passive (attack nothing, just hold at camp) during a pull by
     // having the mod-playerbots "passive" strategy added to their COMBAT engine.
     // ApplyFollowerPassive adds it (and sets the bot's pet passive) once, and
     // records the player in a registry; RemoveFollowerPassive reverses both. Both
     // are idempotent and only touch passive that DC itself applied — a passive a
-    // player set manually is left alone. ReapStrandedPassives runs every world
+    // player set manually is left alone. HEALERS are exempt: ApplyFollowerPassive
+    // skips them so they keep the camp hold but stay free to heal the tank through
+    // the drag-back (the camp-hold action yields the tick for a parked healer so
+    // its heals fire). ReapStrandedPassives runs every world
     // tick (from the same PlayerbotScript as ReapOrphanedFollows) and is the
     // SINGLE authoritative teardown: it removes DC passive from any registered
     // player whose leader is no longer in a holding pull phase (pull released /

@@ -2268,12 +2268,35 @@ void DungeonClearUtil::ReapOrphanedFollows()
     }
 }
 
+void DungeonClearUtil::EnsureTankBearForm(Player* bot)
+{
+    if (!bot || bot->getClass() != CLASS_DRUID)
+        return;
+    PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+    if (!botAI)
+        return;
+    // Already shifted into a bear form — nothing to do.
+    if (botAI->HasAnyAuraOf(bot, "bear form", "dire bear form", nullptr))
+        return;
+    // Prefer dire bear form (more armor + the bear/dire-bear HP bonus); the
+    // dire-bear action's alternatives fall back to plain bear form, but invoke
+    // it explicitly too so an untrained dire bear still shifts.
+    if (!botAI->DoSpecificAction("dire bear form", Event(), true))
+        botAI->DoSpecificAction("bear form", Event(), true);
+}
+
 void DungeonClearUtil::ApplyFollowerPassive(Player* follower)
 {
     if (!follower)
         return;
     PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower);
     if (!botAI)
+        return;
+
+    // Healers are deliberately NOT held passive: they keep the camp hold (stay)
+    // but stay free to heal the tank through the drag-back. Any aggro a heal
+    // pulls is the tank's to taunt off. Their pet stays defensive too.
+    if (PlayerbotAI::IsHeal(follower))
         return;
 
     {

@@ -2928,6 +2928,11 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // retreat is never slowed to a crawl by a hit from behind.
     bot->RemoveAurasDueToSpell(1604);
 
+    // A druid tank must take the run-home hits in bear form, not caster form.
+    // Shapeshift is instant and not interrupted by the drag-back run, so refresh
+    // it every tick of the maneuver (no-op once shifted / for non-druids).
+    DungeonClearUtil::EnsureTankBearForm(bot);
+
     // First combat tick of the pull: aggro confirmed, turn around for camp.
     // Forming counts too — combat can be taken while the tank holds at the commit
     // spot waiting for the party to set (the pack wandered into it / a patrol).
@@ -3039,6 +3044,12 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     if (!DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
         return false;
 
+    // Healers hold at camp like everyone else but are never made passive
+    // (ApplyFollowerPassive skips them) so they can heal the tank through the
+    // drag-back. The position pin below still applies — we only stop OWNING the
+    // tick once they're parked, so the combat engine is free to run their heals.
+    bool const isHealer = PlayerbotAI::IsHeal(bot);
+
     // Go passive (attack nothing) ONLY while the tank is actually tagging (a
     // holding phase). While merely holding at camp between pulls the party stays
     // ready to defend; the reaper strips any DC passive once we leave a holding
@@ -3123,6 +3134,20 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         // (scout phase, passive==false) YIELD so the party can rest / loot at camp
         // — the multiplier suppresses wander / follow / self-pull for a camp-held
         // follower, so yielding here can't let it drift off toward the tank.
+        //
+        // A healer (never made passive) needs to heal the tank through the pull.
+        // The combat engine runs its heals, but stay-at-camp owning the tick at
+        // relevance 60 would block them. So while holding, a healer YIELDS the
+        // tick ONLY when a party member actually needs a heal (its heal action
+        // then wins the tick); with nobody to heal it OWNS the tick like any held
+        // follower, so the stock combat follow can't trail it out to the tank's
+        // pull spot. The pin above re-centers it on camp between heals.
+        if (passive && isHealer)
+        {
+            uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
+            if (lowestPct < sPlayerbotAIConfig.almostFullHealth)
+                return false;
+        }
         return passive;
     }
     // Priority matters the moment the party is already IN COMBAT when a pull
