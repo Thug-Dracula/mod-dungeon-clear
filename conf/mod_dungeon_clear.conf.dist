@@ -300,6 +300,33 @@ DungeonClear.PathCenterMaxPush = 3.0
 DungeonClear.PathCenterSmoothIters = 2
 
 #
+#    DungeonClear.WaterPathCost
+#        Land-preference multiplier for water polys in the route pathfinder. The
+#        bot can still swim/wade — water stays traversable — but a crossing only
+#        wins when it is genuinely shorter: an all-land detour up to this many
+#        times longer than the water shortcut is preferred over getting wet.
+#        Mandatory swims (water caves, submerged corridors with no dry route) are
+#        unaffected; they are taken because no land alternative exists at any cost.
+#        1.0 = no preference (water as cheap as land).
+#
+#        Default: 3.0
+#
+
+DungeonClear.WaterPathCost = 3.0
+
+#
+#    DungeonClear.MagmaPathCost
+#        As WaterPathCost, but for magma/lava polys — set high so the route shuns
+#        lava strongly while still treating it as a last-resort surface when there
+#        is no other way across. (Slime is excluded from player navigation
+#        outright, so it has no cost knob.)
+#
+#        Default: 20.0
+#
+
+DungeonClear.MagmaPathCost = 20.0
+
+#
 #    DungeonClear.PullSafetyHpPct
 #        Camp-safety valve for advanced pull mode (`dc pull`). While a pull is in
 #        progress the DPS and healer wait passive at the camp, so they can't

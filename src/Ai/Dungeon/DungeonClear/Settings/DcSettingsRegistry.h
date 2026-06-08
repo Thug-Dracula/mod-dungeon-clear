@@ -124,6 +124,19 @@ inline constexpr DcSettingDef kDcSettings[] =
     // charge once the tank commits the Leeroy). See DungeonClearFollowTankAction.
     { "PullDynamicPartyLag",   DcType::Float, 15,   6,  40,  true  },
 
+    // Liquid avoidance. The route producers include water/magma polys so the
+    // bot CAN swim/wade when there is no dry alternative, but with these per-area
+    // Detour cost multipliers a crossing only wins when it is genuinely shorter:
+    // an all-land detour up to WaterPathCost times longer than the water shortcut
+    // is preferred. 1.0 = no preference (water as cheap as land). MagmaPathCost is
+    // set high so lava is shunned but still traversable as an absolute last
+    // resort (the player nav-filter already excludes slime outright). These feed
+    // dtQueryFilter::setAreaCost in LongRangePathfinder + CorridorCenter; both run
+    // off the map thread, so they are server-only (read straight from conf, never
+    // the per-run override store). See DungeonClearGeometry::ApplyLiquidAreaCosts.
+    { "WaterPathCost",         DcType::Float,  3,   1,  50,  false },
+    { "MagmaPathCost",         DcType::Float, 20,   1, 1000, false },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

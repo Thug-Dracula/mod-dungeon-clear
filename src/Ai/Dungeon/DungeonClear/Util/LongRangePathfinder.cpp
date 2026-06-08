@@ -319,6 +319,9 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
     dtQueryFilterExt filter;
     filter.setIncludeFlags(static_cast<uint16>(NAV_GROUND | NAV_WATER | NAV_MAGMA));
     filter.setExcludeFlags(0);
+    // Prefer land: water/magma stay traversable but cost more, so the A* corridor
+    // only dips into liquid when no near-as-short dry route exists.
+    DungeonClearGeometry::ApplyLiquidAreaCosts(filter);
 
     // Detour coordinate order is {y, z, x}.
     float const startPt[VERTEX_SIZE] = { sy, sz, sx };

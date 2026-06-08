@@ -7,8 +7,12 @@
 
 #include <cmath>
 
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "DetourExtended.h"   // dtQueryFilterExt
 #include "Map.h"
+#include "MapDefines.h"       // NAV_WATER, NAV_MAGMA
 #include "ModelIgnoreFlags.h"
+#include "ObjectGuid.h"
 #include "Player.h"
 
 namespace
@@ -89,5 +93,16 @@ namespace DungeonClearGeometry
             // clear chord confirms the corridor reconnected.
         }
         return committed + 1;
+    }
+
+    void ApplyLiquidAreaCosts(dtQueryFilterExt& filter)
+    {
+        // dtQueryFilterExt::getCost multiplies each edge by getAreaCost(area), and
+        // the mmap generator stamps liquid polys with area == the NavTerrain value
+        // (NAV_WATER / NAV_MAGMA), so these indices line up 1:1 with poly areas.
+        // NAV_GROUND keeps its default 1.0 cost. Server-only conf reads — safe off
+        // the map thread.
+        filter.setAreaCost(NAV_WATER, DcSettings::GetFloat(ObjectGuid::Empty, "WaterPathCost"));
+        filter.setAreaCost(NAV_MAGMA, DcSettings::GetFloat(ObjectGuid::Empty, "MagmaPathCost"));
     }
 }
