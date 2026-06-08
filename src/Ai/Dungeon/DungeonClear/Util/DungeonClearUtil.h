@@ -431,6 +431,17 @@ public:
     // the strided boss pathfinder behind IsReachable.
     static bool IsLevelReachable(Player* bot, Unit* u);
 
+    // Returns a per-bot "camp slot": the shared camp anchor nudged 1-2yd in a
+    // deterministic, GUID-derived direction so a party holding at camp fans out
+    // instead of stacking on one identical coordinate (the bot-like single-point
+    // look). The offset is run through PathGenerator and the navmesh-snapped
+    // endpoint is returned, so the slot is guaranteed to sit inside the zone
+    // geometry; if the probe can't produce a real ground path near camp (camp
+    // against a wall / on a ledge) it falls back to the exact camp position. The
+    // result is stable across ticks for a given (bot, camp), so MoveTo dedups it
+    // and the follower settles on one spot instead of jittering.
+    static Position ComputeCampSlot(Player* bot, Position const& camp);
+
     // Scans `candidates` for the closest hostile alive unit whose 2D distance
     // to any segment of the supplied path polyline (within the first
     // `maxLookAhead` yards of forward travel) is within its blocking band.

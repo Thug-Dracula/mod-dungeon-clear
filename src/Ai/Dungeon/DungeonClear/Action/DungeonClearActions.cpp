@@ -2652,6 +2652,13 @@ namespace
     constexpr float DC_PULL_CAMP_ARRIVE = 5.0f;
     // Follower camp tolerance — within this, hold; otherwise walk to camp.
     constexpr float DC_PULL_HOLD_RADIUS = 4.0f;
+    // Tight settle tolerance to a follower's individual (fuzzed) camp slot. Much
+    // smaller than the shared hold radius so the bot actually travels the last
+    // 1-2yd onto its distinct slot — otherwise it would park the instant it
+    // crossed the 4yd shared radius and the per-bot variance would never show.
+    // The slot is navmesh-validated and players don't physically block one
+    // another, so settling this close is always reachable.
+    constexpr float DC_PULL_SLOT_RADIUS = 1.0f;
     // "Party is set" tolerance for the Forming gate. A touch wider than the hold
     // radius so a follower parked at the boundary reliably counts as set instead
     // of flickering in/out and never letting the tank tag.
@@ -3170,9 +3177,15 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DungeonClearUtil::UnmarkFollowing(bot->GetGUID());
     }
 
-    // Park at the leader's camp.
-    float const toCamp = bot->GetExactDist(&camp);
-    if (toCamp <= DC_PULL_HOLD_RADIUS)
+    // Park at the leader's camp. Each follower aims for its own fuzzed slot — a
+    // deterministic 1-2yd offset off the shared anchor, snapped to the navmesh —
+    // so the party fans out instead of stacking on one identical point. Settle on
+    // the slot with a tight tolerance (the wide hold radius would let the bot stop
+    // before the variance ever showed); fall back to the anchor when the slot
+    // probe failed (slot == camp).
+    Position const slot = DungeonClearUtil::ComputeCampSlot(bot, camp);
+    float const toCamp = bot->GetExactDist(&slot);
+    if (toCamp <= DC_PULL_SLOT_RADIUS)
     {
         if (bot->isMoving())
             bot->StopMoving();
@@ -3212,7 +3225,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     MovementPriority const prio = passive ? MovementPriority::MOVEMENT_COMBAT
                                           : MovementPriority::MOVEMENT_NORMAL;
     bool const moved =
-        MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
+        MoveTo(bot->GetMapId(), slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ(),
                /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                /*exact_waypoint*/ false, prio);
     DC_PULL_TRACE("[DC:{}] hold-at-camp: walking to camp ({:.1f}yd, passive={}, moved={})",

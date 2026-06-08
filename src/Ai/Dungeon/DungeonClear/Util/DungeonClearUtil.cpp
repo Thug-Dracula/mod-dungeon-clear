@@ -825,6 +825,45 @@ bool DungeonClearUtil::IsLevelReachable(Player* bot, Unit* u)
     return std::fabs(end.z - u->GetPositionZ()) <= DC_Z_LEVEL_TOLERANCE;
 }
 
+Position DungeonClearUtil::ComputeCampSlot(Player* bot, Position const& camp)
+{
+    if (!bot)
+        return camp;
+
+    // Deterministic per-bot offset so the slot is identical every tick: MoveTo
+    // dedups an unchanging destination, so the follower glides to one spot and
+    // parks there instead of re-pathing to a fresh random point each tick (which
+    // would read as a nervous shuffle). Spread the party with the golden angle so
+    // even a handful of bots fan out evenly around the anchor rather than
+    // overlapping, and pick a 1-2yd radius for the requested gentle variance.
+    uint32 const seed = static_cast<uint32>(bot->GetGUID().GetCounter());
+    float const angle = static_cast<float>(seed) * 2.39996323f;  // golden angle (rad)
+    float const radius = 1.0f + static_cast<float>(seed % 101) / 100.0f;  // [1.0, 2.0]
+
+    float const fx = camp.GetPositionX() + radius * std::cos(angle);
+    float const fy = camp.GetPositionY() + radius * std::sin(angle);
+    float const fz = camp.GetPositionZ();
+
+    // Route the fuzzed point through the navmesh. PathGenerator clamps an
+    // off-mesh destination to the nearest walkable poly, so its actual endpoint
+    // is guaranteed to be inside the zone geometry — the slot can never land in a
+    // wall or off a ledge. Reject a probe that found no real ground path or had
+    // to snap the endpoint far off the mesh, and reject a snap that dragged the
+    // slot well past the intended 1-2yd (camp wedged against geometry); in those
+    // cases fall back to the exact camp so we never displace a follower onto a
+    // worse spot than the anchor itself.
+    PathGenerator gen(bot);
+    gen.CalculatePath(fx, fy, fz, /*forceDest*/ false);
+    if (gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY))
+        return camp;
+
+    G3D::Vector3 const end = gen.GetActualEndPosition();
+    Position const slot(end.x, end.y, end.z, camp.GetOrientation());
+    if (camp.GetExactDist(&slot) > 3.0f)
+        return camp;
+    return slot;
+}
+
 Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
                                                 std::vector<PathSegment> const& segments,
                                                 float maxLookAhead,
