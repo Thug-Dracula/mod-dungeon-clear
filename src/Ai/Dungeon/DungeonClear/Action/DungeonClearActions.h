@@ -7,6 +7,8 @@
 #define _PLAYERBOT_DUNGEONCLEARACTIONS_H
 
 #include "MovementActions.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 class PlayerbotAI;
 class Unit;
@@ -38,28 +40,52 @@ public:
     bool Execute(Event event) override;
 
 private:
-    // Per-tick approach state computed once at the top of Execute and shared
-    // across the extracted phase steps below (the boss's effective live
-    // position, the engage-range gates, and the at-boss predicate).
+    // Per-tick approach state computed at the top of Execute and threaded
+    // through the extracted phase steps below. The boss snapshot (effective live
+    // position, the engage-range gates, the at-boss predicate) is filled before
+    // the ladder; the owned approach FSM (appr), the resolved long-path + its
+    // follower cursor, and the current hop are filled as Execute walks the ladder
+    // and the later phases consume them. Carried as pointers/value (not refetched
+    // per phase) because the single NextHop call has follower side effects, so
+    // the hop cannot be recomputed phase-by-phase.
     struct AdvanceState
     {
-        DungeonBossInfo const* next;
-        Creature* liveBoss;
-        float bossX, bossY, bossZ;
-        float engageDist, engageRange;
-        bool atBoss;
+        DungeonBossInfo const* next = nullptr;
+        Creature* liveBoss = nullptr;
+        float bossX = 0.0f, bossY = 0.0f, bossZ = 0.0f;
+        float engageDist = 0.0f, engageRange = 0.0f;
+        bool atBoss = false;
+
+        DcApproachState* appr = nullptr;                    // owned approach FSM state
+        ChunkedPathfinder::Result const* path = nullptr;    // resolved after EnsureLongPath
+        DungeonFollowerState* follower = nullptr;           // long-path follower cursor
+        DungeonPathFollower::Hop hop;                       // current hop (single NextHop)
     };
 
     // A phase step either handles the tick (Execute returns the carried bool)
     // or falls through to the next phase. Keeps Execute a short, readable ladder
-    // instead of one 750-line method. The counter-coupled tail (stuck recovery,
-    // direct pursuit, long-path drive) is still inline below the ladder.
+    // of Try* rungs instead of one 750-line method.
     enum class Step { Continue, ReturnTrue, ReturnFalse };
 
+    // Pre-route phases (boss snapshot only).
     Step TryEngageHold(AdvanceState const& st);
     Step TryLootYield(AdvanceState const& st);
     Step TryBetweenPullsRest(AdvanceState const& st);
     Step TryBossNotPresentStall(AdvanceState const& st);
+
+    // Counter-coupled tail, now extracted in declared order. These read/write
+    // the shared approach state, long-path, follower, and hop carried in st.
+    Step TryPosStuckRecovery(AdvanceState& st);
+    Step TryDirectPursuit(AdvanceState& st);
+    Step TryLongPathUnreachable(AdvanceState& st);
+    Step TryOffPathResnap(AdvanceState& st);
+    Step TryReanchorStaleCursor(AdvanceState& st);   // never terminates; only re-anchors the cursor
+    Step TryHopDoneEscalation(AdvanceState& st);
+    Step TryJumpLeg(AdvanceState& st);
+    Step TryRideLiveGlide(AdvanceState& st);
+    Step TryOffLineRejoin(AdvanceState& st);
+    Step TrySplineWindowIssue(AdvanceState& st);
+    Step TryMoveToFallback(AdvanceState& st);        // terminal: always handles the tick
 };
 
 class DungeonClearEngageTrashAction : public DungeonClearEngageActionBase

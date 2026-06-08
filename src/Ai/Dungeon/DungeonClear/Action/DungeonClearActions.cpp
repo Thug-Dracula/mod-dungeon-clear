@@ -1304,6 +1304,626 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStal
     return Step::Continue;
 }
 
+// Position-based stuck detection + recovery. Samples world position every tick
+// (so lastPos stays current) and, once the bot has gone DC_STUCK_TICK_LIMIT
+// consecutive ticks without real displacement while supposedly moving, halts the
+// wedged glide and escalates Resnap -> rebuild -> navmesh-nudge -> stall.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DcApproachState& appr = *st.appr;
+    uint32& posStuck = appr.posStuckTicks;
+    uint32& rebuildAttempts = appr.rebuildAttempts;
+    Position& lastPos = appr.lastPos;
+
+    // Position-based stuck check. Sample current world position; if the
+    // bot is supposedly moving but barely shifted since the previous tick,
+    // increment posStuck. The (0,0,0) lastPos is the not-yet-sampled
+    // sentinel — no real dungeon map has a (0,0,0) walkable point.
+    Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    bool const lastPosValid =
+        lastPos.m_positionX != 0.0f || lastPos.m_positionY != 0.0f || lastPos.m_positionZ != 0.0f;
+    if (lastPosValid && bot->isMoving() && cur.GetExactDist(lastPos) < DC_STUCK_DISPLACEMENT)
+        ++posStuck;
+    else
+    {
+        posStuck = 0;
+        // Real forward progress clears any prior consecutive-rebuild count.
+        // (Lastposvalid + movement above DC_STUCK_DISPLACEMENT is the
+        // strongest signal we have that the route just resumed working.)
+        if (lastPosValid && bot->isMoving())
+            rebuildAttempts = 0;
+    }
+
+    // Per-tick advance telemetry — the three signals the spline-issue lines
+    // can't show on their own: did the bot physically move since the last
+    // Advance tick (posDelta), which generator is in control right now, and
+    // is combat movement involved. Read against the timestamps of the
+    // "spline issued" / "re-anchor" / "off-path" lines, this disambiguates
+    // the pacing wedge: a posDelta ~0 right after a spline issuance means the
+    // spline was issued but never travelled; a CHASE/FOLLOW gen here means
+    // combat/leader movement is overriding the escort spline; an ESCORT gen
+    // with posDelta ~0 means the spline launched but wedged against geometry.
+    {
+        MotionMaster* const tmm = bot->GetMotionMaster();
+        MovementGeneratorType const gen =
+            tmm ? tmm->GetCurrentMovementGeneratorType() : NULL_MOTION_TYPE;
+        float const posDelta = lastPosValid ? cur.GetExactDist(lastPos) : -1.0f;
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] advance tick: posDelta={:.2f}yd moving={} gen={}({}) combat={}",
+                  bot->GetName(), posDelta, bot->isMoving() ? 1 : 0,
+                  MoveGenTypeName(gen), static_cast<uint32>(gen),
+                  bot->IsInCombat() ? 1 : 0);
+    }
+
+    lastPos = cur;
+
+    if (posStuck >= DC_STUCK_TICK_LIMIT)
+    {
+        posStuck = 0;
+        // Wedged and replanning — surface "recovering" to the status poll.
+        SetPhase(context, "recovering");
+
+        // The bot was moving but not progressing — a continuous-spline glide
+        // wedged against geometry. Halt it so the recovery below re-issues
+        // movement from a standstill instead of fighting the stuck spline.
+        StopActiveSplineGlide(bot);
+
+        // First-line recovery: try a Resnap onto the existing polyline
+        // (cheap; handles the "knocked sideways but path is still good"
+        // case). On failure, invalidate the long-path cache and reset
+        // the follower so the next tick rebuilds from the bot's current
+        // position. Strides are short enough that a rebuild from here
+        // usually picks a different sequence of stride endpoints and
+        // routes around whatever was wedging us.
+        bool const resnapped = TriggerStrideRebuild(bot, context, appr);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] posStuck ({} ticks <{}yd) -> {} (rebuildAttempts={})",
+                 bot->GetName(), DC_STUCK_TICK_LIMIT, DC_STUCK_DISPLACEMENT,
+                 resnapped ? "resnapped onto existing route" : "forcing rebuild",
+                 rebuildAttempts + (resnapped ? 0u : 1u));
+        if (resnapped)
+        {
+            // Resnap fixed us without burning a rebuild — leave the
+            // rebuild-attempt counter alone so the navmesh-nudge
+            // escalation only triggers on true geometric wedges, not
+            // on transient drifts.
+            return Step::ReturnFalse;
+        }
+        ++rebuildAttempts;
+
+        // After three consecutive rebuilds without forward progress, try a
+        // small navmesh-nudge: the bot may be on a poly the chunked builder
+        // can't reach (off-corridor, layered geometry seam). The 5yd offset
+        // probes are deliberately tiny so we don't significantly mis-position.
+        if (rebuildAttempts >= 3)
+        {
+            rebuildAttempts = 0;
+            if (DC_ALLOW_RECOVERY_MOVES && TryFarFromPolyRecovery(bot))
+            {
+                DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
+                return Step::ReturnTrue;
+            }
+            StallDungeonClear(botAI,
+                "Stuck near " + next->name + " — not making forward progress. "
+                "I'll try to clear nearby mobs; use 'dc skip' if it persists.");
+            return Step::ReturnFalse;
+        }
+        return Step::ReturnFalse;
+    }
+    return Step::Continue;
+}
+
+// Final-approach pursuit of a LIVE, visible boss. Past DC_ENGAGE_RANGE (the
+// top-of-Execute hold handles closer than that) but within line-of-sight and
+// DC_DIRECT_PURSUIT_RANGE, walk straight at the boss's current position with
+// a per-tick re-path (MoveTo dedups, so a roughly-stationary boss gets one
+// smooth glide; a wandering boss is re-targeted as it moves — the same way
+// combat chase tracks a target). This is what stops the tank parking at the
+// static spawn anchor and waiting for the boss to wander back. A boss out of
+// LOS (around a corner) or farther than the pursuit range falls through to
+// the wall-screened long-path below.
+// pursuitFailTicks doubles as a latch: while it sits at DC_PURSUIT_FAIL_LIMIT
+// we've given up on the direct-pursuit shortcut for this approach and let the
+// long-path drive uninterrupted (re-entering the pursuit branch would call
+// StopActiveSplineGlide every tick and kill the long-path's escort glide
+// before it travels — a step/freeze thrash). The latch clears on boss change
+// and once we make it inside engage range (see the resets above).
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    Creature* const liveBoss = st.liveBoss;
+    float const bossX = st.bossX, bossY = st.bossY, bossZ = st.bossZ;
+    float const engageDist = st.engageDist;
+    DcApproachState& appr = *st.appr;
+    uint32& pursuitFailTicks = appr.pursuitFailTicks;
+    uint32& stuck = appr.stuckCount;
+
+    bool const canPursue =
+        liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss);
+    if (!canPursue)
+    {
+        // Boss not pursuable this tick (out of LOS / range / not loaded): clear
+        // the grace counter so a later pursuit starts with a fresh budget.
+        pursuitFailTicks = 0;
+    }
+    else if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
+    {
+        // Drop any stale long-path escort glide so it doesn't keep driving the
+        // bot toward the spawn anchor while we steer toward the live boss.
+        StopActiveSplineGlide(bot);
+        bool const chasing = MoveTo(next->mapId, bossX, bossY, bossZ,
+                                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                                    /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+
+        // A move was issued, is already in flight, or was just queued (MoveTo's
+        // own IsDuplicateMove / IsWaitingForLastMove return false while a prior
+        // move is still gliding) — pursuit is alive, let it ride. A move that is
+        // in flight but wedging in place is caught by the posStuck rebuild above,
+        // which runs before this branch.
+        if (chasing || bot->isMoving() ||
+            IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+        {
+            pursuitFailTicks = 0;
+            stuck = 0;
+            ClearStall(context);
+            SetPhase(context, "pursuing");
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
+                      bot->GetName(), next->name, engageDist,
+                      chasing ? "issued" : "in flight");
+            return Step::ReturnTrue;
+        }
+
+        // MoveTo produced nothing and the bot is standing still: PathGenerator
+        // can't reach the boss's live poly (Z -> INVALID_HEIGHT, or a winding
+        // route past its 74-hop cap). posStuck can't see this — the bot never
+        // moves — so without an escape this is a silent freeze just outside pull
+        // range. Count the dead tick; past a short grace, leave the latch set and
+        // fall through to the wall-screened long-path below (LongRangePathfinder,
+        // no hop cap, with its own dead-end -> stall escalation).
+        ++pursuitFailTicks;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] direct pursuit of {} stalled ({:.0f}yd, MoveTo noop, not "
+                 "moving) {}/{}",
+                 bot->GetName(), next->name, engageDist, pursuitFailTicks,
+                 DC_PURSUIT_FAIL_LIMIT);
+        if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
+            return Step::ReturnFalse;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] direct pursuit of {} unreachable -> long-path fallback "
+                 "(latched until engage range / boss change)",
+                 bot->GetName(), next->name);
+        // fall through to the long-path machinery below; the latch keeps us out
+        // of this branch on subsequent ticks so the long-path can travel.
+    }
+    // else: latched — skip direct pursuit and let the long-path below drive.
+    return Step::Continue;
+}
+
+// No navmesh route to the boss. Distinguishes an EXPECTED empty path (async
+// build still in flight — hold quietly) from a genuine failure, attempts an
+// off-mesh nudge and a swim, then stalls for the stalled-fallback / `dc skip`.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLongPathUnreachable(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    float const bossX = st.bossX, bossY = st.bossY, bossZ = st.bossZ;
+    DcApproachState& appr = *st.appr;
+    ChunkedPathfinder::Result const& path = *st.path;
+
+    if (!path.reachable)
+    {
+        // Async pathfinding (DungeonClear.AsyncPathfinding): a build is still in
+        // flight — almost always right after a boss change, where EnsureLongPath
+        // cleared the cache and handed the heavy A* to the worker. The empty
+        // path is EXPECTED here, not a routing failure, so hold position quietly
+        // and wait (the result lands within a tick or a few) instead of crying
+        // "no navigable route" to the party. Mirrors the between-pulls rest
+        // yield: no stall reason set, so the stalled-fallback never fires; the
+        // multiplier suppresses wander while we wait.
+        if (appr.pendingPathJob != 0)
+        {
+            SetPhase(context, "planning route");
+            if (bot->isMoving())
+                bot->StopMoving();
+            return Step::ReturnFalse;
+        }
+
+        // Bot wedged off the navmesh — try a small offset to land on a
+        // walkable poly. Common cause: stuck-teleport recovery landed
+        // on a ledge that pad's mmap tile-boundary; another cause is
+        // bot getting knocked back onto unwalkable geometry.
+        if (DC_ALLOW_RECOVERY_MOVES && path.startFarFromPoly)
+        {
+            if (TryFarFromPolyRecovery(bot))
+            {
+                // Don't say anything in party chat — this should be
+                // invisible recovery. Force a rebuild so the next tick
+                // picks up the new (hopefully on-mesh) position.
+                SetPhase(context, "recovering");
+                appr.longPathExpiresMs = 0;
+                return Step::ReturnTrue;
+            }
+        }
+
+        // No navmesh route at all. Before stalling, try a swim: the target may
+        // sit behind a submerged tunnel the navmesh can't span (only a surface
+        // sheet exists over deep water). Gated on water lying between, so a
+        // genuinely land-locked failure still falls through to the stall.
+        if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] no navmesh route to {} -> swimming", bot->GetName(), next->name);
+            SetPhase(context, "swimming");
+            return Step::ReturnTrue;
+        }
+
+        // The chunked builder couldn't produce any segment. Failure
+        // reason is carried through from PathGenerator's path type
+        // (NOPATH, FARFROMPOLY_START, etc.). The stalled-fallback action
+        // takes over from here, picking off whatever reachable hostiles
+        // remain to potentially unblock the route.
+        StallDungeonClear(botAI,
+            "Can't path to " + next->name + ": " +
+            (path.failureReason.empty() ? "no navigable route" : path.failureReason) +
+            ". I'll try to clear intervening mobs; if that doesn't help, 'dc skip' to move on.");
+        return Step::ReturnFalse;
+    }
+    return Step::Continue;
+}
+
+// On-path tracking: if the bot has drifted off the planned corridor (knockback,
+// charge, sticky-trash detour, follower bump) past the tick budget, Resnap onto
+// the existing polyline; Resnap failure forces a rebuild and yields the tick.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffPathResnap(AdvanceState& st)
+{
+    DcApproachState& appr = *st.appr;
+    ChunkedPathfinder::Result const& path = *st.path;
+    DungeonFollowerState& follower = *st.follower;
+
+    if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
+        follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
+    {
+        uint32 const offTicks = follower.offPathTicks;  // Resnap zeroes this
+        if (!DungeonPathFollower::Resnap(bot, path, follower))
+        {
+            // Drift too large to index-jump. Halt any stale spline glide so
+            // the rebuilt path isn't shadowed by the old route next tick.
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild",
+                     bot->GetName(), offTicks, DungeonPathFollower::RESNAP_RADIUS);
+            SetPhase(context, "recovering");
+            StopActiveSplineGlide(bot);
+            appr.longPathExpiresMs = 0;
+            follower = DungeonFollowerState{};
+            return Step::ReturnFalse;
+        }
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] off-path {} ticks -> Resnapped to seg {} pt {}",
+                  bot->GetName(), offTicks, follower.segmentIdx, follower.pointIdx);
+    }
+    return Step::Continue;
+}
+
+// Post-combat re-anchor. NextHop only fast-forwards the cursor past points the
+// tank passed within POINT_REACHED; a trash chase displaces it well off those
+// points — often FORWARD along the route — leaving the cursor stale and behind,
+// so the tank would walk backward to it. If the next hop is implausibly far for
+// normal gliding, re-anchor onto the nearest visible route point (Resnap is
+// LOS-gated, so it won't snap across a wall) and re-fetch the hop. This never
+// terminates the tick; it only mutates the cursor/hop for the phases below.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryReanchorStaleCursor(AdvanceState& st)
+{
+    ChunkedPathfinder::Result const& path = *st.path;
+    DungeonFollowerState& follower = *st.follower;
+    DungeonPathFollower::Hop& hop = st.hop;
+
+    if (!hop.isDone && !hop.isJump &&
+        bot->GetDistance(hop.point.x, hop.point.y, hop.point.z) > DC_REANCHOR_DISTANCE)
+    {
+        float const staleDist = bot->GetDistance(hop.point.x, hop.point.y, hop.point.z);
+        bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] re-anchor: next hop {:.1f}yd (>{}yd, stale cursor) -> {}",
+                  bot->GetName(), staleDist, DC_REANCHOR_DISTANCE,
+                  reanchored ? "Resnapped + refetched hop" : "Resnap failed, falling through");
+        if (reanchored)
+            hop = DungeonPathFollower::NextHop(bot, path, follower);
+    }
+    return Step::Continue;
+}
+
+// The long-path completed (cursor reached the polyline end) while still outside
+// engage range: a benign rebuild when already in range, else the "route
+// dead-ends short of the boss" wedge — a few straight-line final-approach
+// MoveTo attempts, then a swim, then a stall for `dc skip`.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryHopDoneEscalation(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    float const bossX = st.bossX, bossY = st.bossY, bossZ = st.bossZ;
+    float const engageDist = st.engageDist, engageRange = st.engageRange;
+    DcApproachState& appr = *st.appr;
+    DungeonFollowerState& follower = *st.follower;
+    uint32& doneNotEngagedTicks = appr.doneNotEngagedTicks;
+
+    if (!st.hop.isDone)
+        return Step::Continue;
+
+    // Cursor reached the polyline end. If we're already within engage range
+    // this is a benign "anchored hops were still pending at the top" case —
+    // rebuild and let the engage hold take over next tick.
+    if (engageDist < engageRange)
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] reached end of path polyline (seg {}) -> forcing rebuild next tick",
+                 bot->GetName(), follower.segmentIdx);
+        appr.longPathExpiresMs = 0;
+        return Step::ReturnFalse;
+    }
+
+    // The route dead-ends short of the boss. Rebuilding here just produces
+    // the same 0-point path next tick (we're sitting on its terminal poly),
+    // and since the bot isn't moving the posStuck counter never escalates —
+    // this is the silent forever-loop. Try a straight final-approach MoveTo
+    // first: PathGenerator may close a few yards the chunk builder gave up
+    // on, or the boss may have wandered into reach. Past the retry budget,
+    // declare it unreachable and stall for `dc skip`.
+    ++doneNotEngagedTicks;
+    if (doneNotEngagedTicks < DC_DONE_NOT_ENGAGED_LIMIT)
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "
+                 "-> final-approach MoveTo",
+                 bot->GetName(), engageDist, next->name, engageRange,
+                 doneNotEngagedTicks, DC_DONE_NOT_ENGAGED_LIMIT);
+        StopActiveSplineGlide(bot);
+        bool const pushing = MoveTo(next->mapId, bossX, bossY, bossZ,
+                                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                                    /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        SetPhase(context, "pursuing");
+        appr.longPathExpiresMs = 0;
+        return pushing ? Step::ReturnTrue : Step::ReturnFalse;
+    }
+
+    doneNotEngagedTicks = 0;
+
+    // Last resort before stalling: if the dead-end is a water gate (a
+    // submerged tunnel the surface-sheet navmesh can't descend into), swim
+    // the rest of the way in 3D. Gated on water lying between, so a real
+    // ledge / gap dead-end still stalls as before.
+    if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] route dead-ends short of {} -> swimming the rest",
+                 bot->GetName(), next->name);
+        SetPhase(context, "swimming");
+        return Step::ReturnTrue;
+    }
+
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] {} unreachable: route dead-ends {:.0f}yd short after {} approach "
+             "attempts -> stalling",
+             bot->GetName(), next->name, engageDist, DC_DONE_NOT_ENGAGED_LIMIT);
+    StallDungeonClear(botAI,
+        "Can't reach " + next->name + ": the route dead-ends short of it "
+        "(likely on a ledge or across a gap the navmesh doesn't span). "
+        "Use 'dc skip' to move to the next boss.");
+    return Step::ReturnFalse;
+}
+
+// Anchor-declared jumps: use JumpTo (MotionMaster::MoveJump) instead of MoveTo.
+// Required for dungeon drop-downs the mmap doesn't model (OK upper->lower,
+// Pinnacle Skadi catwalk, AN spider tunnels, etc.).
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryJumpLeg(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DungeonPathFollower::Hop const& hop = st.hop;
+
+    if (hop.isJump)
+    {
+        bool const jumped = JumpTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+                                   MovementPriority::MOVEMENT_NORMAL);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] jump leg -> ({:.1f},{:.1f},{:.1f}) {}",
+                  bot->GetName(), hop.point.x, hop.point.y, hop.point.z,
+                  jumped ? "issued" : "JumpTo refused (higher-prio move in flight), retry");
+        if (!jumped)
+        {
+            // JumpTo can return false if a previous move with equal/higher
+            // priority is still in flight. Don't count this as a stall —
+            // try again next tick. Position-based stuck detection covers
+            // the case where the jump truly never lands.
+            return Step::ReturnFalse;
+        }
+        ClearStall(context);
+        SetPhase(context, "moving");
+        return Step::ReturnTrue;
+    }
+    return Step::Continue;
+}
+
+// A healthy in-flight continuous-spline glide just rides: NextHop already
+// advanced the cursor past the glided-over points, so re-issuing would
+// StopMoving + Launch a fresh escort and hitch. Keyed on splineRunning alone
+// (ESCORT generator active AND moving) — deliberately NOT IsWaitingForLastMove,
+// whose window-sized delay was the mid-path "frozen for seconds" freeze.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryRideLiveGlide(AdvanceState& st)
+{
+    DcApproachState& appr = *st.appr;
+    MotionMaster* mm = bot->GetMotionMaster();
+    bool const splineRunning =
+        mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
+    if (splineRunning)
+    {
+        appr.stuckCount = 0;
+        ClearStall(context);
+        SetPhase(context, "moving");
+        return Step::ReturnTrue;
+    }
+    return Step::Continue;
+}
+
+// Re-entry leg must be a GENERATED path. After a trash chase the tank ends well
+// off the planned line; the Resnap above re-anchored the cursor to the nearest
+// VISIBLE forward route point, but the bot is still physically off the corridor.
+// The escort spline's opening leg is a STRAIGHT segment to that point — BotCanSee
+// only cleared a thin eye-ray, so the floor-walking straight line still cuts
+// across wall corners / the inside of a bend (the "snaps back through the wall
+// after combat" report). While off the line, rejoin with a PathGenerator-built
+// route; the continuous glide resumes once RouteDeviation drops back under the
+// on-corridor threshold.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffLineRejoin(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DcApproachState& appr = *st.appr;
+    ChunkedPathfinder::Result const& path = *st.path;
+    DungeonFollowerState& follower = *st.follower;
+    DungeonPathFollower::Hop const& hop = st.hop;
+
+    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    {
+        // Cancel any stale straight spline so it can't shadow the pathed re-entry.
+        StopActiveSplineGlide(bot);
+        bool const rejoining =
+            MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+                   /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                   /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] off-line {:.1f}yd -> rejoining route via generated path to "
+                  "({:.1f},{:.1f},{:.1f}) (seg {} pt {}, moved={})",
+                  bot->GetName(), deviation, hop.point.x, hop.point.y, hop.point.z,
+                  follower.segmentIdx, follower.pointIdx, rejoining);
+        appr.stuckCount = 0;
+        ClearStall(context);
+        SetPhase(context, "moving");
+        // Own the tick whether or not MoveTo issued: a false return is the benign
+        // duplicate / waiting-on-last-move case (the pathed re-entry is already in
+        // flight), and we must never fall through to launch the straight escort
+        // spline while the bot is still off the line.
+        return Step::ReturnTrue;
+    }
+    return Step::Continue;
+}
+
+// Normal case: hand the whole upcoming polyline run to the core as ONE
+// EscortMovementGenerator spline so the bot glides continuously instead of
+// stopping dead at every ~8yd polyline point and idling until the next tick
+// (the "step, pause 2-3s, step" stutter). The escort generator builds a LINEAR
+// spline, preserving the LOS-screened polyline's wall-safety without the stops.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TrySplineWindowIssue(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DcApproachState& appr = *st.appr;
+    ChunkedPathfinder::Result const& path = *st.path;
+    DungeonFollowerState& follower = *st.follower;
+    MotionMaster* mm = bot->GetMotionMaster();
+
+    // Build the spline window from the current cursor. It stops before any
+    // jump leg (handled by the JumpTo branch above on a later tick) and at
+    // MAX_SPLINE_WINDOW_POINTS. window[0] is the live position; [1..] are
+    // the polyline points to glide through.
+    std::vector<G3D::Vector3> const window =
+        DungeonPathFollower::BuildSplineWindow(bot, path, follower);
+    if (window.size() >= 2 && mm)
+    {
+        if (bot->IsSitState())
+            bot->SetStandState(UNIT_STAND_STATE_STAND);
+        if (bot->IsNonMeleeSpellCast(true))
+        {
+            bot->CastStop();
+            botAI->InterruptSpell();
+        }
+
+        Movement::PointsArray points(window.begin(), window.end());
+        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
+
+        // Record NORMAL-priority movement so AttackAction::Attack still clears
+        // the spline when a patrol aggros mid-glide (its interrupt gate is
+        // priority < MOVEMENT_COMBAT). The re-issue guard no longer keys off
+        // this delay (see splineRunning above), so its only remaining job is
+        // priority arbitration; sizing it to the window's travel time keeps it a
+        // faithful "this NORMAL move lasts ~this long" for the framework's other
+        // movement consumers without ever gating our own re-issue.
+        float windowLen = 0.0f;
+        for (size_t i = 1; i < window.size(); ++i)
+            windowLen += (window[i] - window[i - 1]).magnitude();
+        float const runSpeed = std::max(0.1f, bot->GetSpeed(MOVE_RUN));
+        float delay = 1000.0f * (windowLen / runSpeed);
+        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
+        delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
+
+        G3D::Vector3 const& dest = window.back();
+        AI_VALUE(LastMovement&, "last movement")
+            .Set(next->mapId, dest.x, dest.y, dest.z, bot->GetOrientation(), delay,
+                 MovementPriority::MOVEMENT_NORMAL);
+
+        // The cadence of these lines IS the step-pause signature: with the
+        // timestamp prefix, consecutive issues spaced ~= their own `delay`
+        // mean seamless chaining; a gap much larger than `delay` between a
+        // short window's issue and the next is the dead-pause to investigate.
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] spline issued: {} pts, {:.1f}yd, speed={:.1f}, delay={:.0f}ms "
+                  "(seg {} pt {})",
+                  bot->GetName(), window.size(), windowLen, runSpeed, delay,
+                  follower.segmentIdx, follower.pointIdx);
+
+        appr.stuckCount = 0;
+        ClearStall(context);
+        SetPhase(context, "moving");
+        return Step::ReturnTrue;
+    }
+    return Step::Continue;
+}
+
+// Terminal phase: the next leg is a jump or a lone anchor tail (window < 2
+// points), so spline issuance isn't possible. Issue the single short hop —
+// short enough that the engine's per-MoveTo re-pathfind never trips
+// PATHFIND_SHORT, the same wall-safety the spline path preserves. Always handles
+// the tick (the bottom of the ladder); only escalates to a stall after several
+// consecutive MoveTo no-ops.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryMoveToFallback(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DcApproachState& appr = *st.appr;
+    DungeonFollowerState& follower = *st.follower;
+    DungeonPathFollower::Hop const& hop = st.hop;
+    uint32& stuck = appr.stuckCount;
+
+    LOG_DEBUG("playerbots.dungeonclear",
+              "[DC:{}] spline window <2 pts -> per-point MoveTo fallback to "
+              "({:.1f},{:.1f},{:.1f}) (seg {} pt {})",
+              bot->GetName(), hop.point.x, hop.point.y, hop.point.z,
+              follower.segmentIdx, follower.pointIdx);
+    bool const moved = MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+                              /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                              /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    if (!moved)
+    {
+        // MoveTo returned false. Benign in the common case (duplicate
+        // move queued / waiting on last move). Only treat as a real
+        // stall after several consecutive failures.
+        if (++stuck >= DC_STUCK_LIMIT)
+        {
+            // Force a fresh chunked rebuild — the cached path's first
+            // segment may be unreachable from our actual current poly.
+            appr.longPathExpiresMs = 0;
+            follower = DungeonFollowerState{};
+            StallDungeonClear(botAI,
+                "Stuck near " + next->name + " — I have a path but movement isn't progressing. "
+                "I'll try to clear nearby mobs; use 'dc skip' if it persists.");
+            return Step::ReturnFalse;
+        }
+        return Step::ReturnFalse;
+    }
+
+    stuck = 0;
+    ClearStall(context);
+    SetPhase(context, "moving");
+    return Step::ReturnTrue;
+}
+
 bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 {
     // Hard pause guard. The engine builds its action queue from the triggers
@@ -1430,10 +2050,10 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     bool const atBoss =
         DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
 
-    // Dead-end escalation counter (see DC_DONE_NOT_ENGAGED_LIMIT). Cleared the
-    // moment we're back inside engage range so it only ever counts a continuous
-    // run of "path done but boss still out of reach" ticks for one approach.
-    uint32& doneNotEngagedTicks = appr.doneNotEngagedTicks;
+    // Back inside engage range: clear the dead-end escalation counter and the
+    // direct-pursuit give-up latch so a boss that wanders back out can be
+    // re-pursued cleanly (the counters themselves live on appr and are consumed
+    // by TryHopDoneEscalation / TryDirectPursuit below).
     if (engageDist < engageRange)
         appr.OnEnteredEngageRange();
 
@@ -1461,8 +2081,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         return true;
 
     // Phase ladder. Each step either handles the tick (and Execute returns the
-    // carried bool) or falls through to the next. The counter-coupled tail
-    // (stuck recovery / direct pursuit / long-path drive) stays inline below.
+    // carried bool) or falls through to the next. The pre-route rungs come
+    // first; the counter-coupled tail (stuck recovery / direct pursuit /
+    // long-path drive / hop cluster) follows after the boss-change bookkeeping.
     if (Step s = TryEngageHold(st); s != Step::Continue)
         return s == Step::ReturnTrue;
     if (Step s = TryLootYield(st); s != Step::Continue)
@@ -1472,593 +2093,72 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     if (Step s = TryBossNotPresentStall(st); s != Step::Continue)
         return s == Step::ReturnTrue;
 
-    // Bookkeeping: reset position-based stuck counters when the boss
-    // changes, so an in-flight stuck count from the previous pull doesn't
-    // bleed into the new approach.
-    uint32 const lastEntry = appr.lastTargetEntry;
-    uint32& stuck = appr.stuckCount;
-    Position& lastPos = appr.lastPos;
-    uint32& posStuck = appr.posStuckTicks;
-    uint32& rebuildAttempts = appr.rebuildAttempts;
-    if (lastEntry != next->entry)
+    // Bookkeeping: on a boss change wipe the per-approach counters so a stale
+    // count from the previous pull doesn't bleed into the new approach. The
+    // sticky engage-trash target isn't part of the approach struct — reset it
+    // alongside the counter reset.
+    if (appr.lastTargetEntry != next->entry)
     {
         appr.OnBossChange(next->entry);
-        // The sticky engage-trash target was picked for the previous boss's
-        // corridor and can sit far behind us; it isn't part of the approach
-        // struct, so re-pick it from scratch alongside the counter reset.
         context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
     }
 
-    // Position-based stuck check. Sample current world position; if the
-    // bot is supposedly moving but barely shifted since the previous tick,
-    // increment posStuck. The (0,0,0) lastPos is the not-yet-sampled
-    // sentinel — no real dungeon map has a (0,0,0) walkable point.
-    Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
-    bool const lastPosValid =
-        lastPos.m_positionX != 0.0f || lastPos.m_positionY != 0.0f || lastPos.m_positionZ != 0.0f;
-    if (lastPosValid && bot->isMoving() && cur.GetExactDist(lastPos) < DC_STUCK_DISPLACEMENT)
-        ++posStuck;
-    else
-    {
-        posStuck = 0;
-        // Real forward progress clears any prior consecutive-rebuild count.
-        // (Lastposvalid + movement above DC_STUCK_DISPLACEMENT is the
-        // strongest signal we have that the route just resumed working.)
-        if (lastPosValid && bot->isMoving())
-            rebuildAttempts = 0;
-    }
+    // Tail ladder. appr (the owned approach FSM) is shared by every rung; the
+    // pre-route rungs run first, then the long-path is resolved into st, then
+    // the hop-cluster rungs drive the actual movement.
+    st.appr = &appr;
 
-    // Per-tick advance telemetry — the three signals the spline-issue lines
-    // can't show on their own: did the bot physically move since the last
-    // Advance tick (posDelta), which generator is in control right now, and
-    // is combat movement involved. Read against the timestamps of the
-    // "spline issued" / "re-anchor" / "off-path" lines, this disambiguates
-    // the pacing wedge: a posDelta ~0 right after a spline issuance means the
-    // spline was issued but never travelled; a CHASE/FOLLOW gen here means
-    // combat/leader movement is overriding the escort spline; an ESCORT gen
-    // with posDelta ~0 means the spline launched but wedged against geometry.
-    {
-        MotionMaster* const tmm = bot->GetMotionMaster();
-        MovementGeneratorType const gen =
-            tmm ? tmm->GetCurrentMovementGeneratorType() : NULL_MOTION_TYPE;
-        float const posDelta = lastPosValid ? cur.GetExactDist(lastPos) : -1.0f;
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance tick: posDelta={:.2f}yd moving={} gen={}({}) combat={}",
-                  bot->GetName(), posDelta, bot->isMoving() ? 1 : 0,
-                  MoveGenTypeName(gen), static_cast<uint32>(gen),
-                  bot->IsInCombat() ? 1 : 0);
-    }
+    if (Step s = TryPosStuckRecovery(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryDirectPursuit(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
 
-    lastPos = cur;
-
-    if (posStuck >= DC_STUCK_TICK_LIMIT)
-    {
-        posStuck = 0;
-        // Wedged and replanning — surface "recovering" to the status poll.
-        SetPhase(context, "recovering");
-
-        // The bot was moving but not progressing — a continuous-spline glide
-        // wedged against geometry. Halt it so the recovery below re-issues
-        // movement from a standstill instead of fighting the stuck spline.
-        StopActiveSplineGlide(bot);
-
-        // First-line recovery: try a Resnap onto the existing polyline
-        // (cheap; handles the "knocked sideways but path is still good"
-        // case). On failure, invalidate the long-path cache and reset
-        // the follower so the next tick rebuilds from the bot's current
-        // position. Strides are short enough that a rebuild from here
-        // usually picks a different sequence of stride endpoints and
-        // routes around whatever was wedging us.
-        bool const resnapped = TriggerStrideRebuild(bot, context, appr);
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] posStuck ({} ticks <{}yd) -> {} (rebuildAttempts={})",
-                 bot->GetName(), DC_STUCK_TICK_LIMIT, DC_STUCK_DISPLACEMENT,
-                 resnapped ? "resnapped onto existing route" : "forcing rebuild",
-                 rebuildAttempts + (resnapped ? 0u : 1u));
-        if (resnapped)
-        {
-            // Resnap fixed us without burning a rebuild — leave the
-            // rebuild-attempt counter alone so the navmesh-nudge
-            // escalation only triggers on true geometric wedges, not
-            // on transient drifts.
-            return false;
-        }
-        ++rebuildAttempts;
-
-        // After three consecutive rebuilds without forward progress, try a
-        // small navmesh-nudge: the bot may be on a poly the chunked builder
-        // can't reach (off-corridor, layered geometry seam). The 5yd offset
-        // probes are deliberately tiny so we don't significantly mis-position.
-        if (rebuildAttempts >= 3)
-        {
-            rebuildAttempts = 0;
-            if (DC_ALLOW_RECOVERY_MOVES && TryFarFromPolyRecovery(bot))
-            {
-                DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
-                return true;
-            }
-            StallDungeonClear(botAI,
-                "Stuck near " + next->name + " — not making forward progress. "
-                "I'll try to clear nearby mobs; use 'dc skip' if it persists.");
-            return false;
-        }
-        return false;
-    }
-
-    // Final-approach pursuit of a LIVE, visible boss. Past DC_ENGAGE_RANGE (the
-    // top-of-Execute hold handles closer than that) but within line-of-sight and
-    // DC_DIRECT_PURSUIT_RANGE, walk straight at the boss's current position with
-    // a per-tick re-path (MoveTo dedups, so a roughly-stationary boss gets one
-    // smooth glide; a wandering boss is re-targeted as it moves — the same way
-    // combat chase tracks a target). This is what stops the tank parking at the
-    // static spawn anchor and waiting for the boss to wander back. A boss out of
-    // LOS (around a corner) or farther than the pursuit range falls through to
-    // the wall-screened long-path below.
-    // pursuitFailTicks doubles as a latch: while it sits at DC_PURSUIT_FAIL_LIMIT
-    // we've given up on the direct-pursuit shortcut for this approach and let the
-    // long-path drive uninterrupted (re-entering the pursuit branch would call
-    // StopActiveSplineGlide every tick and kill the long-path's escort glide
-    // before it travels — a step/freeze thrash). The latch clears on boss change
-    // and once we make it inside engage range (see the resets above).
-    uint32& pursuitFailTicks = appr.pursuitFailTicks;
-    bool const canPursue =
-        liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss);
-    if (!canPursue)
-    {
-        // Boss not pursuable this tick (out of LOS / range / not loaded): clear
-        // the grace counter so a later pursuit starts with a fresh budget.
-        pursuitFailTicks = 0;
-    }
-    else if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
-    {
-        // Drop any stale long-path escort glide so it doesn't keep driving the
-        // bot toward the spawn anchor while we steer toward the live boss.
-        StopActiveSplineGlide(bot);
-        bool const chasing = MoveTo(next->mapId, bossX, bossY, bossZ,
-                                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                                    /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-
-        // A move was issued, is already in flight, or was just queued (MoveTo's
-        // own IsDuplicateMove / IsWaitingForLastMove return false while a prior
-        // move is still gliding) — pursuit is alive, let it ride. A move that is
-        // in flight but wedging in place is caught by the posStuck rebuild above,
-        // which runs before this branch.
-        if (chasing || bot->isMoving() ||
-            IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
-        {
-            pursuitFailTicks = 0;
-            stuck = 0;
-            ClearStall(context);
-            SetPhase(context, "pursuing");
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
-                      bot->GetName(), next->name, engageDist,
-                      chasing ? "issued" : "in flight");
-            return true;
-        }
-
-        // MoveTo produced nothing and the bot is standing still: PathGenerator
-        // can't reach the boss's live poly (Z -> INVALID_HEIGHT, or a winding
-        // route past its 74-hop cap). posStuck can't see this — the bot never
-        // moves — so without an escape this is a silent freeze just outside pull
-        // range. Count the dead tick; past a short grace, leave the latch set and
-        // fall through to the wall-screened long-path below (LongRangePathfinder,
-        // no hop cap, with its own dead-end -> stall escalation).
-        ++pursuitFailTicks;
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] direct pursuit of {} stalled ({:.0f}yd, MoveTo noop, not "
-                 "moving) {}/{}",
-                 bot->GetName(), next->name, engageDist, pursuitFailTicks,
-                 DC_PURSUIT_FAIL_LIMIT);
-        if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
-            return false;
-
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] direct pursuit of {} unreachable -> long-path fallback "
-                 "(latched until engage range / boss change)",
-                 bot->GetName(), next->name);
-        // fall through to the long-path machinery below; the latch keeps us out
-        // of this branch on subsequent ticks so the long-path can travel.
-    }
-    // else: latched — skip direct pursuit and let the long-path below drive.
-
-    // Build or refresh the long-path cache toward the boss's EFFECTIVE
-    // position (its live creature coords when loaded, else the static spawn
-    // anchor). A pool-spawn / wandering boss is rarely at the static anchor
-    // BossSpawnIndex picked, so routing to the anchor sends the tank the wrong
-    // way until it gives up ("the way is blocked"); EnsureLongPath retargets
-    // when this drifts from the position the cached path was built toward.
+    // Build/refresh the long-path cache toward the boss's EFFECTIVE position
+    // (live creature coords when loaded, else the static spawn anchor) and
+    // resolve the shared path + follower the hop-cluster rungs below consume.
     DungeonBossInfo effectiveTarget = *next;
     effectiveTarget.x = bossX;
     effectiveTarget.y = bossY;
     effectiveTarget.z = bossZ;
     EnsureLongPath(bot, context, appr, effectiveTarget);
-
     ChunkedPathfinder::Result const& path =
         AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
-
-    if (!path.reachable)
-    {
-        // Async pathfinding (DungeonClear.AsyncPathfinding): a build is still in
-        // flight — almost always right after a boss change, where EnsureLongPath
-        // cleared the cache and handed the heavy A* to the worker. The empty
-        // path is EXPECTED here, not a routing failure, so hold position quietly
-        // and wait (the result lands within a tick or a few) instead of crying
-        // "no navigable route" to the party. Mirrors the between-pulls rest
-        // yield: no stall reason set, so the stalled-fallback never fires; the
-        // multiplier suppresses wander while we wait.
-        if (appr.pendingPathJob != 0)
-        {
-            SetPhase(context, "planning route");
-            if (bot->isMoving())
-                bot->StopMoving();
-            return false;
-        }
-
-        // Bot wedged off the navmesh — try a small offset to land on a
-        // walkable poly. Common cause: stuck-teleport recovery landed
-        // on a ledge that pad's mmap tile-boundary; another cause is
-        // bot getting knocked back onto unwalkable geometry.
-        if (DC_ALLOW_RECOVERY_MOVES && path.startFarFromPoly)
-        {
-            if (TryFarFromPolyRecovery(bot))
-            {
-                // Don't say anything in party chat — this should be
-                // invisible recovery. Force a rebuild so the next tick
-                // picks up the new (hopefully on-mesh) position.
-                SetPhase(context, "recovering");
-                appr.longPathExpiresMs = 0;
-                return true;
-            }
-        }
-
-        // No navmesh route at all. Before stalling, try a swim: the target may
-        // sit behind a submerged tunnel the navmesh can't span (only a surface
-        // sheet exists over deep water). Gated on water lying between, so a
-        // genuinely land-locked failure still falls through to the stall.
-        if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
-        {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] no navmesh route to {} -> swimming", bot->GetName(), next->name);
-            SetPhase(context, "swimming");
-            return true;
-        }
-
-        // The chunked builder couldn't produce any segment. Failure
-        // reason is carried through from PathGenerator's path type
-        // (NOPATH, FARFROMPOLY_START, etc.). The stalled-fallback action
-        // takes over from here, picking off whatever reachable hostiles
-        // remain to potentially unblock the route.
-        StallDungeonClear(botAI,
-            "Can't path to " + next->name + ": " +
-            (path.failureReason.empty() ? "no navigable route" : path.failureReason) +
-            ". I'll try to clear intervening mobs; if that doesn't help, 'dc skip' to move on.");
-        return false;
-    }
-
     DungeonFollowerState& follower =
         context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+    st.path = &path;
+    st.follower = &follower;
 
-    // On-path tracking: if the bot has drifted off the planned corridor
-    // (knockback, charge, sticky-trash detour, follower bump), try a
-    // Resnap onto the existing polyline before issuing the next hop.
-    // Resnap failure means we're too far for a safe index-jump — force
-    // a rebuild from the bot's current position and yield this tick so
-    // the next tick comes back with a fresh path.
-    if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
-        follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
-    {
-        uint32 const offTicks = follower.offPathTicks;  // Resnap zeroes this
-        if (!DungeonPathFollower::Resnap(bot, path, follower))
-        {
-            // Drift too large to index-jump. Halt any stale spline glide so
-            // the rebuilt path isn't shadowed by the old route next tick.
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild",
-                     bot->GetName(), offTicks, DungeonPathFollower::RESNAP_RADIUS);
-            SetPhase(context, "recovering");
-            StopActiveSplineGlide(bot);
-            appr.longPathExpiresMs = 0;
-            follower = DungeonFollowerState{};
-            return false;
-        }
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] off-path {} ticks -> Resnapped to seg {} pt {}",
-                  bot->GetName(), offTicks, follower.segmentIdx, follower.pointIdx);
-    }
+    if (Step s = TryLongPathUnreachable(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryOffPathResnap(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
 
-    DungeonPathFollower::Hop hop = DungeonPathFollower::NextHop(bot, path, follower);
+    // One NextHop call — it advances the follower cursor, so the resulting hop
+    // is carried through the hop-cluster rungs in st (never recomputed).
+    st.hop = DungeonPathFollower::NextHop(bot, path, follower);
+    TryReanchorStaleCursor(st);  // mutates st.hop / cursor; never terminates the tick
 
-    // Post-combat re-anchor. NextHop only fast-forwards the cursor past points
-    // the tank passed within POINT_REACHED; a trash chase displaces it well
-    // off those points — often FORWARD along the route — leaving the cursor
-    // stale and behind, so the tank would walk backward to it. If the next hop
-    // is implausibly far for normal gliding, re-anchor onto the nearest
-    // visible route point (Resnap is LOS-gated, so it won't snap across a
-    // wall) and re-fetch the hop. This is the "fight, then re-follow the path"
-    // step. On Resnap failure the tank is genuinely far from the route — fall
-    // through and let the off-path/stuck logic rebuild from here.
-    if (!hop.isDone && !hop.isJump &&
-        bot->GetDistance(hop.point.x, hop.point.y, hop.point.z) > DC_REANCHOR_DISTANCE)
-    {
-        float const staleDist = bot->GetDistance(hop.point.x, hop.point.y, hop.point.z);
-        bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower);
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] re-anchor: next hop {:.1f}yd (>{}yd, stale cursor) -> {}",
-                  bot->GetName(), staleDist, DC_REANCHOR_DISTANCE,
-                  reanchored ? "Resnapped + refetched hop" : "Resnap failed, falling through");
-        if (reanchored)
-            hop = DungeonPathFollower::NextHop(bot, path, follower);
-    }
-
-    // Sync the legacy "current hop" telemetry — `dc status` and a few
-    // tests still read it. Map the flattened polyline cursor onto its
-    // owning segment index.
+    // Sync the legacy "current hop" telemetry — `dc status` and a few tests
+    // still read it. Map the flattened polyline cursor onto its segment index.
     context->GetValue<uint32>("dungeon clear current hop")->Set(follower.segmentIdx);
-    if (hop.isDone)
-    {
-        // Cursor reached the polyline end. If we're already within engage range
-        // this is a benign "anchored hops were still pending at the top" case —
-        // rebuild and let the engage hold take over next tick.
-        if (engageDist < engageRange)
-        {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] reached end of path polyline (seg {}) -> forcing rebuild next tick",
-                     bot->GetName(), follower.segmentIdx);
-            appr.longPathExpiresMs = 0;
-            return false;
-        }
 
-        // The route dead-ends short of the boss. Rebuilding here just produces
-        // the same 0-point path next tick (we're sitting on its terminal poly),
-        // and since the bot isn't moving the posStuck counter never escalates —
-        // this is the silent forever-loop. Try a straight final-approach MoveTo
-        // first: PathGenerator may close a few yards the chunk builder gave up
-        // on, or the boss may have wandered into reach. Past the retry budget,
-        // declare it unreachable and stall for `dc skip`.
-        ++doneNotEngagedTicks;
-        if (doneNotEngagedTicks < DC_DONE_NOT_ENGAGED_LIMIT)
-        {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "
-                     "-> final-approach MoveTo",
-                     bot->GetName(), engageDist, next->name, engageRange,
-                     doneNotEngagedTicks, DC_DONE_NOT_ENGAGED_LIMIT);
-            StopActiveSplineGlide(bot);
-            bool const pushing = MoveTo(next->mapId, bossX, bossY, bossZ,
-                                        /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                                        /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-            SetPhase(context, "pursuing");
-            appr.longPathExpiresMs = 0;
-            return pushing;
-        }
-
-        doneNotEngagedTicks = 0;
-
-        // Last resort before stalling: if the dead-end is a water gate (a
-        // submerged tunnel the surface-sheet navmesh can't descend into), swim
-        // the rest of the way in 3D. Gated on water lying between, so a real
-        // ledge / gap dead-end still stalls as before.
-        if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
-        {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] route dead-ends short of {} -> swimming the rest",
-                     bot->GetName(), next->name);
-            SetPhase(context, "swimming");
-            return true;
-        }
-
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] {} unreachable: route dead-ends {:.0f}yd short after {} approach "
-                 "attempts -> stalling",
-                 bot->GetName(), next->name, engageDist, DC_DONE_NOT_ENGAGED_LIMIT);
-        StallDungeonClear(botAI,
-            "Can't reach " + next->name + ": the route dead-ends short of it "
-            "(likely on a ledge or across a gap the navmesh doesn't span). "
-            "Use 'dc skip' to move to the next boss.");
-        return false;
-    }
-
-    // Anchor-declared jumps: use JumpTo (MotionMaster::MoveJump) instead
-    // of MoveTo. Required for dungeon drop-downs the mmap doesn't model
-    // (OK upper→lower, Pinnacle Skadi catwalk, AN spider tunnels, etc.).
-    // The jump's destination still goes through the engine's movement
-    // pipeline; if MoveJump arcs short, the next tick re-evaluates.
-    if (hop.isJump)
-    {
-        bool const jumped = JumpTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
-                                   MovementPriority::MOVEMENT_NORMAL);
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] jump leg -> ({:.1f},{:.1f},{:.1f}) {}",
-                  bot->GetName(), hop.point.x, hop.point.y, hop.point.z,
-                  jumped ? "issued" : "JumpTo refused (higher-prio move in flight), retry");
-        if (!jumped)
-        {
-            // JumpTo can return false if a previous move with equal/higher
-            // priority is still in flight. Don't count this as a stall —
-            // try again next tick. Position-based stuck detection covers
-            // the case where the jump truly never lands.
-            return false;
-        }
-        ClearStall(context);
-        SetPhase(context, "moving");
-        return true;
-    }
-
-    // --- Continuous-spline advance ---------------------------------------
-    // Rather than issue one short MoveTo per Advance tick — which stops the
-    // bot dead at every ~8yd polyline point and idles it until the next tick
-    // re-fires (the "step, pause 2-3s, step" stutter) — hand the whole
-    // upcoming polyline run to the core as ONE EscortMovementGenerator
-    // spline. The core then walks it server-side every frame, exactly like
-    // MoveFollow does for a leader, so the bot glides continuously instead
-    // of restarting from a standstill each tick.
-    //
-    // The escort generator builds a LINEAR spline (it never calls SetSmooth),
-    // so the bot tracks the LOS-screened polyline segment-for-segment with no
-    // Catmull-Rom corner-cutting — preserving the wall-safety the per-point
-    // MoveTo gave us, without the per-point stops.
-    MotionMaster* mm = bot->GetMotionMaster();
-
-    // Leave a healthy in-flight spline alone, but ONLY while it is genuinely
-    // still gliding (ESCORT generator active AND the move flag set). NextHop
-    // above already advanced the follower cursor past the points we've glided
-    // over, so a live glide just rides. Re-issuing one would StopMoving + Launch
-    // a fresh escort and hitch.
-    //
-    // We deliberately do NOT also gate on IsWaitingForLastMove here. That was
-    // the freeze bug: the LastMovement delay is sized to the WHOLE window's
-    // travel (capped at maxWaitForMove = 5s), so the instant the escort spline
-    // finalizes — at a window boundary, or early because the bot out-ran the
-    // runSpeed estimate — isMoving() drops to false yet IsWaitingForLastMove
-    // stayed true, and this guard sat the tank still for the rest of that delay
-    // (up to ~5s) while the status still read "moving". That is the mid-path
-    // "En route but frozen for seconds" and the pause squeezing through a narrow
-    // hallway. Keying solely on splineRunning re-issues the next window on the
-    // very next tick once the current one ends, so the legs chain seamlessly.
-    //
-    // No double-launch risk: MoveSplinePath -> Mutate(MOTION_SLOT_ACTIVE) calls
-    // the escort generator's Initialize()/Launch() synchronously (we're in the
-    // AI update, not a MotionMaster update), so isMoving()/splineRunning is
-    // already true on the next tick — splineRunning alone covers the launch.
-    bool const splineRunning =
-        mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
-    if (splineRunning)
-    {
-        stuck = 0;
-        ClearStall(context);
-        SetPhase(context, "moving");
-        return true;
-    }
+    if (Step s = TryHopDoneEscalation(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryJumpLeg(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryRideLiveGlide(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
 
     if (!IsMovingAllowed())
         return false;
 
-    // Re-entry leg must be a GENERATED path. After a trash chase the tank ends
-    // well off the planned line; the Resnap above re-anchored the cursor to the
-    // nearest VISIBLE forward route point, but the bot is still physically off
-    // the corridor. The escort spline's opening leg is a STRAIGHT segment from
-    // the live position straight to that point — BotCanSee only cleared a thin
-    // eye-ray, so the floor-walking straight line still cuts across wall corners
-    // / the inside of a bend (the "snaps back through the wall after combat"
-    // report). While off the line, rejoin with a PathGenerator-built route
-    // (MoveTo generates a wall-following path); the continuous glide resumes on a
-    // later tick once RouteDeviation drops back under the on-corridor threshold.
-    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
-    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
-    {
-        // Cancel any stale straight spline so it can't shadow the pathed re-entry.
-        StopActiveSplineGlide(bot);
-        bool const rejoining =
-            MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
-                   /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                   /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] off-line {:.1f}yd -> rejoining route via generated path to "
-                  "({:.1f},{:.1f},{:.1f}) (seg {} pt {}, moved={})",
-                  bot->GetName(), deviation, hop.point.x, hop.point.y, hop.point.z,
-                  follower.segmentIdx, follower.pointIdx, rejoining);
-        stuck = 0;
-        ClearStall(context);
-        SetPhase(context, "moving");
-        // Own the tick whether or not MoveTo issued: a false return is the benign
-        // duplicate / waiting-on-last-move case (the pathed re-entry is already in
-        // flight), and we must never fall through to launch the straight escort
-        // spline while the bot is still off the line.
-        return true;
-    }
+    if (Step s = TryOffLineRejoin(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TrySplineWindowIssue(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
 
-    // Build the spline window from the current cursor. It stops before any
-    // jump leg (handled by the JumpTo branch above on a later tick) and at
-    // MAX_SPLINE_WINDOW_POINTS. window[0] is the live position; [1..] are
-    // the polyline points to glide through.
-    std::vector<G3D::Vector3> const window =
-        DungeonPathFollower::BuildSplineWindow(bot, path, follower);
-    if (window.size() >= 2 && mm)
-    {
-        if (bot->IsSitState())
-            bot->SetStandState(UNIT_STAND_STATE_STAND);
-        if (bot->IsNonMeleeSpellCast(true))
-        {
-            bot->CastStop();
-            botAI->InterruptSpell();
-        }
-
-        Movement::PointsArray points(window.begin(), window.end());
-        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
-
-        // Record NORMAL-priority movement so AttackAction::Attack still clears
-        // the spline when a patrol aggros mid-glide (its interrupt gate is
-        // priority < MOVEMENT_COMBAT). The re-issue guard no longer keys off
-        // this delay (see splineRunning above), so its only remaining job is
-        // priority arbitration; sizing it to the window's travel time keeps it a
-        // faithful "this NORMAL move lasts ~this long" for the framework's other
-        // movement consumers without ever gating our own re-issue.
-        float windowLen = 0.0f;
-        for (size_t i = 1; i < window.size(); ++i)
-            windowLen += (window[i] - window[i - 1]).magnitude();
-        float const runSpeed = std::max(0.1f, bot->GetSpeed(MOVE_RUN));
-        float delay = 1000.0f * (windowLen / runSpeed);
-        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
-        delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
-
-        G3D::Vector3 const& dest = window.back();
-        AI_VALUE(LastMovement&, "last movement")
-            .Set(next->mapId, dest.x, dest.y, dest.z, bot->GetOrientation(), delay,
-                 MovementPriority::MOVEMENT_NORMAL);
-
-        // The cadence of these lines IS the step-pause signature: with the
-        // timestamp prefix, consecutive issues spaced ~= their own `delay`
-        // mean seamless chaining; a gap much larger than `delay` between a
-        // short window's issue and the next is the dead-pause to investigate.
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] spline issued: {} pts, {:.1f}yd, speed={:.1f}, delay={:.0f}ms "
-                  "(seg {} pt {})",
-                  bot->GetName(), window.size(), windowLen, runSpeed, delay,
-                  follower.segmentIdx, follower.pointIdx);
-
-        stuck = 0;
-        ClearStall(context);
-        SetPhase(context, "moving");
-        return true;
-    }
-
-    // Fallback: the next leg is a jump or a lone anchor tail (window < 2
-    // points), so spline issuance isn't possible. Issue the single short hop
-    // — short enough that the engine's per-MoveTo re-pathfind never trips
-    // PATHFIND_SHORT, the same wall-safety the spline path preserves.
-    // MOVEMENT_NORMAL (not COMBAT) so combat reflexes can still preempt it.
-    LOG_DEBUG("playerbots.dungeonclear",
-              "[DC:{}] spline window <2 pts -> per-point MoveTo fallback to "
-              "({:.1f},{:.1f},{:.1f}) (seg {} pt {})",
-              bot->GetName(), hop.point.x, hop.point.y, hop.point.z,
-              follower.segmentIdx, follower.pointIdx);
-    bool const moved = MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
-                              /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                              /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-    if (!moved)
-    {
-        // MoveTo returned false. Benign in the common case (duplicate
-        // move queued / waiting on last move). Only treat as a real
-        // stall after several consecutive failures.
-        if (++stuck >= DC_STUCK_LIMIT)
-        {
-            // Force a fresh chunked rebuild — the cached path's first
-            // segment may be unreachable from our actual current poly.
-            appr.longPathExpiresMs = 0;
-            follower = DungeonFollowerState{};
-            StallDungeonClear(botAI,
-                "Stuck near " + next->name + " — I have a path but movement isn't progressing. "
-                "I'll try to clear nearby mobs; use 'dc skip' if it persists.");
-            return false;
-        }
-        return false;
-    }
-
-    stuck = 0;
-    ClearStall(context);
-    SetPhase(context, "moving");
-    return true;
+    // Terminal rung: always handles the tick.
+    return TryMoveToFallback(st) == Step::ReturnTrue;
 }
 
 namespace
