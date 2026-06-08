@@ -1321,17 +1321,17 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
     if (context->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
         return;
 
-    uint32 const phase = context->GetValue<uint32>("dungeon clear pull phase")->Get();
+    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
     bool const curBool = context->GetValue<bool>("dungeon clear pull mode")->Get();
 
     // Never flip the verdict mid-engagement: in combat or any non-Idle pull phase
     // the standing decision is latched until the fight resolves.
-    if (bot->IsInCombat() || phase != static_cast<uint32>(DcPullPhase::Idle))
+    if (bot->IsInCombat() || pull.phase != DcPullPhase::Idle)
         return;
 
     auto apply = [&](bool want, uint32 decision)
     {
-        context->GetValue<uint32>("dungeon clear pull decision")->Set(decision);
+        pull.decision = decision;
         if (want == curBool)
             return;
         context->GetValue<bool>("dungeon clear pull mode")->Set(want);
@@ -1340,7 +1340,7 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
         // immediate hold point (mirrors DcPullAction's On activation); the pull
         // pipeline overwrites it with the real safe camp on commit.
         if (want)
-            context->GetValue<Position&>("dungeon clear camp position")->Get() =
+            pull.camp =
                 Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     };
 
@@ -1350,8 +1350,7 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
     if (!target)
     {
         // Nothing to size up: fall back to the Leeroy ladder and drop the latch.
-        context->GetValue<ObjectGuid>("dungeon clear pull decision target")
-            ->Set(ObjectGuid::Empty);
+        pull.decisionTarget = ObjectGuid::Empty;
         apply(false, 0u);
         return;
     }
@@ -1370,9 +1369,7 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
     // movement. Once Advanced it is locked for the rest of the approach. One stable,
     // non-flapping decision per pack; the party is never churned Leeroy<->Advanced.
     constexpr uint32 kRecheckMs = 400;
-    ObjectGuid const latched =
-        context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
-    bool const sameTarget = (latched == target->GetGUID());
+    bool const sameTarget = (pull.decisionTarget == target->GetGUID());
 
     if (sameTarget)
     {
@@ -1381,11 +1378,9 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
             return;
         // Standing Leeroy: re-check on a throttle, upgrade-only.
         uint32 const now = getMSTime();
-        uint32 const since =
-            context->GetValue<uint32>("dungeon clear pull decision since")->Get();
-        if (since != 0 && (now - since) < kRecheckMs)
+        if (pull.decisionSince != 0 && (now - pull.decisionSince) < kRecheckMs)
             return;
-        context->GetValue<uint32>("dungeon clear pull decision since")->Set(now);
+        pull.decisionSince = now;
         if (ClassifyPullAdvanced(botAI, target))
         {
             apply(true, 2u);
@@ -1398,9 +1393,8 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
 
     // New pack: size it up fresh and stamp the latch + re-check clock.
     bool const advanced = ClassifyPullAdvanced(botAI, target);
-    context->GetValue<ObjectGuid>("dungeon clear pull decision target")
-        ->Set(target->GetGUID());
-    context->GetValue<uint32>("dungeon clear pull decision since")->Set(getMSTime());
+    pull.decisionTarget = target->GetGUID();
+    pull.decisionSince = getMSTime();
     apply(advanced, advanced ? 2u : 1u);
     DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
                  target->GetGUID().ToString(), advanced ? "ADVANCED" : "LEEROY");
@@ -1487,7 +1481,7 @@ std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Un
     };
 
     std::vector<Position> const& crumbs =
-        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
 
     Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
@@ -1617,7 +1611,7 @@ std::optional<Position> DungeonClearUtil::ComputeTrailCamp(PlayerbotAI* botAI,
     Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
     std::vector<Position> const& crumbs =
-        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
 
     // Walk BACK along the trail (newest -> oldest) accumulating corridor distance,
     // exactly like ComputeSafeCamp's preferred branch but without the clearance
@@ -1719,12 +1713,12 @@ bool DungeonClearUtil::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position
         !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
         return false;
 
-    uint32 const phase = ctx->GetValue<uint32>("dungeon clear pull phase")->Get();
-    if (phase == static_cast<uint32>(DcPullPhase::Idle))
+    DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    if (pull.phase == DcPullPhase::Idle)
         return false;
 
-    phaseOut = phase;
-    campOut = ctx->GetValue<Position&>("dungeon clear camp position")->Get();
+    phaseOut = static_cast<uint32>(pull.phase);
+    campOut = pull.camp;
     return true;
 }
 
@@ -1747,16 +1741,16 @@ bool DungeonClearUtil::GetLeaderCampHold(Player* bot, Position& campOut, bool& p
         !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
         return false;
 
-    Position const camp = ctx->GetValue<Position&>("dungeon clear camp position")->Get();
+    DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
     // is nothing to hold at, so let the caller fall back (briefly) to follow.
     if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
         camp.GetPositionZ() == 0.0f)
         return false;
 
-    uint32 const phase = ctx->GetValue<uint32>("dungeon clear pull phase")->Get();
     campOut = camp;
-    passiveOut = IsPullPhaseHolding(phase);
+    passiveOut = IsPullPhaseHolding(static_cast<uint32>(pull.phase));
     return true;
 }
 
@@ -1792,10 +1786,10 @@ void DungeonClearUtil::AbortLeaderPull(Player* bot)
     if (!leaderAI)
         return;
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (IsPullPhaseHolding(ctx->GetValue<uint32>("dungeon clear pull phase")->Get()))
+    DcPullContext& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
     {
-        ctx->GetValue<uint32>("dungeon clear pull phase")
-            ->Set(static_cast<uint32>(DcPullPhase::Engage));
+        pull.phase = DcPullPhase::Engage;
         DC_PULL_INFO("[DC:{}] advanced-pull: leader pull aborted (forced to Engage) "
                      "-> party released", leader->GetName());
     }
@@ -2725,8 +2719,9 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
     // 1 Leeroy / 2 Advanced) is the live verdict the addon shows under "Dynamic".
     bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
     uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
-    uint32 const pullDecision = AI_VALUE(uint32, "dungeon clear pull decision");
-    uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
+    DcPullContext const& pull = AI_VALUE(DcPullContext&, "dungeon clear pull context");
+    uint32 const pullDecision = pull.decision;
+    uint32 const pullPhase = static_cast<uint32>(pull.phase);
     std::string const bossName = next.has_value() ? next->name : "the boss";
 
     if (enabled && paused)

@@ -14,6 +14,7 @@
 #include "MoveSplineInitArgs.h"
 #include "ObjectGuid.h"
 #include "Position.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 
 // --- Advanced-pull log channel --------------------------------------------
@@ -45,19 +46,9 @@ class AiObjectContext;
 struct DungeonBossInfo;
 struct Position;
 
-// Advanced-pull (LOS pull-to-camp) sub-phase. Stored in the leader's
-// "dungeon clear pull phase" value as a uint32 and read cross-context by
-// followers. Forming/Advancing/Returning are the "holding" phases that keep the
-// party passive at camp; Idle and Engage release them. See
-// DungeonClearPullPhaseValue and DungeonClearUtil::IsPullPhaseHolding.
-enum class DcPullPhase : uint32
-{
-    Idle      = 0,
-    Forming   = 1,
-    Advancing = 2,
-    Returning = 3,
-    Engage    = 4,
-};
+// DcPullPhase + DcPullContext now live in DcPullContext.h (included above) so the
+// one owned pull-state struct is visible to both the util layer and the value
+// layer without a circular include.
 
 class DungeonClearUtil
 {

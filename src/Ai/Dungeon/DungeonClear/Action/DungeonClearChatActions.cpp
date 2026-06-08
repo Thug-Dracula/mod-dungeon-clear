@@ -122,15 +122,15 @@ namespace
     // the player's pull-mode preference for the rest of the run is preserved.
     void ResetPullTransient(AiObjectContext* context)
     {
-        context->GetValue<uint32>("dungeon clear pull phase")->Set(0u);
-        context->GetValue<uint32>("dungeon clear pull since")->Set(0u);
-        context->GetValue<Position&>("dungeon clear camp position")->Get() = Position();
-        context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(ObjectGuid::Empty);
-        // Dynamic-pull verdict + its per-pack latch: clear so the next pull is
-        // sized up fresh rather than inheriting the interrupted engagement's call.
-        context->GetValue<uint32>("dungeon clear pull decision")->Set(0u);
-        context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Set(ObjectGuid::Empty);
-        context->GetValue<uint32>("dungeon clear pull decision since")->Set(0u);
+        // One owned struct, one reset: the whole advanced-pull FSM — phase, dwell
+        // timer, camp, breadcrumb trail, abort + tag latches, and the Dynamic
+        // verdict (decision + per-pack latch + re-check throttle) — clears in
+        // lockstep. This is what makes the "stale latch survives pause/skip/resume"
+        // bug class structurally impossible: there is exactly one thing to reset,
+        // so a field can never be forgotten at one of the 8 call sites. The tag
+        // latch and breadcrumb trail used to be omitted here, which is why a stale
+        // tag from the previous engagement could make the next pull skip its run-in.
+        context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
     }
 
     // Applies an advanced-pull preference (0 Off / 1 On / 2 Dynamic) to the live
@@ -149,7 +149,7 @@ namespace
         context->GetValue<bool>("dungeon clear pull mode")->Set(active);
         DungeonClearUtil::SetLeaderDazeImmunity(bot, active);
         if (active)
-            context->GetValue<Position&>("dungeon clear camp position")->Get() =
+            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().camp =
                 Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
         else
             ResetPullTransient(context);
@@ -278,7 +278,8 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
-    context->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get().clear();
+    // The breadcrumb trail is part of the pull context already cleared by
+    // ResetPullTransient above.
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");

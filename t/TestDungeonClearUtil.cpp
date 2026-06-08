@@ -475,8 +475,9 @@ protected:
         // preference + the live Dynamic verdict).
         context->SetValue<bool>("dungeon clear pull mode", false);
         context->SetValue<uint32>("dungeon clear pull setting", 0);
-        context->SetValue<uint32>("dungeon clear pull decision", 0);
-        context->SetValue<uint32>("dungeon clear pull phase", 0);
+        // Advanced-pull transient state is one owned struct now (phase + Dynamic
+        // verdict live inside it); a default DcPullContext is Idle / no verdict.
+        context->SetRefValue<DcPullContext>("dungeon clear pull context", DcPullContext{});
     }
 
     void TearDown() override

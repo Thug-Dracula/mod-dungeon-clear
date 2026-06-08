@@ -43,7 +43,6 @@ public:
         creators["dungeon clear party tank"] = &DungeonClearValueContext::dungeon_clear_party_tank;
         creators["dungeon clear last position"] = &DungeonClearValueContext::dungeon_clear_last_position;
         creators["dungeon clear stuck ticks"] = &DungeonClearValueContext::dungeon_clear_stuck_ticks;
-        creators["dungeon clear last pull target"] = &DungeonClearValueContext::dungeon_clear_last_pull_target;
         creators["dungeon clear long path"] = &DungeonClearValueContext::dungeon_clear_long_path;
         creators["dungeon clear long path target"] = &DungeonClearValueContext::dungeon_clear_long_path_target;
         creators["dungeon clear long path target pos"] = &DungeonClearValueContext::dungeon_clear_long_path_target_pos;
@@ -66,14 +65,7 @@ public:
         creators["dungeon clear pull mode"] = &DungeonClearValueContext::dungeon_clear_pull_mode;
         creators["dungeon clear pull mode current"] = &DungeonClearValueContext::dungeon_clear_pull_mode_current;
         creators["dungeon clear pull setting"] = &DungeonClearValueContext::dungeon_clear_pull_setting;
-        creators["dungeon clear pull decision"] = &DungeonClearValueContext::dungeon_clear_pull_decision;
-        creators["dungeon clear pull decision target"] = &DungeonClearValueContext::dungeon_clear_pull_decision_target;
-        creators["dungeon clear pull decision since"] = &DungeonClearValueContext::dungeon_clear_pull_decision_since;
-        creators["dungeon clear pull phase"] = &DungeonClearValueContext::dungeon_clear_pull_phase;
-        creators["dungeon clear camp position"] = &DungeonClearValueContext::dungeon_clear_camp_position;
-        creators["dungeon clear pull since"] = &DungeonClearValueContext::dungeon_clear_pull_since;
-        creators["dungeon clear pull abort target"] = &DungeonClearValueContext::dungeon_clear_pull_abort_target;
-        creators["dungeon clear breadcrumbs"] = &DungeonClearValueContext::dungeon_clear_breadcrumbs;
+        creators["dungeon clear pull context"] = &DungeonClearValueContext::dungeon_clear_pull_context;
     }
 
 private:
@@ -97,7 +89,6 @@ private:
     static UntypedValue* dungeon_clear_party_tank(PlayerbotAI* ai) { return new DungeonClearPartyTankValue(ai); }
     static UntypedValue* dungeon_clear_last_position(PlayerbotAI* ai) { return new DungeonClearLastPositionValue(ai); }
     static UntypedValue* dungeon_clear_stuck_ticks(PlayerbotAI* ai) { return new DungeonClearStuckTicksValue(ai); }
-    static UntypedValue* dungeon_clear_last_pull_target(PlayerbotAI* ai) { return new DungeonClearLastPullTargetValue(ai); }
     static UntypedValue* dungeon_clear_long_path(PlayerbotAI* ai) { return new DungeonClearLongPathValue(ai); }
     static UntypedValue* dungeon_clear_long_path_target(PlayerbotAI* ai) { return new DungeonClearLongPathTargetValue(ai); }
     static UntypedValue* dungeon_clear_long_path_target_pos(PlayerbotAI* ai) { return new DungeonClearLongPathTargetPosValue(ai); }
@@ -120,14 +111,7 @@ private:
     static UntypedValue* dungeon_clear_pull_mode(PlayerbotAI* ai) { return new DungeonClearPullModeValue(ai); }
     static UntypedValue* dungeon_clear_pull_mode_current(PlayerbotAI* ai) { return new DungeonClearPullModeCurrentValue(ai); }
     static UntypedValue* dungeon_clear_pull_setting(PlayerbotAI* ai) { return new DungeonClearPullSettingValue(ai); }
-    static UntypedValue* dungeon_clear_pull_decision(PlayerbotAI* ai) { return new DungeonClearPullDecisionValue(ai); }
-    static UntypedValue* dungeon_clear_pull_decision_target(PlayerbotAI* ai) { return new DungeonClearPullDecisionTargetValue(ai); }
-    static UntypedValue* dungeon_clear_pull_decision_since(PlayerbotAI* ai) { return new DungeonClearPullDecisionSinceValue(ai); }
-    static UntypedValue* dungeon_clear_pull_phase(PlayerbotAI* ai) { return new DungeonClearPullPhaseValue(ai); }
-    static UntypedValue* dungeon_clear_camp_position(PlayerbotAI* ai) { return new DungeonClearCampPositionValue(ai); }
-    static UntypedValue* dungeon_clear_pull_since(PlayerbotAI* ai) { return new DungeonClearPullSinceValue(ai); }
-    static UntypedValue* dungeon_clear_pull_abort_target(PlayerbotAI* ai) { return new DungeonClearPullAbortTargetValue(ai); }
-    static UntypedValue* dungeon_clear_breadcrumbs(PlayerbotAI* ai) { return new DungeonClearBreadcrumbsValue(ai); }
+    static UntypedValue* dungeon_clear_pull_context(PlayerbotAI* ai) { return new DungeonClearPullContextValue(ai); }
 };
 
 #endif

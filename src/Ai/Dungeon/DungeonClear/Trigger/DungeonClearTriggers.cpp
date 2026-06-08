@@ -279,7 +279,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // close). The one exception is a pack a prior pull gave up on (abort target):
     // fall through to the normal walk-in so the run never livelocks on it.
     if (AI_VALUE(bool, "dungeon clear pull mode current") &&
-        trash->GetGUID() != AI_VALUE(ObjectGuid, "dungeon clear pull abort target"))
+        trash->GetGUID() != AI_VALUE(DcPullContext&, "dungeon clear pull context").abortTarget)
     {
         DC_PULL_DEBUG("[DC:{}] blocking-trash: pull mode owns pack {} ({:.1f}yd) -> "
                       "stand down for the pull pipeline",
@@ -494,7 +494,7 @@ bool DungeonClearPullTrigger::IsActive()
     if (!AI_VALUE(bool, "dungeon clear pull mode current"))
         return false;
 
-    uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");
+    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);
 
     // Mid-pull pre-combat (Forming/Advancing) and the post-fight Engage cleanup
     // run on this non-combat engine, but only while out of combat — the instant
@@ -520,7 +520,7 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
 
     // Don't loop on a pack a previous pull gave up on — let engage-trash walk in.
-    if (AI_VALUE(ObjectGuid, "dungeon clear pull abort target") == trash->GetGUID())
+    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").abortTarget == trash->GetGUID())
     {
         DC_PULL_DEBUG("[DC:{}] pull trigger: target {} is the abort target -> defer "
                       "to normal engage", bot->GetName(), trash->GetGUID().ToString());
@@ -552,7 +552,7 @@ bool DungeonClearPullManeuverTrigger::IsActive()
     if (!DungeonClearUtil::IsDungeonClearLeader(bot))
         return false;
 
-    uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");
+    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);
     // Forming is included so combat taken DURING the pre-run-in retreat/dwell is
     // not a dead zone: the non-combat pull trigger goes silent the instant the
     // tank is in combat (it returns !IsInCombat for any non-Idle phase), and if

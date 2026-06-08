@@ -14,6 +14,7 @@
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Value.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 class PlayerbotAI;
@@ -204,18 +205,6 @@ class DungeonClearStuckTicksValue : public ManualSetValue<uint32>
 public:
     DungeonClearStuckTicksValue(PlayerbotAI* botAI)
         : ManualSetValue<uint32>(botAI, 0u, "dungeon clear stuck ticks")
-    {
-    }
-};
-
-// Suppresses repeated pull-spell casts at the same engagement. Set when
-// EngageDirect fires a class pull spell on a target; cleared when the
-// target changes or the bot leaves combat.
-class DungeonClearLastPullTargetValue : public ManualSetValue<ObjectGuid>
-{
-public:
-    DungeonClearLastPullTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear last pull target")
     {
     }
 };
@@ -545,133 +534,31 @@ public:
     }
 };
 
-// Dynamic-pull decision (setting == 2) for the most recent pack the tank sized
-// up: 0 None (no target / not Dynamic), 1 Leeroy (run in), 2 Advanced (careful
-// pull-to-camp). Written by DungeonClearUtil::UpdateDynamicPullMode and surfaced
-// in the STATUS payload so the addon can show what Dynamic chose. Reset to 0
-// with the rest of the pull transient state.
-class DungeonClearPullDecisionValue : public ManualSetValue<uint32>
+// All transient state for one advanced/dynamic pull run, consolidated into a
+// single owned struct (DcPullContext, see DcPullContext.h) so the whole pull FSM
+// — phase, phase-entry timestamp, camp, breadcrumb trail, the abort/tag latches,
+// and the Dynamic verdict (decision + per-pack latch + re-check throttle) — resets
+// in lockstep through exactly one Reset(). This replaced seven loose ManualSetValue
+// globals ("dungeon clear pull phase/since/camp position/breadcrumbs/abort target",
+// "...pull decision[ target][ since]", and "...last pull target") whose resets were
+// scattered across 8 call sites and provably incomplete (last-pull-target and
+// breadcrumbs survived pause/skip/resume), the root of the "stale latch" bug class.
+// Leader-owned; followers read `phase`/`camp` cross-context via the leader's copy
+// (DungeonClearUtil::GetLeaderPullInfo / GetLeaderCampHold). Reset alongside the run
+// state (dc on/off / death / cleared) and on every pull interrupt (pause / skip /
+// resume / go) through DungeonClearChatActions::ResetPullTransient.
+class DungeonClearPullContextValue : public ManualSetValue<DcPullContext&>
 {
 public:
-    DungeonClearPullDecisionValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull decision")
+    DungeonClearPullContextValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcPullContext&>(botAI, data, "dungeon clear pull context")
     {
     }
-};
 
-// The pack the current Dynamic decision applies to. The governor re-decides only
-// when the target changes (or the engagement resolves), so a single approaching
-// pack gets ONE stable Leeroy/Advanced verdict instead of flapping tick-to-tick
-// as neighbouring packs drift in and out of the far-targets scan. Reset with the
-// pull transient state.
-class DungeonClearPullDecisionTargetValue : public ManualSetValue<ObjectGuid>
-{
-public:
-    DungeonClearPullDecisionTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear pull decision target")
-    {
-    }
-};
-
-// Millisecond timestamp of the last Dynamic re-classification of the LATCHED pack.
-// The verdict for a pack is upgrade-only while approaching it: a first-sight
-// Leeroy (taken when the far end of the room is still unscanned / occluded) is
-// re-checked as the bot closes and may UPGRADE to Advanced, but never downgrades,
-// and an Advanced verdict locks for good. This throttles those re-checks so the
-// (LOS + closed-door) neighbour scan runs a few times a second at most rather than
-// every engine tick. 0 = never re-checked yet. Reset with the pull transient.
-class DungeonClearPullDecisionSinceValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearPullDecisionSinceValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull decision since")
-    {
-    }
-};
-
-// Current advanced-pull sub-phase (DcPullPhase cast to uint32):
-//   0 Idle      — no pull in progress.
-//   1 Forming   — camp stamped; holding a beat so followers go passive first.
-//   2 Advancing — tank running into the pack to grab aggro (non-combat engine).
-//   3 Returning — aggro confirmed; tank running back to camp (COMBAT engine).
-//   4 Engage    — tank back at camp; release the party to fight.
-// Leader-owned and read cross-context by followers (see
-// DungeonClearUtil::GetLeaderPullInfo) to decide when to hold+passive at camp.
-// Holding phases (Forming/Advancing/Returning) keep followers passive; Idle and
-// Engage release them. Reset to 0 alongside the run state.
-class DungeonClearPullPhaseValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearPullPhaseValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull phase")
-    {
-    }
-};
-
-// World position the tank marked as the pull camp — where the party holds and
-// where the tank drags the pack back to before releasing. Stamped when a pull
-// begins (phase Idle -> Forming) at the tank's current position. Default
-// (0,0,0) = no camp set.
-class DungeonClearCampPositionValue : public ManualSetValue<Position&>
-{
-public:
-    DungeonClearCampPositionValue(PlayerbotAI* botAI)
-        : ManualSetValue<Position&>(botAI, data, "dungeon clear camp position")
-    {
-    }
+    void Reset() override { data.Reset(); }
 
 private:
-    Position data;
-};
-
-// Trail of the tank's recently-walked positions while advancing (oldest ->
-// newest), recorded by DungeonClearAdvanceAction roughly every few yards of
-// real forward progress. The advanced pull uses it to place the camp a generous
-// distance BACK along ground the tank actually cleared — independent of the
-// long-path follower cursor, which is reset every time the pull drags the tank
-// backward off its route (that reset is why a cursor-based "point behind" only
-// found a few yards after the first pull). Recording resets the trail on a large
-// jump between samples (a drag-back / teleport) so it stays spatially
-// contiguous, and is capped so it can't grow without bound. Cleared on dc
-// on/off / death alongside the rest of the run state.
-class DungeonClearBreadcrumbsValue : public ManualSetValue<std::vector<Position>&>
-{
-public:
-    DungeonClearBreadcrumbsValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::vector<Position>&>(botAI, data, "dungeon clear breadcrumbs")
-    {
-    }
-
-    void Reset() override { data.clear(); }
-
-private:
-    std::vector<Position> data;
-};
-
-// Millisecond timestamp of the most recent pull-phase transition. Drives the
-// Forming dwell (give followers a tick to go passive before pulling) and the
-// per-leg watchdogs (abort a pull whose advance/return makes no progress).
-class DungeonClearPullSinceValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearPullSinceValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull since")
-    {
-    }
-};
-
-// GUID of a trash pack the advanced-pull maneuver gave up trying to pull (the
-// run-in or return leg wedged / the mob never aggroed). While set, the pull
-// trigger won't re-initiate on this same target — it falls through to the
-// normal walk-in engage so the run never livelocks on an un-pullable pack.
-// Cleared on target change / combat end / run reset.
-class DungeonClearPullAbortTargetValue : public ManualSetValue<ObjectGuid>
-{
-public:
-    DungeonClearPullAbortTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear pull abort target")
-    {
-    }
+    DcPullContext data;
 };
 
 // Cursor into the cached long-path's flattened polyline plus the

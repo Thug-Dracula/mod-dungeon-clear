@@ -359,7 +359,6 @@ namespace
         ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
         ctx->GetValue<Position&>("dungeon clear last position")->Get() = Position();
-        ctx->GetValue<ObjectGuid>("dungeon clear last pull target")->Set(ObjectGuid::Empty);
         ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
         ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
@@ -375,7 +374,9 @@ namespace
         ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
         ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
-        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get().clear();
+        // One reset clears the whole advanced-pull FSM (phase / dwell timer / camp /
+        // breadcrumb trail / abort + tag latches / Dynamic verdict) in lockstep.
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
     }
@@ -846,7 +847,7 @@ namespace
         constexpr float kJump = 12.0f;     // gap that means a drag/teleport -> reset
         constexpr size_t kMax = 128;       // history cap (~ kMax*kSpacing yd)
         std::vector<Position>& crumbs =
-            ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+            ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
         Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
         if (crumbs.empty())
         {
@@ -896,7 +897,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
         if (DC_TRY_PULL_SPELL)
         {
             ObjectGuid const lastPullTarget =
-                AI_VALUE(ObjectGuid, "dungeon clear last pull target");
+                AI_VALUE(DcPullContext&, "dungeon clear pull context").tagTarget;
             if (lastPullTarget != target->GetGUID())
             {
                 if (auto pick = ResolvePullSpell(botAI, bot))
@@ -907,8 +908,8 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
                         bot->SetSelection(target->GetGUID());
                         if (botAI->CastSpell(pick->spellId, target))
                         {
-                            context->GetValue<ObjectGuid>("dungeon clear last pull target")
-                                ->Set(target->GetGUID());
+                            context->GetValue<DcPullContext&>("dungeon clear pull context")
+                                ->Get().tagTarget = target->GetGUID();
                             context->GetValue<Unit*>("current target")->Set(target);
                             // Don't change engine state yet — let combat
                             // get tagged naturally when the pull lands.
@@ -1194,7 +1195,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
     if (AI_VALUE(bool, "dungeon clear pull mode current"))
     {
-        Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
+        Position& camp = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().camp;
         bool const campUnset =
             camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
             camp.GetPositionZ() == 0.0f;
@@ -1215,14 +1216,15 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // Forward-only: adopt the new trailing point only when it sits closer to
         // the tank than the current camp (i.e. more forward), with a few yards of
         // hysteresis, so tick jitter never churns it or drags the party backward.
-        uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
+        DcPullPhase const pullPhase =
+            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().phase;
         std::optional<DungeonBossInfo> const nextForTrail =
             AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
         bool const noPackInRange =
             !nextForTrail.has_value() ||
             !DungeonClearUtil::FindPullTarget(botAI, *nextForTrail);
         if (!bot->IsInCombat() &&
-            pullPhase == static_cast<uint32>(DcPullPhase::Idle) && noPackInRange)
+            pullPhase == DcPullPhase::Idle && noPackInRange)
         {
             float const setback = DcSettings::GetFloat(bot, "PullSetback");
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
@@ -2666,17 +2668,19 @@ namespace
 
     void DcSetPullPhase(AiObjectContext* context, DcPullPhase p)
     {
-        context->GetValue<uint32>("dungeon clear pull phase")->Set(static_cast<uint32>(p));
-        context->GetValue<uint32>("dungeon clear pull since")->Set(getMSTime());
+        DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        pull.phase = p;
+        pull.phaseSince = getMSTime();
     }
 }
 
 bool DungeonClearPullAction::Execute(Event /*event*/)
 {
-    Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
-    uint32 const since = AI_VALUE(uint32, "dungeon clear pull since");
+    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    Position& camp = pull.camp;
+    uint32 const since = pull.phaseSince;
     uint32 const now = getMSTime();
-    DcPullPhase const phase = static_cast<DcPullPhase>(AI_VALUE(uint32, "dungeon clear pull phase"));
+    DcPullPhase const phase = pull.phase;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
 
@@ -2779,8 +2783,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // clearance == -1 means no other pack is anywhere near the camp.
             float const clrDisp =
                 clearance >= std::numeric_limits<float>::max() ? -1.0f : clearance;
-            size_t const trailLen =
-                AI_VALUE(std::vector<Position>&, "dungeon clear breadcrumbs").size();
+            size_t const trailLen = pull.breadcrumbs.size();
             DC_PULL_INFO("[DC:{}] advanced-pull plan: target {} at {:.1f}yd | camp "
                          "({:.1f},{:.1f},{:.1f}) drag {:.1f}yd | clearance {:.1f}yd "
                          "(safe {:.0f}, setback {:.0f}, trail {}) -> forming, "
@@ -2834,7 +2837,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             {
                 // Stalled without aggro (e.g. the tag resisted and we never closed).
                 // Hand this pack to the normal walk-in engage so the run never hangs.
-                context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(trash->GetGUID());
+                pull.abortTarget = trash->GetGUID();
                 DcSetPullPhase(context, DcPullPhase::Idle);
                 DC_PULL_INFO("[DC:{}] advanced-pull: tag timed out (target {} at "
                              "{:.1f}yd) -> normal engage", bot->GetName(),
@@ -2844,7 +2847,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
             // Prefer a RANGED tag: pull from spell range so the tank tags and the
             // pack comes to it, instead of running into the middle of the pack.
-            ObjectGuid const lastPull = AI_VALUE(ObjectGuid, "dungeon clear last pull target");
+            ObjectGuid const lastPull = pull.tagTarget;
             if (DC_TRY_PULL_SPELL)
             {
                 if (auto pick = ResolvePullSpell(botAI, bot))
@@ -2870,8 +2873,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                             ServerFacade::instance().SetFacingTo(bot, trash);
                         if (botAI->CastSpell(pick->spellId, trash))
                         {
-                            context->GetValue<ObjectGuid>("dungeon clear last pull target")
-                                ->Set(trash->GetGUID());
+                            pull.tagTarget = trash->GetGUID();
                             if (bot->isMoving())
                                 bot->StopMoving();
                             DC_PULL_INFO("[DC:{}] advanced-pull: ranged tag spell {} at "
@@ -2946,7 +2948,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 return true;
 
             // Couldn't move and not moving: navmesh wedge. Abort to normal engage.
-            context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(trash->GetGUID());
+            pull.abortTarget = trash->GetGUID();
             DcSetPullPhase(context, DcPullPhase::Idle);
             DC_PULL_INFO("[DC:{}] advanced-pull: tag navmesh-wedged ({:.1f}yd to "
                          "target) -> normal engage", bot->GetName(),
@@ -2965,7 +2967,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
         case DcPullPhase::Engage:
         default:
             // Out-of-combat cleanup: the camp fight is over, ready the next pull.
-            context->GetValue<ObjectGuid>("dungeon clear pull abort target")->Set(ObjectGuid::Empty);
+            pull.abortTarget = ObjectGuid::Empty;
             DcSetPullPhase(context, DcPullPhase::Idle);
             DC_PULL_DEBUG("[DC:{}] advanced-pull: camp fight done -> idle, ready for "
                           "next pull", bot->GetName());
@@ -2975,9 +2977,10 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
 bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
 {
-    Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
+    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    Position& camp = pull.camp;
     uint32 const now = getMSTime();
-    DcPullPhase const phase = static_cast<DcPullPhase>(AI_VALUE(uint32, "dungeon clear pull phase"));
+    DcPullPhase const phase = pull.phase;
 
     // Keep the tank daze-proof for the whole drag. Immunity (set with pull mode)
     // should stop Daze landing at all; strip it here too as a backstop so a
@@ -3051,7 +3054,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                          : phase == DcPullPhase::Idle ? "scouting" : "tag");
     }
 
-    uint32 const since = AI_VALUE(uint32, "dungeon clear pull since");
+    uint32 const since = pull.phaseSince;
     // `since` is stamped by DcSetPullPhase via its OWN getMSTime() call, which can
     // read a millisecond LATER than the `now` captured at the top of Execute. So on
     // the very tick we transition into Returning (above), now < since and a raw
