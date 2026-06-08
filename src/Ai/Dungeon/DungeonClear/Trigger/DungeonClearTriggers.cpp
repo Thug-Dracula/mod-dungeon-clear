@@ -63,8 +63,8 @@ namespace
         // party has recovered at camp.
         if (AI_VALUE(bool, "dungeon clear pull mode current"))
             maxSpread = 100000.0f;
-        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
-                                              DungeonClearUtil::RestMinMpPct(bot), maxSpread);
+        return DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot),
+                                              DcPartyState::RestMinMpPct(bot), maxSpread);
     }
 }
 

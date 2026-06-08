@@ -237,11 +237,11 @@ TEST_F(DungeonClearUtilTest, RestMinHpPctClamping)
 
     // Below ceiling (90.0) -> should return the configured value
     sPlayerbotAIConfig.almostFullHealth = 80;
-    EXPECT_FLOAT_EQ(DungeonClearUtil::RestMinHpPct(), 80.0f);
+    EXPECT_FLOAT_EQ(DcPartyState::RestMinHpPct(), 80.0f);
 
     // Above ceiling (90.0) -> should clamp to 90.0f
     sPlayerbotAIConfig.almostFullHealth = 95;
-    EXPECT_FLOAT_EQ(DungeonClearUtil::RestMinHpPct(), 90.0f);
+    EXPECT_FLOAT_EQ(DcPartyState::RestMinHpPct(), 90.0f);
 
     // Restore
     sPlayerbotAIConfig.almostFullHealth = originalValue;
@@ -254,11 +254,11 @@ TEST_F(DungeonClearUtilTest, RestMinMpPctClamping)
 
     // Below ceiling (75.0) -> should return the configured value
     sPlayerbotAIConfig.highMana = 60;
-    EXPECT_FLOAT_EQ(DungeonClearUtil::RestMinMpPct(), 60.0f);
+    EXPECT_FLOAT_EQ(DcPartyState::RestMinMpPct(), 60.0f);
 
     // Above ceiling (75.0) -> should clamp to 75.0f
     sPlayerbotAIConfig.highMana = 85;
-    EXPECT_FLOAT_EQ(DungeonClearUtil::RestMinMpPct(), 75.0f);
+    EXPECT_FLOAT_EQ(DcPartyState::RestMinMpPct(), 75.0f);
 
     // Restore
     sPlayerbotAIConfig.highMana = originalValue;
@@ -268,21 +268,21 @@ TEST_F(DungeonClearUtilTest, RestMinMpPctClamping)
 TEST_F(DungeonClearUtilTest, SoloPlayerReadyChecks)
 {
     // Solo player should always be ready
-    EXPECT_TRUE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_TRUE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
 
     // Describing not-ready players or looting players should return empty string for solo
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "");
-    EXPECT_EQ(DungeonClearUtil::DescribePartyLooting(player), "");
-    EXPECT_FALSE(DungeonClearUtil::IsAnyPartyMemberLooting(player));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "");
+    EXPECT_EQ(DcPartyState::DescribePartyLooting(player), "");
+    EXPECT_FALSE(DcPartyState::IsAnyPartyMemberLooting(player));
 }
 
 // Test nullptr robustness for utility methods
 TEST_F(DungeonClearUtilTest, NullptrSafetyChecks)
 {
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(nullptr, 90.0f, 75.0f, 30.0f));
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(nullptr, 90.0f, 75.0f, 30.0f), "");
-    EXPECT_EQ(DungeonClearUtil::DescribePartyLooting(nullptr), "");
-    EXPECT_FALSE(DungeonClearUtil::IsAnyPartyMemberLooting(nullptr));
+    EXPECT_FALSE(DcPartyState::IsPartyReady(nullptr, 90.0f, 75.0f, 30.0f));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(nullptr, 90.0f, 75.0f, 30.0f), "");
+    EXPECT_EQ(DcPartyState::DescribePartyLooting(nullptr), "");
+    EXPECT_FALSE(DcPartyState::IsAnyPartyMemberLooting(nullptr));
     EXPECT_FALSE(DcEngageGeometry::IsReachable(nullptr, 0.0f, 0.0f, 0.0f));
     EXPECT_FALSE(DcEngageGeometry::IsLevelReachable(nullptr, nullptr));
     EXPECT_EQ(DungeonClearUtil::FindBlockingTrash(nullptr, {}, 10.0f, 1.0f, {}), nullptr);
@@ -378,32 +378,32 @@ protected:
 // 1. Group is completely ready
 TEST_F(DungeonClearGroupTest, GroupReadyScenario)
 {
-    EXPECT_TRUE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "");
+    EXPECT_TRUE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "");
 }
 
 // 2. One member has low health
 TEST_F(DungeonClearGroupTest, GroupNotReadyHPScenario)
 {
     members[0]->SetUInt32Value(UNIT_FIELD_HEALTH, 50); // 50% HP
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member1 (low HP)");
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member1 (low HP)");
 }
 
 // 3. One member has low mana
 TEST_F(DungeonClearGroupTest, GroupNotReadyManaScenario)
 {
     members[1]->SetPower(POWER_MANA, 30); // 30% mana
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member2 (low mana)");
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member2 (low mana)");
 }
 
 // 4. One member is out of range
 TEST_F(DungeonClearGroupTest, GroupNotReadyDistanceScenario)
 {
     members[2]->Relocate(50.0f, 0.0f, 0.0f); // 50yd away
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member3 (out of range)");
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), "Waiting on Member3 (out of range)");
 }
 
 // 5. Multiple members have issues
@@ -413,11 +413,11 @@ TEST_F(DungeonClearGroupTest, GroupMultipleIssuesScenario)
     members[1]->SetPower(POWER_MANA, 30); // low mana
     members[2]->Relocate(50.0f, 0.0f, 0.0f); // out of range
 
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
     
     // GroupReference iterates in LIFO order: Member3, Member2, Member1
     std::string expected = "Waiting on Member3 (out of range), Member2 (low mana), Member1 (low HP)";
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), expected);
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), expected);
 }
 
 // 6. Max named count limit (collapse to +N more)
@@ -429,11 +429,11 @@ TEST_F(DungeonClearGroupTest, GroupCollapseIssuesScenario)
     members[2]->Relocate(50.0f, 0.0f, 0.0f); // out of range
     members[3]->SetUInt32Value(UNIT_FIELD_HEALTH, 50); // low HP
 
-    EXPECT_FALSE(DungeonClearUtil::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
     
     // MAX_NAMED is 3. In LIFO order: Member4, Member3, Member2 are named, and Member1 collapses to "+1 more"
     std::string expected = "Waiting on Member4 (low HP), Member3 (out of range), Member2 (low mana) +1 more";
-    EXPECT_EQ(DungeonClearUtil::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), expected);
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), expected);
 }
 
 class DungeonClearStatusTest : public DungeonClearTestBase

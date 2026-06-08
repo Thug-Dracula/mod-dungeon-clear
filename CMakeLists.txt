@@ -33,4 +33,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (single home for shared DC_* tuning constants — constant-centralization)
 # Util/DcEngageGeometry.{h,cpp}
 #   (DungeonClearUtil decomposition: ranges/doors/reachability/corridor unit)
+# Util/DcPartyState.{h,cpp}
+#   (DungeonClearUtil decomposition: readiness/rest gate/status text unit)
 # (this comment bumps mtime to force CMake re-glob on next build)

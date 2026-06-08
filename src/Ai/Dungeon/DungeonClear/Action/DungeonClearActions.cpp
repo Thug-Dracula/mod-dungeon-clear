@@ -530,8 +530,8 @@ namespace
         if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
             if (botAI->GetAiObjectContext()->GetValue<bool>("dungeon clear pull mode current")->Get())
                 maxSpread = 100000.0f;
-        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
-                                              DungeonClearUtil::RestMinMpPct(bot), maxSpread);
+        return DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot),
+                                              DcPartyState::RestMinMpPct(bot), maxSpread);
     }
 
     // Commit a freshly-built path into the cache and reset the follower so we
@@ -1251,7 +1251,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
         AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
-        DungeonClearUtil::IsAnyPartyMemberLooting(bot);
+        DcPartyState::IsAnyPartyMemberLooting(bot);
     if (lootYield)
     {
         uint32 const now = getMSTime();
