@@ -230,12 +230,14 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         }
         // Status display must use the SAME spread the advance gate enforces
         // (DungeonClear.PartyMaxSpread), or the tank parks at the limit while
-        // still reporting "En route" instead of "Waiting on". In advanced-pull
-        // mode the advance gate (IsBetweenPullsReady) drops the spread check —
-        // the party deliberately holds at camp while the tank scouts ahead — so
-        // mirror that here, or the panel falsely reports "Waiting on … (out of
-        // range)" while the tank is actually still moving out to pull.
-        else if (float const maxSpread = pullMode
+        // still reporting "En route" instead of "Waiting on". The advance gate
+        // (IsBetweenPullsReady) drops the spread check ONLY while a pull maneuver
+        // is actually in progress (party holds at camp, tank scouts ahead) — NOT
+        // for the whole approach to a Dynamic-flagged pack — so gate on the live
+        // pull phase here too, or the panel either falsely reports "Waiting on …
+        // (out of range)" mid-pull, or fails to show "resting" when an enroute
+        // tank is genuinely holding for stragglers.
+        else if (float const maxSpread = DcLeaderSignal::IsPullPhaseHolding(pullPhase)
                      ? 100000.0f
                      // DcSettings, not raw conf, so the panel mirrors the same
                      // per-run override the advance gate enforces.
