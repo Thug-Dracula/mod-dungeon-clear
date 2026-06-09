@@ -67,6 +67,24 @@ public:
     static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                DungeonBossInfo const& boss, float staticRange);
 
+    // True when `u` is a creature that fights at RANGE — a caster or a physical
+    // ranged attacker — and will therefore stand and shoot/cast from afar instead
+    // of running to melee. Used by the advanced-pull camp placer to decide whether
+    // the camp must break line of sight to the pack (so the rangers are forced to
+    // close to the camp rather than plinking the party from across the room).
+    // Detection is a cheap OR of three signals, no pathfinding:
+    //   1. unit_class is a caster class (creatures map casters to MAGE; PRIEST/
+    //      SHAMAN/WARLOCK are checked too in case a realm's data uses them).
+    //   2. a ranged WEAPON is equipped in the virtual ranged slot — bow / gun /
+    //      crossbow / wand (thrown is excluded: short range, the mob runs in).
+    //   3. the creature template knows a DAMAGING spell whose max range exceeds
+    //      PullRangedSpellRangeFloor (mirrors Creature::reachWithSpellAttack's
+    //      effect test, minus the live mana/distance gating) — this catches a
+    //      caster that the engine classed as a melee unit_class.
+    // `bot` is used only to read the (per-run overridable) range-floor setting.
+    // Non-creatures return false.
+    static bool IsRangedAttacker(Player* bot, Unit* u);
+
     // True when `go` is a navigation-blocking door currently in its CLOSED
     // (corridor-blocking) visual state. Encapsulates the startOpen-inverted
     // GOState test shared by the blocking-door scan and the door-reopened
