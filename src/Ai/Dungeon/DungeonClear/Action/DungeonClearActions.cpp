@@ -528,15 +528,22 @@ namespace
         // PartyMaxSpread actually takes effect — the registry marks it
         // player-facing, and reading conf directly here silently ignored it.
         float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
-        // In advanced-pull mode the party deliberately holds back at the camp while
-        // the tank scouts ahead, so a spread check measured against the TANK would
-        // never pass once it moves out — and the tank would stop advancing for good
-        // (the reported stall). Drop the spread requirement here; the tank still
-        // waits for the party to REST (HP/mana) before scouting on, and the pull
-        // itself is gated separately (pull trigger + Forming party-set gate).
+        // Drop the spread requirement ONLY while a pull maneuver is actually in
+        // progress (Forming/Advancing/Returning): then the party deliberately holds
+        // back at camp while the tank scouts ahead, so a spread check measured
+        // against the TANK would never pass once it moves out — and the tank would
+        // stop advancing for good (the reported stall). While merely advancing
+        // between packs en route to the boss (Idle phase) — even in Dynamic mode
+        // when the NEXT pack is flagged Advanced — keep enforcing PartyMaxSpread so
+        // the tank still stops to let the party catch up. The pull itself is gated
+        // separately (pull trigger + Forming party-set gate).
         if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
-            if (botAI->GetAiObjectContext()->GetValue<bool>("dungeon clear pull mode current")->Get())
+        {
+            DcPullContext const& pull =
+                botAI->GetAiObjectContext()->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+            if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
                 maxSpread = 100000.0f;
+        }
         return DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot),
                                               DcPartyState::RestMinMpPct(bot), maxSpread);
     }

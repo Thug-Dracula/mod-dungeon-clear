@@ -56,14 +56,18 @@ namespace
         // PartyMaxSpread actually takes effect — the registry marks it
         // player-facing, and reading conf directly here silently ignored it.
         float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
-        // In advanced-pull mode the party deliberately holds back at the camp while
-        // the tank scouts ahead, so a spread check measured against the TANK would
-        // never pass once the tank moves out — and the tank would stop pulling
-        // after the first camp. Drop the spread requirement here; the Forming
-        // party-set gate ensures the party is actually at the (new) camp before the
-        // tag, and the rest (HP/mana) check below still holds the pull until the
-        // party has recovered at camp.
-        if (AI_VALUE(bool, "dungeon clear pull mode current"))
+        // Drop the spread requirement ONLY while a pull maneuver is actually in
+        // progress (Forming/Advancing/Returning): then the party deliberately holds
+        // back at camp while the tank scouts ahead, so a spread check measured
+        // against the TANK would never pass and the tank would stop pulling after
+        // the first camp. While merely advancing between packs en route to the boss
+        // (Idle phase) — even in Dynamic mode when the NEXT pack is flagged Advanced
+        // — keep enforcing PartyMaxSpread so the tank still stops to let the party
+        // catch up. The Forming party-set gate ensures the party is at the (new)
+        // camp before the tag, and the rest (HP/mana) check below still holds the
+        // pull until the party has recovered at camp.
+        if (DcLeaderSignal::IsPullPhaseHolding(
+                static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase)))
             maxSpread = 100000.0f;
         return DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot),
                                               DcPartyState::RestMinMpPct(bot), maxSpread);
