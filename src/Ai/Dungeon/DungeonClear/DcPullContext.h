@@ -47,6 +47,16 @@ struct DcPullContext
     std::vector<Position> breadcrumbs;           // recently-walked trail used to
                                                  // place the camp behind the tank
 
+    // --- CC-assist gate ---------------------------------------------------
+    uint32      ccSince    = 0;                  // getMSTime() the tank's CURRENT
+                                                 // continuous drag-ruining CC
+                                                 // (stun/fear/confuse/root/heavy
+                                                 // slow) began; 0 = not CC'd. The
+                                                 // grace latch for "tank CC'd mid
+                                                 // drag -> abort pull, party piles
+                                                 // in" (DungeonClearMath::Should
+                                                 // AbortPullForCc).
+
     // --- per-target latches -----------------------------------------------
     ObjectGuid  abortTarget;                     // pack a pull gave up on; don't re-pull
     ObjectGuid  tagTarget;                        // "already tagged, hold for aggro" /

@@ -67,6 +67,23 @@ namespace DungeonClearMath
                                      float assistRadius, float zTolerance,
                                      std::vector<std::size_t>* countedOut = nullptr);
 
+    // Pull CC-assist grace gate (pure). Decides whether a CC-impaired drag-back
+    // should be ABORTED so the party drops passive and piles in to help the tank.
+    // `impaired` is the caller's verdict that the leader tank is currently under a
+    // pull-ruining control effect (stun / fear / confuse / root / heavy slow).
+    // `ccSince` is the timestamp the CURRENT continuous impairment began (0 = not
+    // impaired right now). Each tick: while impaired, arm/keep the latch and abort
+    // once it has persisted for `graceMs`; while clear, disarm it. A brief micro-CC
+    // that clears within the grace therefore never throws the pull away on a
+    // flicker, while sustained CC (the pull is failing) releases the party. With
+    // `graceMs` == 0 the very first impaired tick aborts. Returns true to abort and
+    // writes the updated latch to `ccSinceOut` (which the caller persists in the
+    // pull context). Separated from the Unit-state read at the call site so the
+    // timing logic is unit-testable.
+    bool ShouldAbortPullForCc(bool impaired, std::uint32_t ccSince,
+                              std::uint32_t now, std::uint32_t graceMs,
+                              std::uint32_t& ccSinceOut);
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,

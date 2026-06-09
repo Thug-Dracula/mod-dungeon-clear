@@ -34,6 +34,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
@@ -3098,6 +3099,32 @@ namespace
         pull.phase = p;
         pull.phaseSince = getMSTime();
     }
+
+    // Why the leader tank can't carry out the pull drag-back right now, or nullptr
+    // if it is fine. Hard loss-of-control (stun / fear / confuse) and root stop the
+    // retreat outright; a heavy movement slow (run speed at/below `slowFloor` of
+    // base) drags so slowly the pack wins the race home. Daze is already immunized
+    // for the pull (DcLeaderSignal::SetLeaderDazeImmunity), so a slow seen here is a
+    // genuine debuff — Hamstring, web, a Frostbolt chill. Read purely off Unit state
+    // so no aura-id table is needed; the timing/grace decision lives in the
+    // unit-tested DungeonClearMath::ShouldAbortPullForCc. The returned string is a
+    // stable literal safe to log.
+    char const* DcDragImpairReason(Player* tank, float slowFloor)
+    {
+        if (!tank)
+            return nullptr;
+        if (tank->HasUnitState(UNIT_STATE_STUNNED))
+            return "stunned";
+        if (tank->HasUnitState(UNIT_STATE_FLEEING))
+            return "feared";
+        if (tank->HasUnitState(UNIT_STATE_CONFUSED))
+            return "confused";
+        if (tank->IsRooted() || tank->HasUnitState(UNIT_STATE_ROOT))
+            return "rooted";
+        if (tank->GetSpeedRate(MOVE_RUN) <= slowFloor)
+            return "slowed";
+        return nullptr;
+    }
 }
 
 bool DungeonClearPullAction::Execute(Event /*event*/)
@@ -3512,6 +3539,36 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                      bot->GetExactDist(&camp),
                      phase == DcPullPhase::Forming ? "forming"
                          : phase == DcPullPhase::Idle ? "scouting" : "tag");
+    }
+
+    // CC-assist. If the tank is crowd-controlled mid-drag (stunned / feared /
+    // confused / rooted, or slowed below PullCcSlowFloor) the retreat is failing —
+    // it can't reach camp and just eats the pack while the party sits passive. Once
+    // the CC has persisted past the grace, ABORT the pull: flip to Engage, which
+    // both drops the party's passive camp-hold and trips IsLeaderCampFightActive so
+    // the followers pile onto the pack and help. The grace ignores a brief micro-CC
+    // so a single stutter-stun doesn't throw an otherwise-fine pull away.
+    if (DcSettings::GetBool(bot, "PullCcAssist"))
+    {
+        float const slowFloor = DcSettings::GetFloat(bot, "PullCcSlowFloor");
+        char const* const ccReason = DcDragImpairReason(bot, slowFloor);
+        uint32 const graceMs =
+            uint32(DcSettings::GetFloat(bot, "PullCcAssistGrace") * 1000.0f);
+        uint32 ccSinceOut = pull.ccSince;
+        bool const ccAbort = DungeonClearMath::ShouldAbortPullForCc(
+            ccReason != nullptr, pull.ccSince, now, graceMs, ccSinceOut);
+        pull.ccSince = ccSinceOut;
+        if (ccAbort)
+        {
+            pull.ccSince = 0;
+            if (bot->isMoving())
+                bot->StopMoving();
+            DcSetPullPhase(context, DcPullPhase::Engage);
+            DC_PULL_INFO("[DC:{}] advanced-pull: tank {} mid-drag (held >{} ms) -> "
+                         "abort pull, releasing party to assist", bot->GetName(),
+                         ccReason, graceMs);
+            return false;
+        }
     }
 
     uint32 const since = pull.phaseSince;
