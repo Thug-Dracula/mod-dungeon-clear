@@ -187,10 +187,15 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // Mid advanced-pull. Takes precedence over the combat sub-state — during
         // the return leg the tank is in combat but we want to report the pull.
         stateStr = "pulling";
+        // A line-of-sight pull (ranged pack) is called out so the player knows the
+        // tank is deliberately dragging the casters out of sight, not just kiting.
+        char const* losTag = pull.losPull ? " (out of line of sight)" : "";
         if (pullPhase == static_cast<uint32>(DcPullPhase::Returning))
-            detail = "Pulling the pack back to camp.";
+            detail = pull.losPull
+                         ? "Pulling the ranged pack back to camp, out of line of sight."
+                         : "Pulling the pack back to camp.";
         else
-            detail = "Pulling — party holding at camp.";
+            detail = std::string("Pulling — party holding at camp") + losTag + ".";
     }
     else if (enabled && bot)
     {

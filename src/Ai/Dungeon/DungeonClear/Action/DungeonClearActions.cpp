@@ -3224,6 +3224,12 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             else
                 camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
+            // Record whether this is a line-of-sight pull (ranged pack, camp placed
+            // to break LOS) so the addon status line can announce it. Mirrors the
+            // gate inside ComputeSafeCamp.
+            pull.losPull = DcSettings::GetBool(bot, "PullRangedLosBreak") &&
+                           DcEngageGeometry::IsRangedAttacker(bot, trash);
+
             // Halt the escort glide for real before committing. A plain StopMoving
             // does NOT cancel a launched escort spline (see StopActiveSplineGlide /
             // the door-blocked park), so without this the tank keeps gliding

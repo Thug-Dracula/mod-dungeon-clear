@@ -46,6 +46,11 @@ struct DcPullContext
                                                  // (0,0,0) = unset
     std::vector<Position> breadcrumbs;           // recently-walked trail used to
                                                  // place the camp behind the tank
+    bool        losPull    = false;              // this pull targets a RANGED pack
+                                                 // and the camp was placed to break
+                                                 // line of sight to it (rangers must
+                                                 // close to melee). Stamped at commit
+                                                 // for the addon status line.
 
     // --- CC-assist gate ---------------------------------------------------
     uint32      ccSince    = 0;                  // getMSTime() the tank's CURRENT
