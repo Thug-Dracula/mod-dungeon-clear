@@ -45,9 +45,10 @@ public:
         creators["dc go"] = &DungeonClearActionContext::dc_go;
 
         // Override mod-playerbots' "auto release" so dead bots stay dead instead
-        // of releasing to the graveyard. Gated by DungeonClear.PreventBotRelease;
-        // inert (defers to stock) when that flag is off. Last-registration-wins,
-        // so this replaces the playerbots creator for every bot of this class.
+        // of releasing to the graveyard. Dungeon/raid maps only, gated by
+        // DungeonClear.PreventBotRelease; inert (defers to stock) when that flag
+        // is off or the bot is outside an instance. Last-registration-wins, so
+        // this replaces the playerbots creator for every bot of this class.
         creators["auto release"] = &DungeonClearActionContext::auto_release;
     }
 

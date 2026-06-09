@@ -24,11 +24,15 @@
 
 #
 #    DungeonClear.PreventBotRelease
-#        1 (default): dead bots stay as a corpse until resurrected (rez,
-#        soulstone, summon-and-revive) instead of auto-releasing to the
-#        graveyard. Applies to ALL bots. 0 restores stock auto-release.
-#        Honoured live on `.reload config`. The anti-stuck repop safety net
-#        (dead bot wedged in geometry / out of world) stays active either way.
+#        1 (default): dead bots on a DUNGEON or RAID map stay as a corpse until
+#        resurrected (rez, soulstone, summon-and-revive) instead of
+#        auto-releasing to the graveyard — so a wipe can be recovered with a
+#        corpse run or a rez. Applies to every bot inside an instance (the run
+#        auto-disables on a death, so it cannot be tied to an active clear);
+#        bots dead in the open world always use stock auto-release. 0 restores
+#        stock auto-release everywhere. Honoured live on `.reload config`. The
+#        anti-stuck repop safety net (dead bot wedged in geometry / out of
+#        world) stays active either way.
 #
 #        Default: 1
 #
