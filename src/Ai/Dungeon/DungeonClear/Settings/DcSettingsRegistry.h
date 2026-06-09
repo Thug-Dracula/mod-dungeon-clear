@@ -97,6 +97,21 @@ inline constexpr DcSettingDef kDcSettings[] =
     // pull; the delay lets the tank establish threat first. 0 = release at once.
     { "PullPetReleaseDelay",   DcType::Float, 2.5,  0,  10,  true  },
 
+    // CC-assist: when the leader tank is CC'd mid-pull while dragging the pack to
+    // camp (stunned / feared / confused / rooted, or slowed below PullCcSlowFloor
+    // of base run speed), the drag fails — the tank can't retreat and just eats
+    // the pack while the party stands passive at camp. PullCcAssist (master
+    // toggle) aborts that pull the instant the CC has lasted PullCcAssistGrace
+    // seconds, dropping the party out of its passive hold to pile onto the pack and
+    // help (via the existing camp-fight assist). The grace ignores a brief micro-CC
+    // so a 0.5s stutter-stun doesn't throw an otherwise-fine pull away; sustained
+    // CC (the pull IS failing) releases the party. Daze is already immunized for
+    // the pull, so a slow detected here is a real debuff (Hamstring, web, frost).
+    // See DungeonClearPullManeuverAction + DungeonClearMath::ShouldAbortPullForCc.
+    { "PullCcAssist",          DcType::Bool,   1,   0,    1,  true  },
+    { "PullCcAssistGrace",     DcType::Float, 1.0,  0,   10,  true  },
+    { "PullCcSlowFloor",       DcType::Float, 0.6,  0.1,  1,  true  },
+
     // PullCommitRange{Floor,Cap}: how close the pack must be before the tank stops,
     // holds, and waits for the party at camp BEFORE stepping in to tag. Sized to the
     // pack's REAL aggro radius (Creature::GetAggroRange + reaches + AggroRangeMargin

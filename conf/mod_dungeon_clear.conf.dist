@@ -458,6 +458,50 @@ DungeonClear.PullPlayerReleaseDelay = 1.5
 DungeonClear.PullPetReleaseDelay = 2.5
 
 #
+#    DungeonClear.PullCcAssist
+#        Advanced/dynamic pull only. When the leader tank is crowd-controlled while
+#        dragging a pulled pack back to camp — stunned, feared, confused, rooted, or
+#        slowed below PullCcSlowFloor — the drag-back fails: the tank can't retreat
+#        and just eats the pack while the party stands passive at the camp. With this
+#        on, that pull is ABORTED the moment the CC has lasted PullCcAssistGrace
+#        seconds, dropping the party out of its passive hold so it piles onto the pack
+#        and helps the tank instead of watching it die. Set to 0 to keep the party
+#        passive through tank CC (the old behaviour — the pull only releases on the
+#        leg watchdog or the camp-safety valve).
+#
+#        Default: 1 (enabled)
+#
+
+DungeonClear.PullCcAssist = 1
+
+#
+#    DungeonClear.PullCcAssistGrace
+#        Advanced/dynamic pull only. Seconds the leader tank's crowd-control must
+#        PERSIST mid-drag before PullCcAssist aborts the pull. A short grace ignores a
+#        brief micro-CC (a 0.5s stutter-stun) so an otherwise-fine pull isn't thrown
+#        away on a flicker, while sustained CC — where the pull really is failing —
+#        releases the party to help. Set to 0 to release the instant CC is detected.
+#
+#        Default: 1.0
+#
+
+DungeonClear.PullCcAssistGrace = 1.0
+
+#
+#    DungeonClear.PullCcSlowFloor
+#        Advanced/dynamic pull only. Movement-speed fraction (of base run speed) at or
+#        below which the tank counts as "slowed" for PullCcAssist. Daze is already
+#        immunized for the duration of a pull, so a slow this deep is a real debuff
+#        (Hamstring, spider web, Frostbolt chill) that drags the pack-retreat to a
+#        crawl and loses the race. 1.0 would treat any slow at all as CC; 0.1 only the
+#        most crippling. Stun/fear/confuse/root abort regardless of this value.
+#
+#        Default: 0.6
+#
+
+DungeonClear.PullCcSlowFloor = 0.6
+
+#
 #    DungeonClear.PullCommitRangeFloor / DungeonClear.PullCommitRangeCap
 #        Advanced pull only. How close the pack must be before the tank stops
 #        gliding, holds, and waits for the party to set at the camp BEFORE it steps

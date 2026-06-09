@@ -283,3 +283,69 @@ TEST(DungeonClearDynamicPullTest, DistinctFormationsDoNotUnion)
     EXPECT_EQ(Count(mobs, 0), 3u);
     EXPECT_FALSE(Advanced(mobs, 0));
 }
+
+// ---------------------------------------------------------------------------
+// ShouldAbortPullForCc — the pull CC-assist grace gate.
+// ---------------------------------------------------------------------------
+using DungeonClearMath::ShouldAbortPullForCc;
+
+// Not impaired: never abort, latch cleared to 0 (even from a stale value).
+TEST(DungeonClearCcAssistTest, NotImpairedClearsLatch)
+{
+    std::uint32_t out = 12345u;
+    EXPECT_FALSE(ShouldAbortPullForCc(false, 10000u, 20000u, 1000u, out));
+    EXPECT_EQ(out, 0u);
+}
+
+// First impaired tick arms the latch (to `now`) but does not yet abort.
+TEST(DungeonClearCcAssistTest, FirstImpairedTickArmsButHolds)
+{
+    std::uint32_t out = 0u;
+    EXPECT_FALSE(ShouldAbortPullForCc(true, 0u, 5000u, 1000u, out));
+    EXPECT_EQ(out, 5000u);
+}
+
+// Sustained impairment aborts once the grace has elapsed; the latch is preserved.
+TEST(DungeonClearCcAssistTest, AbortsAfterGraceElapsed)
+{
+    std::uint32_t out = 0u;
+    // Armed at 5000, grace 1000ms: still holding at 5999, aborts at 6000.
+    EXPECT_FALSE(ShouldAbortPullForCc(true, 5000u, 5999u, 1000u, out));
+    EXPECT_EQ(out, 5000u);
+    EXPECT_TRUE(ShouldAbortPullForCc(true, 5000u, 6000u, 1000u, out));
+    EXPECT_EQ(out, 5000u);
+}
+
+// A micro-CC that clears within the grace re-arms fresh next time, so a flicker
+// never accumulates toward an abort.
+TEST(DungeonClearCcAssistTest, FlickerDoesNotAccumulate)
+{
+    std::uint32_t out = 0u;
+    // Impaired at 5000 (arm), clears at 5500 (latch -> 0), impaired again at 5800
+    // re-arms at 5800 — not at the original 5000 — so the grace restarts.
+    EXPECT_FALSE(ShouldAbortPullForCc(true, 0u, 5000u, 1000u, out));
+    EXPECT_EQ(out, 5000u);
+    EXPECT_FALSE(ShouldAbortPullForCc(false, out, 5500u, 1000u, out));
+    EXPECT_EQ(out, 0u);
+    EXPECT_FALSE(ShouldAbortPullForCc(true, out, 5800u, 1000u, out));
+    EXPECT_EQ(out, 5800u);
+    // 5800 + 1000 = 6800 is when it would abort, proving the 5000 spell didn't count.
+    EXPECT_FALSE(ShouldAbortPullForCc(true, out, 6700u, 1000u, out));
+    EXPECT_TRUE(ShouldAbortPullForCc(true, out, 6800u, 1000u, out));
+}
+
+// Zero grace aborts on the very first impaired tick.
+TEST(DungeonClearCcAssistTest, ZeroGraceAbortsImmediately)
+{
+    std::uint32_t out = 0u;
+    EXPECT_TRUE(ShouldAbortPullForCc(true, 0u, 5000u, 0u, out));
+}
+
+// Latching at now == 0 stores 1, not 0 (0 means "clear"), so a tank impaired at
+// the very first millisecond still latches and can abort.
+TEST(DungeonClearCcAssistTest, ZeroNowLatchesToOne)
+{
+    std::uint32_t out = 99u;
+    EXPECT_FALSE(ShouldAbortPullForCc(true, 0u, 0u, 1000u, out));
+    EXPECT_EQ(out, 1u);
+}

@@ -121,6 +121,26 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
     return count;
 }
 
+bool DungeonClearMath::ShouldAbortPullForCc(bool impaired, std::uint32_t ccSince,
+                                            std::uint32_t now, std::uint32_t graceMs,
+                                            std::uint32_t& ccSinceOut)
+{
+    if (!impaired)
+    {
+        ccSinceOut = 0;
+        return false;
+    }
+    // Arm the latch on the first impaired tick. Never store 0 (it means "clear"),
+    // so a tank impaired at the very first millisecond still latches.
+    std::uint32_t const start = ccSince != 0 ? ccSince : (now != 0 ? now : 1u);
+    ccSinceOut = start;
+    // Guard the unsigned subtraction: start is normally <= now (latched this tick
+    // or earlier), but the now==0 corner can leave start (1) ahead of now. Clamp to
+    // 0 elapsed there. graceMs == 0 => aborts immediately on the first tick.
+    std::uint32_t const elapsed = now >= start ? now - start : 0u;
+    return elapsed >= graceMs;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)
