@@ -73,6 +73,54 @@ namespace
         gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
         return gen.GetPathType() == PATHFIND_NORMAL;
     }
+
+    // Leader-election memo. FindLeaderTank is on the hot path: nearly every DC
+    // trigger gate of every bot consults it each AI tick (IsEnabled, the
+    // cross-bot camp/party-tank reads, the multiplier), and each call walks the
+    // whole group with a GET_PLAYERBOT_AI lookup per member — O(triggers x
+    // members) per tick, noticeable in a 40-bot raid. The election result is
+    // stable on tick timescales, so cache it per (group, map) for a few hundred
+    // ms. Correctness is preserved by validating the cached leader on every
+    // read (alive, same map, still a tank bot, still in this group) and falling
+    // through to a full re-scan the instant validation fails — so a leader
+    // death/leave is picked up immediately; only the *election of a different
+    // eligible tank* (lower GUID joining, no current-leader change) can lag by
+    // up to the TTL, which no consumer is sensitive to. Negative results
+    // ("group has no tank bot") are cached too — groups without a tank query
+    // just as often. Mutex-guarded like the other file-scope registries: all
+    // callers run on the world/map thread today, but the lock is uncontended
+    // and keeps this correct if bot updates ever move off-thread.
+    constexpr uint32 LEADER_CACHE_TTL_MS = 250;
+    // Lazy janitor bound: past this many entries, stale rows (disbanded groups,
+    // emptied maps) are swept on the next store.
+    constexpr size_t LEADER_CACHE_SWEEP_SIZE = 256;
+
+    struct LeaderCacheEntry
+    {
+        ObjectGuid leader;   // Empty = cached "no tank bot in this group"
+        uint32 stampMs = 0;
+    };
+
+    std::map<std::pair<uint64, uint32>, LeaderCacheEntry> g_leaderCache;
+    std::mutex g_leaderCacheMutex;
+
+    // The cached GUID is only trusted while the player it names would still win
+    // (or at least remain) the election from `reference`'s point of view.
+    Player* ValidateCachedLeader(Player* reference, Group* group, ObjectGuid guid)
+    {
+        if (guid.IsEmpty())
+            return nullptr;
+        Player* leader = ObjectAccessor::FindPlayer(guid);
+        if (!leader || !leader->IsAlive())
+            return nullptr;
+        if (leader->GetMapId() != reference->GetMapId())
+            return nullptr;
+        if (leader->GetGroup() != group)
+            return nullptr;
+        if (!PlayerbotAI::IsTank(leader) || !GET_PLAYERBOT_AI(leader))
+            return nullptr;
+        return leader;
+    }
 }
 
 Player* DcLeaderSignal::FindLeaderTank(Player* reference)
@@ -83,9 +131,36 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
     Group* group = reference->GetGroup();
     if (!group)
     {
-        // Solo: a tank bot leads itself; anyone else has no leader.
+        // Solo: a tank bot leads itself; anyone else has no leader. Cheap —
+        // no group walk, so no caching either.
         return (PlayerbotAI::IsTank(reference) && GET_PLAYERBOT_AI(reference))
                    ? reference : nullptr;
+    }
+
+    // The election is per (group, map): members on another map are excluded
+    // from the candidate set, so two parties of one raid split across maps can
+    // legitimately resolve different leaders.
+    std::pair<uint64, uint32> const key(group->GetGUID().GetRawValue(),
+                                        reference->GetMapId());
+    uint32 const now = getMSTime();
+
+    {
+        std::lock_guard<std::mutex> lock(g_leaderCacheMutex);
+        auto it = g_leaderCache.find(key);
+        if (it != g_leaderCache.end() &&
+            getMSTimeDiff(it->second.stampMs, now) < LEADER_CACHE_TTL_MS)
+        {
+            // Negative hit: this group/map had no eligible tank bot moments
+            // ago. Trust it for the TTL; the next restamp flips it the moment
+            // one appears.
+            if (it->second.leader.IsEmpty())
+                return nullptr;
+            // Positive hit: trust it only while it still validates. A failed
+            // validation (died / left map / left group / AI gone) falls
+            // through to a fresh scan below — never a stale leader.
+            if (Player* cached = ValidateCachedLeader(reference, group, it->second.leader))
+                return cached;
+        }
     }
 
     // Lowest-GUID alive tank bot on the reference's map. GetFirstMember walks
@@ -107,6 +182,22 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
             continue;
         if (!leader || member->GetGUID() < leader->GetGUID())
             leader = member;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_leaderCacheMutex);
+        if (g_leaderCache.size() > LEADER_CACHE_SWEEP_SIZE)
+        {
+            for (auto it = g_leaderCache.begin(); it != g_leaderCache.end();)
+            {
+                if (getMSTimeDiff(it->second.stampMs, now) >= LEADER_CACHE_TTL_MS)
+                    it = g_leaderCache.erase(it);
+                else
+                    ++it;
+            }
+        }
+        g_leaderCache[key] = LeaderCacheEntry{
+            leader ? leader->GetGUID() : ObjectGuid::Empty, now};
     }
     return leader;
 }
@@ -279,12 +370,17 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     // Walk BACK along the trail (newest -> oldest) accumulating real walked distance,
     // exactly like ComputeTrailCamp, and return the first reachable crumb at least
     // `lag` yards behind the tank. A 3D segment > kJumpGuard is a drag/teleport seam
-    // — stop, nothing beyond it is contiguously "behind" the tank. Track the farthest
-    // reachable crumb as the fallback when the trail is shorter than the full lag.
+    // — stop, nothing beyond it is contiguously "behind" the tank.
+    //
+    // Reachability (a full PathGenerator build per probe) is deliberately tested
+    // LAZILY: only the crumbs at/past the lag distance are probed on the walk, and
+    // the pre-lag crumbs only as a farthest-first fallback when no post-lag crumb
+    // was reachable (trail shorter than the lag, or every far crumb across a seam).
+    // The previous version probed every crumb as it walked, which cost one navmesh
+    // path build PER CRUMB per follower per scout tick; the selected crumb is
+    // identical either way, but the typical tick now runs exactly one probe.
     constexpr float kJumpGuard = 12.0f;
-    Position best = tankPos;
-    float bestAlong = 0.0f;
-    bool haveReachable = false;
+    std::vector<std::pair<float, Position>> preLag;  // (along, crumb), nearest-first
     Position prev = tankPos;
     float along = 0.0f;
     for (std::size_t i = crumbs.size(); i-- > 0; )
@@ -295,30 +391,33 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
         if (seg > kJumpGuard)
             break;  // discontinuity behind us — stop here
         along += seg;
+        if (along < lag)
+        {
+            preLag.emplace_back(along, c);
+            continue;
+        }
         // Only ever trail to a crumb the follower can reach over a complete
         // generated path; a crumb across a navmesh seam would straight-line the
         // move under the map.
-        if (!IsNavReachable(bot, c))
-            continue;
-        haveReachable = true;
-        if (along > bestAlong)
-        {
-            best = c;
-            bestAlong = along;
-        }
-        if (along >= lag)
+        if (IsNavReachable(bot, c))
         {
             out = c;
             return true;
         }
     }
 
-    // Trail shorter than the full lag: trail the farthest reachable crumb we found
-    // (the follower simply stacks a little closer until more trail accrues).
-    if (!haveReachable)
-        return false;
-    out = best;
-    return true;
+    // Trail shorter than the full lag (or nothing reachable past it): trail the
+    // farthest reachable pre-lag crumb (the follower simply stacks a little
+    // closer until more trail accrues).
+    for (auto it = preLag.rbegin(); it != preLag.rend(); ++it)
+    {
+        if (IsNavReachable(bot, it->second))
+        {
+            out = it->second;
+            return true;
+        }
+    }
+    return false;
 }
 void DcLeaderSignal::AbortLeaderPull(Player* bot)
 {
