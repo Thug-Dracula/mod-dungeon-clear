@@ -237,7 +237,9 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // range)" while the tank is actually still moving out to pull.
         else if (float const maxSpread = pullMode
                      ? 100000.0f
-                     : sConfigMgr->GetOption<float>("DungeonClear.PartyMaxSpread", 25.0f);
+                     // DcSettings, not raw conf, so the panel mirrors the same
+                     // per-run override the advance gate enforces.
+                     : DcSettings::GetFloat(bot, "PartyMaxSpread");
                  !DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot), DcPartyState::RestMinMpPct(bot), maxSpread))
         {
             stateStr = "resting";

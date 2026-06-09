@@ -26,8 +26,8 @@
 namespace
 {
     // Shared tuning constants (DC_ENGAGE_RANGE, DC_TRASH_CONE_*,
-    // DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*, DC_PULL_START_RANGE,
-    // DC_PARTY_MAX_SPREAD_DEFAULT) now live in DungeonClearTuning.h so the
+    // DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*, DC_PULL_START_RANGE)
+    // now live in DungeonClearTuning.h so the
     // trigger ladder and the action layer cannot drift. See that header for the
     // unit/why annotations.
 
@@ -52,8 +52,10 @@ namespace
     {
         if (AI_VALUE(bool, "has available loot"))
             return false;
-        float maxSpread = sConfigMgr->GetOption<float>(
-            "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
+        // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
+        // PartyMaxSpread actually takes effect — the registry marks it
+        // player-facing, and reading conf directly here silently ignored it.
+        float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
         // In advanced-pull mode the party deliberately holds back at the camp while
         // the tank scouts ahead, so a spread check measured against the TANK would
         // never pass once the tank moves out — and the tank would stop pulling

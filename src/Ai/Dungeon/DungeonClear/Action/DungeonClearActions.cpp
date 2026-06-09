@@ -78,7 +78,7 @@ namespace
     constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 
     // Shared tuning constants (DC_ENGAGE_RANGE, the cone scan range/angle,
-    // DC_PARTY_MAX_SPREAD_DEFAULT, DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*,
+    // DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*,
     // DC_PULL_START_RANGE) now live in DungeonClearTuning.h, shared with the
     // trigger ladder so the two layers cannot drift. The old per-context cone
     // names (DC_ENGAGE_CONE_RANGE / DC_ENGAGE_CONE_HALF_ANGLE) are the trash-cone
@@ -524,8 +524,10 @@ namespace
     // the loot-yield block there.
     bool IsBetweenPullsReady(Player* bot)
     {
-        float maxSpread = sConfigMgr->GetOption<float>(
-            "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
+        // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
+        // PartyMaxSpread actually takes effect — the registry marks it
+        // player-facing, and reading conf directly here silently ignored it.
+        float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
         // In advanced-pull mode the party deliberately holds back at the camp while
         // the tank scouts ahead, so a spread check measured against the TANK would
         // never pass once it moves out — and the tank would stop advancing for good

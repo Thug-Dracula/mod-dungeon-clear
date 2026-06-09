@@ -64,11 +64,10 @@ constexpr float DC_CORRIDOR_WIDTH = 18.0f;
 // trigger and the pull action must agree on when a pull starts.
 constexpr float DC_PULL_START_RANGE = 26.0f;
 
-// Max distance the tank may lead a party member before it holds the advance to
-// let them catch up. Configurable; see DungeonClear.PartyMaxSpread (this is the
-// default the trigger and action both read). The HP/mana recovery thresholds
+// The max party-spread default lives in DcSettingsRegistry ("PartyMaxSpread");
+// the trigger, the advance gate, and the status publisher all read it through
+// DcSettings so per-run addon overrides apply. The HP/mana recovery thresholds
 // live in DungeonClearUtil::RestMin{Hp,Mp}Pct().
-constexpr float DC_PARTY_MAX_SPREAD_DEFAULT = 25.0f;
 
 // --- Shared geometry bands -------------------------------------------------
 // These three were file-local to DungeonClearUtil.cpp but are now shared across
