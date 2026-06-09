@@ -427,6 +427,50 @@ DungeonClear.PullCampSafeRadius = 25.0
 DungeonClear.PullMaxDrag = 35.0
 
 #
+#    DungeonClear.PullRangedLosBreak
+#        Advanced pull only. When the pulled pack contains a ranged attacker (a
+#        caster, archer, or wand user — anything that stands and shoots/casts from
+#        afar instead of running to melee), placing the camp at the usual setback
+#        leaves those mobs plinking the party across the room. With this on, the
+#        camp is walked further BACK along the cleared route until it reaches a spot
+#        with no line of sight to the pack — usually the doorway or corner the tank
+#        came in through — so the rangers are forced to close to melee at camp.
+#        Only the line of sight to the CURRENT pull target is tested (its packmates
+#        cluster around it). If no out-of-sight point is reachable within
+#        PullRangedMaxDrag the camp falls back to the farthest cleared point (best
+#        effort — a room with no cover simply can't break LOS).
+#
+#        Default: 1 (enabled)
+#
+
+DungeonClear.PullRangedLosBreak = 1
+
+#
+#    DungeonClear.PullRangedMaxDrag
+#        Hard cap (yards, along the cleared route) on the camp drag-back used ONLY
+#        for ranged LOS-break pulls. Larger than PullMaxDrag because the line of
+#        sight break (a doorway/corner) can sit well beyond where a melee pull would
+#        normally camp. Ignored when PullRangedLosBreak is off or the pack has no
+#        ranged attacker (PullMaxDrag applies then).
+#
+#        Default: 60.0
+#
+
+DungeonClear.PullRangedMaxDrag = 60.0
+
+#
+#    DungeonClear.PullRangedSpellRangeFloor
+#        Detection tuning: a damaging creature spell whose maximum range exceeds
+#        this (yards) marks the mob as "fights at range" for the LOS-break decision.
+#        ~15 keeps true casters (Frostbolt/Shadow Bolt ~30yd) in while excluding a
+#        melee mob that merely has a short-range thrown/leap ability. Server-only.
+#
+#        Default: 15.0
+#
+
+DungeonClear.PullRangedSpellRangeFloor = 15.0
+
+#
 #    DungeonClear.PullPlayerReleaseDelay
 #        Advanced pull only. Seconds the party stays passive AFTER the leader
 #        commits the pull (reaches the camp and flips to Engage) before the DPS

@@ -85,6 +85,22 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
     { "PullMaxDrag",           DcType::Float, 35,  20, 200,  true  },
 
+    // Ranged LOS-break pull. When the pulled pack has a ranged attacker (caster,
+    // archer, wand — see DcEngageGeometry::IsRangedAttacker) it would otherwise
+    // stand at the room's edge and plink the party across open ground. With
+    // PullRangedLosBreak on, ComputeSafeCamp keeps walking the camp BACK along the
+    // cleared route until it finds a point with no line of sight to the pack —
+    // typically the doorway/corner the tank entered through — so the rangers are
+    // forced to close to melee at camp. PullRangedMaxDrag is the (larger) drag cap
+    // used only for these pulls, since the corner can sit well beyond the normal
+    // PullMaxDrag; if no out-of-sight point is reachable within it the placer falls
+    // back to the farthest cleared point (best effort — LOS can't always be broken).
+    // PullRangedSpellRangeFloor is the spell max-range above which a damaging
+    // creature spell counts as "fights at range" (server-only tuning detail).
+    { "PullRangedLosBreak",        DcType::Bool,   1,   0,   1,  true  },
+    { "PullRangedMaxDrag",         DcType::Float, 60,  20, 250,  true  },
+    { "PullRangedSpellRangeFloor", DcType::Float, 15,   8,  40,  false },
+
     // Seconds the party stays passive AFTER the leader commits the pull (flips to
     // Engage) before DPS are freed to fight — gives the tank a threat head start.
     // Only the graceful Engage commit is delayed; ending/pausing the run or the

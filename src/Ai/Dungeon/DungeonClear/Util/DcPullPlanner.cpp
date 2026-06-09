@@ -485,6 +485,34 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     if (maxDrag < setback)
         maxDrag = setback;
 
+    // Ranged LOS-break: if the pulled target fights at range (caster / archer /
+    // wand), the camp must additionally break line of sight to it so the rangers
+    // are forced to close to melee at camp instead of plinking the party across the
+    // room. We keep walking the camp back along the cleared route — usually to the
+    // doorway/corner the tank entered through — until a point with no LOS to the
+    // pack is found, allowing a larger drag (PullRangedMaxDrag) to reach it. Only
+    // the CURRENT target's LOS is tested; its packmates cluster around it. When no
+    // out-of-sight point is reachable the normal farthest-back fallback still wins.
+    bool const losBreak = DcSettings::GetBool(bot, "PullRangedLosBreak") &&
+                          DcEngageGeometry::IsRangedAttacker(bot, target);
+    if (losBreak)
+    {
+        maxDrag = std::max(maxDrag, DcSettings::GetFloat(bot, "PullRangedMaxDrag"));
+        DC_PULL_DEBUG("[DC:{}] safe-camp: target {} is a ranged attacker -> requiring "
+                      "LOS break, maxDrag extended to {:.0f}yd",
+                      bot->GetName(), target->GetGUID().ToString(), maxDrag);
+    }
+    // VMAP-static LOS from the pack to a candidate camp ground point: a wall or
+    // pillar between them means a ranger there can't hit the camp and must move in.
+    // VMAP-only (no dynamic objects) so an open door's frame doesn't read as cover —
+    // matches the chain-aggro gate in ClassifyPullAdvanced.
+    auto breaksLos = [&](Position const& p) -> bool
+    {
+        return losBreak &&
+               !target->IsWithinLOS(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ(),
+                                    VMAP::ModelIgnoreFlags::Nothing, LINEOFSIGHT_CHECK_VMAP);
+    };
+
     // Resolve the other-pack hostiles once (alive, hostile, not the target, not a
     // packmate). Same candidate set the pull / trash scans use.
     GuidVector const& farTargets =
@@ -541,6 +569,14 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     float bestClear = clearanceAt(tankPos);
     float bestDrag = 0.0f;
     float bestAlong = 0.0f;
+    // Best reachable LOS-breaking point (ranged pulls only): tracked separately so
+    // that if no point satisfies BOTH clearance and LOS-break at the full setback,
+    // we still prefer the farthest out-of-sight point over a closer in-sight one —
+    // breaking the rangers' line is the whole goal even at imperfect clearance.
+    Position bestLos = tankPos;
+    float bestLosClear = std::numeric_limits<float>::max();
+    float bestLosDrag = 0.0f;
+    float bestLosAlong = -1.0f;  // <0 => none found
     Position prev = tankPos;
     float along = 0.0f;
     for (std::size_t i = crumbs.size(); i-- > 0; )
@@ -563,6 +599,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             continue;
         float const clear = clearanceAt(c);
         float const drag = tankPos.GetExactDist(&c);
+        bool const breaks = breaksLos(c);
         if (along > bestAlong)  // farthest reachable back so far (fallback)
         {
             best = c;
@@ -570,7 +607,16 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             bestDrag = drag;
             bestAlong = along;
         }
-        if (along >= setback && clear >= safeRadius)
+        if (breaks && along > bestLosAlong)  // farthest reachable out-of-sight point
+        {
+            bestLos = c;
+            bestLosClear = clear;
+            bestLosDrag = drag;
+            bestLosAlong = along;
+        }
+        // Accept the first point that is far enough back, clears other packs, AND
+        // (for a ranged pull) breaks LOS to the pack.
+        if (along >= setback && clear >= safeRadius && (!losBreak || breaks))
         {
             clearanceOut = clear;
             dragOut = drag;
@@ -580,9 +626,20 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             break;
     }
 
+    // Ranged pull, no point cleared every gate: take the farthest out-of-sight
+    // point we did find (at least half the setback back), since forcing the rangers
+    // to close matters more than perfect pack clearance.
+    if (losBreak && bestLosAlong >= setback * 0.5f)
+    {
+        clearanceOut = bestLosClear;
+        dragOut = bestLosDrag;
+        return bestLos;
+    }
+
     // Got a meaningful distance back along the trail (at least half the setback):
     // use the farthest point even if a neighbour is within safeRadius — no leash,
-    // so far-and-imperfect beats close.
+    // so far-and-imperfect beats close. (For a ranged pull with no reachable
+    // out-of-sight point, this is the graceful "room has no cover" fallback.)
     if (bestAlong >= setback * 0.5f)
     {
         clearanceOut = bestClear;

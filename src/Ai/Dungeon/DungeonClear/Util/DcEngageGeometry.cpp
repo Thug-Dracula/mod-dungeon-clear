@@ -33,6 +33,10 @@
 #include "GridNotifiersImpl.h"
 #include "Group.h"
 #include "ItemTemplate.h"
+#include "DBCStores.h"
+#include "SharedDefines.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "LootMgr.h"
 #include "Log.h"
 #include "ObjectMgr.h"
@@ -195,6 +199,78 @@ bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
         return false;
 
     return gen.getPathLength() <= engageRange;
+}
+bool DcEngageGeometry::IsRangedAttacker(Player* bot, Unit* u)
+{
+    Creature const* c = u ? u->ToCreature() : nullptr;
+    if (!c)
+        return false;
+    CreatureTemplate const* t = c->GetCreatureTemplate();
+    if (!t)
+        return false;
+
+    // 1. Caster class. Creatures collapse all casters onto a small set of
+    // classes (MAGE in practice); accept the others defensively in case a realm's
+    // creature data tags a shadow/elemental caster as PRIEST/SHAMAN/WARLOCK.
+    switch (t->unit_class)
+    {
+        case CLASS_MAGE:
+        case CLASS_PRIEST:
+        case CLASS_SHAMAN:
+        case CLASS_WARLOCK:
+            return true;
+        default:
+            break;
+    }
+
+    // 2. Ranged weapon in the virtual ranged slot. Bow / gun / crossbow / wand
+    // mean the mob attacks from afar; thrown is excluded (short range — the mob
+    // closes to throwing distance, which is effectively melee for our purposes).
+    uint32 const rangedItemId =
+        c->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + uint32(RANGED_ATTACK));
+    if (ItemEntry const* ie = sItemStore.LookupEntry(rangedItemId))
+    {
+        if (ie->ClassID == ITEM_CLASS_WEAPON &&
+            (ie->SubclassID == ITEM_SUBCLASS_WEAPON_BOW ||
+             ie->SubclassID == ITEM_SUBCLASS_WEAPON_GUN ||
+             ie->SubclassID == ITEM_SUBCLASS_WEAPON_CROSSBOW ||
+             ie->SubclassID == ITEM_SUBCLASS_WEAPON_WAND))
+            return true;
+    }
+
+    // 3. A damaging spell with real reach. Mirrors Creature::reachWithSpellAttack's
+    // effect test (school damage / leech / instakill) but without the live mana and
+    // distance gating — we want the mob's CAPABILITY, not whether it can cast right
+    // now. A max range above the floor means it will plant and cast rather than run
+    // in, which is the whole reason to break LOS. Catches a caster the engine tagged
+    // with a melee unit_class.
+    float const rangeFloor = DcSettings::GetFloat(bot, "PullRangedSpellRangeFloor");
+    for (uint32 i = 0; i < MAX_CREATURE_SPELLS; ++i)
+    {
+        uint32 const spellId = t->spells[i];
+        if (!spellId)
+            continue;
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+        if (!spellInfo)
+            continue;
+        bool damaging = false;
+        for (uint32 j = 0; j < MAX_SPELL_EFFECTS; ++j)
+        {
+            uint32 const eff = spellInfo->Effects[j].Effect;
+            if (eff == SPELL_EFFECT_SCHOOL_DAMAGE || eff == SPELL_EFFECT_HEALTH_LEECH ||
+                eff == SPELL_EFFECT_INSTAKILL || eff == SPELL_EFFECT_ENVIRONMENTAL_DAMAGE)
+            {
+                damaging = true;
+                break;
+            }
+        }
+        if (!damaging)
+            continue;
+        if (spellInfo->GetMaxRange(false) > rangeFloor)
+            return true;
+    }
+
+    return false;
 }
 bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
 {
