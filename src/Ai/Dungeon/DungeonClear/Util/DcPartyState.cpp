@@ -85,7 +85,8 @@ float DcPartyState::RestMinMpPct(Player* bot)
     // higher gate would strand the tank waiting on slow natural mana regen.
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
-bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread)
+bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
+                                Position const* spreadAnchor)
 {
     if (!bot)
         return false;
@@ -103,8 +104,13 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
         if (member->isDead())
             continue;  // Dead members handled by the party-died trigger.
 
-        if (member != bot && bot->GetDistance(member) > maxSpread)
-            return false;
+        if (member != bot)
+        {
+            float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
+                                              : bot->GetDistance(member);
+            if (spread > maxSpread)
+                return false;
+        }
         if (member->GetHealthPct() < minHpPct)
             return false;
         if (member->getPowerType() == POWER_MANA)
@@ -120,22 +126,42 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
     }
     return true;
 }
+DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContext* context)
+{
+    // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
+    // PartyMaxSpread actually takes effect — the registry marks it
+    // player-facing, and reading conf directly here silently ignored it.
+    SpreadGate gate{DcSettings::GetFloat(bot, "PartyMaxSpread"), nullptr};
+    if (!context)
+        return gate;
+
+    DcPullContext const& pull =
+        context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    // Waive the spread requirement ONLY while a pull maneuver is actually
+    // holding the party at camp — see the header comment for the full why.
+    if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
+    {
+        gate.maxSpread = 100000.0f;
+        return gate;
+    }
+    // Pull mode between maneuvers (Idle): hold-at-camp still pins the party at
+    // the camp, so "caught up" must be measured against the camp, not the tank —
+    // otherwise a camp standoff at/over PartyMaxSpread deadlocks the run (see
+    // the header comment on SpreadGate). (0,0,0) camp = unset, fall back.
+    if (context->GetValue<bool>("dungeon clear pull mode")->Get() &&
+        (pull.camp.GetPositionX() != 0.0f || pull.camp.GetPositionY() != 0.0f ||
+         pull.camp.GetPositionZ() != 0.0f))
+        gate.anchor = &pull.camp;
+    return gate;
+}
 bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
 {
     if (!bot || !context)
         return false;
     if (requireNoLoot && context->GetValue<bool>("has available loot")->Get())
         return false;
-    // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
-    // PartyMaxSpread actually takes effect — the registry marks it
-    // player-facing, and reading conf directly here silently ignored it.
-    float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
-    // Waive the spread requirement ONLY while a pull maneuver is actually
-    // holding the party at camp — see the header comment for the full why.
-    if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(
-            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().phase)))
-        maxSpread = 100000.0f;
-    return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), maxSpread);
+    SpreadGate const gate = GetSpreadGate(bot, context);
+    return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), gate.maxSpread, gate.anchor);
 }
 bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 {
@@ -170,7 +196,8 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 }
 std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float minHpPct, float minMpPct,
-                                                    float maxSpread)
+                                                    float maxSpread,
+                                                    Position const* spreadAnchor)
 {
     if (!bot)
         return "";
@@ -197,7 +224,9 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
         // matters only for which single reason we surface first; distance reads
         // most intuitively, then health, then mana.
         std::string reason;
-        if (member != bot && bot->GetDistance(member) > maxSpread)
+        if (member != bot &&
+            (spreadAnchor ? member->GetDistance(*spreadAnchor)
+                          : bot->GetDistance(member)) > maxSpread)
             reason = "out of range";
         else if (member->GetHealthPct() < minHpPct)
             reason = "low HP";

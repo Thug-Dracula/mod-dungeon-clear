@@ -10,6 +10,7 @@
 
 class AiObjectContext;
 class Player;
+struct Position;
 
 class DcPartyState
 {
@@ -33,19 +34,42 @@ public:
     // Returns true when the party has caught up and recovered enough to pull again:
     //  - every living party member on the bot's map has HP% >= minHpPct,
     //  - every living mana-using party member has mana% >= minMpPct,
-    //  - every living member is within maxSpread yards of the bot.
+    //  - every living member is within maxSpread yards of the bot — or of
+    //    *spreadAnchor when given (pull mode measures against the camp the party
+    //    is held at, since it is not allowed to stand near the tank there).
     // Dead members are not blocking — the party-died trigger handles them.
     // Callers pass RestMinHpPct()/RestMinMpPct() for the recovery thresholds.
-    static bool IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread);
+    static bool IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
+                             Position const* spreadAnchor = nullptr);
+
+    // The effective inputs of the between-pulls spread check for `bot` right now:
+    // the live PartyMaxSpread (waived to "infinite" while a pull maneuver is
+    // actually HOLDING the party at camp, Forming/Advancing/Returning) and, in
+    // pull mode with a camp stamped, the camp the spread is measured against
+    // instead of the tank. ONE body shared by the gate (IsBetweenPullsReady) and
+    // the status panel so the panel can never report a different wait than the
+    // gate enforces.
+    //
+    // Why the camp anchor exists: in pull mode the party is PINNED at the camp by
+    // hold-at-camp even between maneuvers (phase Idle) — it never closes on the
+    // tank. A catch-up check measured against the tank then deadlocks the run
+    // whenever the camp standoff (PullSetback, safe-camp/LOS extensions up to
+    // PullMaxDrag) reaches PartyMaxSpread: the gate can't pass, so the pull
+    // trigger never fires, so the camp never advances, so the party never gets
+    // any closer — tank and party wait on each other forever. "Caught up" in
+    // pull mode means "set at the camp they were told to hold", so the spread is
+    // anchored there. The anchor points into the bot's pull-context value
+    // (stable storage); treat it as valid for the current tick only.
+    struct SpreadGate
+    {
+        float maxSpread;
+        Position const* anchor;  // nullptr = measure against the bot (tank)
+    };
+    static SpreadGate GetSpreadGate(Player* bot, AiObjectContext* context);
 
     // Between-pulls gate: party HP/MP recovered (RestMinHpPct/RestMinMpPct) and
-    // spread within DungeonClear.PartyMaxSpread — except while a pull maneuver is
-    // actually HOLDING the party at camp (Forming/Advancing/Returning), where the
-    // spread requirement is deliberately waived: the party then holds back at camp
-    // while the tank scouts ahead, so a spread check measured against the tank
-    // would never pass and the tank would stop pulling after the first camp.
-    // While merely advancing between packs (Idle phase) the spread stays enforced
-    // so the tank still stops to let the party catch up.
+    // spread within DungeonClear.PartyMaxSpread — measured per GetSpreadGate
+    // (waived mid-maneuver, camp-anchored in pull mode, tank-anchored otherwise).
     //
     // `requireNoLoot` additionally fails the gate while the bot has a corpse to
     // walk to ("has available loot"): the trigger ladder wants that (never start
@@ -75,7 +99,8 @@ public:
     // on). Used by DcStatusAction to fill the addon "resting" detail.
     static std::string DescribePartyNotReady(Player* bot,
                                              float minHpPct, float minMpPct,
-                                             float maxSpread);
+                                             float maxSpread,
+                                             Position const* spreadAnchor = nullptr);
 
     // Names the living bot party members currently looting (walking to or
     // standing on a corpse), comma-joined and capped like DescribePartyNotReady.
