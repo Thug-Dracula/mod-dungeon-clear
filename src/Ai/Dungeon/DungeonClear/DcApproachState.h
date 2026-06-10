@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DCAPPROACHSTATE_H
 
 #include "Define.h"
+#include "ObjectGuid.h"
 #include "Position.h"
 
 // All transient per-approach state for one boss-approach run, owned as a single
@@ -40,6 +41,15 @@ struct DcApproachState
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
     uint32 lastTargetEntry     = 0;  // committed boss entry the approach is for
     uint32 lootYieldStartMs    = 0;  // loot-yield commit anchor (getMSTime)
+
+    // --- blocking-door interaction ----------------------------------------
+    // Last door the bot clicked open and when, so the door-blocked action can
+    // re-click an auto-closing gate (Strat's King's Square Gate re-shuts 3s
+    // after opening) on a cooldown instead of the old one-shot announce latch,
+    // which deadlocked: if the gate re-closed before Advance ran and cleared
+    // the latch, the bot never clicked again and sat "Blocked" forever.
+    ObjectGuid lastDoorUseGuid;      // door the last Use() was issued on
+    uint32 lastDoorUseMs       = 0;  // when it was issued (getMSTime)
 
     // --- long-path cache state --------------------------------------------
     // The cached long-range A* result lives in its own value ("dungeon clear

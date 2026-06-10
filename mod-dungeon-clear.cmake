@@ -4,6 +4,7 @@ if (BUILD_TESTING)
 
         # Define our standalone test target
         add_executable(dungeon_clear_tests
+            "${MOD_PATH}/t/TestDoorPolicy.cpp"
             "${MOD_PATH}/t/TestDungeonClearMath.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"

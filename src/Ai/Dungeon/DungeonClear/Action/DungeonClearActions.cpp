@@ -39,6 +39,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -118,14 +119,20 @@ namespace
 
     // Once parked at a blocking door, open it with GameObject::Use (the exact
     // path a client right-click takes) — but ONLY when the bot is actually
-    // entitled to, as decided by BotCanOpenDoorLikePlayer: a real lock the bot
-    // satisfies (holds the key / has the lockpicking skill). The raw
-    // GameObject::Use door branch toggles the GO state with no lock and no
+    // entitled to, as decided by BotCanOpenDoorLikePlayer (a faithful mirror
+    // of the core's lock adjudication; see DcDoorPolicy.h for the rules). The
+    // raw GameObject::Use door branch toggles the GO state with no lock and no
     // script/event check, so calling it on the wrong door desyncs the
-    // encounter; the entitlement gate is what keeps us honest. Lock-free and
-    // script/encounter doors are left shut and we wait for the human. Flip to
-    // false to never auto-open anything.
+    // encounter; the entitlement gate is what keeps us honest. Lock-free
+    // (script/encounter) doors are left shut and we wait for the human. Flip
+    // to false to never auto-open anything.
     constexpr bool DC_ATTEMPT_DOOR_OPEN = true;
+
+    // Minimum gap between Use() clicks on the same door. Auto-closing gates
+    // (door.autoCloseTime — Strat's King's Square Gate re-shuts 3000ms after
+    // opening) must be re-clicked when they shut again, but never spammed
+    // every AI tick while one Use is still swinging the door open.
+    constexpr uint32 DC_DOOR_REUSE_MS = 2500;
 
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
@@ -449,27 +456,30 @@ namespace
     // engage-trash target is a separate value, reset alongside OnBossChange at the
     // call site in Execute.
 
-    // True only when the bot is genuinely ENTITLED to open this door: it is
-    // lock-gated and the bot satisfies the lock (holds the key item, or has the
-    // required skill such as lockpicking). Everything else returns false and is
-    // left for a human / the instance script to open.
+    // True only when the bot is genuinely ENTITLED to open this door — i.e. a
+    // human player at this keyboard could open it by clicking. The slot
+    // adjudication mirrors the core's Spell::CanOpenLock and lives in
+    // DcDoorPolicy::CanOpenSlots (pure, unit-tested); see that header for the
+    // full rules. The short version:
     //
-    // This is the gate that keeps the tank from force-opening doors it has no
-    // business opening: GameObject::Use's door branch toggles the GO state with
-    // NO lock and NO script/event check, so calling it on the wrong door
-    // desyncs the encounter (e.g. popping a boss seal open without running the
-    // event). It must only ever be called on a door this returns true for.
-    // Mirrors the core lock logic in Spell::CanOpenLock / OpenLootAction.
+    //   - lockId == 0 -> NEVER. A closed lock-free door in an instance is
+    //     script/encounter-controlled (the Uldaman Ironaya seal and friends
+    //     carry no lock and no NOT_SELECTABLE flag until their event runs).
+    //     Clickable doors always reference a Lock.dbc row, even an empty one.
+    //   - An empty lock (a row with no typed slots, e.g. Deadmines lock 85) or
+    //     a bare-hands locktype slot (Quick/Slow Open, e.g. lock 86) opens for
+    //     anyone — these were wrongly refused before, which is why the tank
+    //     paused at every plain Deadmines door.
+    //   - Key items (Scarlet Key, Key to the City) and lockpicking open their
+    //     locks exactly as a player would.
+    //   - GO_FLAG_LOCKED suppresses the bare-hands slots: flagged gates demand
+    //     the real key/skill (Strat's King's Square Gate carries a Quick Open
+    //     slot yet requires the Key to the City).
     //
-    // CRITICAL: a lock-free door (lockId == 0) is NOT treated as "a plain door,
-    // click opens it" any more. In an instance a closed lock-free door is
-    // almost always script/encounter-controlled — the Uldaman Ironaya seal
-    // (GO 124372) and similar gates carry no lock and no NOT_SELECTABLE flag
-    // until the script opens them, so they are indistinguishable from a mundane
-    // door by template flags alone. The old `!lockId -> true` shortcut let the
-    // tank force the seal open before its event ran. The only doors we force
-    // are ones with a real lock we hold the key/skill for; a plain closed door
-    // makes the tank park and ask the human, which is the safe default.
+    // This remains the gate that keeps the tank from force-opening doors it
+    // has no business opening: GameObject::Use's door branch toggles the GO
+    // state with NO lock and NO script/event check, so it must only ever be
+    // called on a door this returns true for.
     bool BotCanOpenDoorLikePlayer(Player* bot, GameObject* go)
     {
         if (!bot || !go)
@@ -486,37 +496,29 @@ namespace
 
         uint32 const lockId = info->GetLockId();
         if (!lockId)
-            return false;           // lock-free: treat as script/encounter door
+            return false;           // lock-free: script/encounter door
 
         LockEntry const* lock = sLockStore.LookupEntry(lockId);
         if (!lock)
             return false;           // unknown lock — don't force it open
 
+        DcDoorPolicy::LockSlot slots[DcDoorPolicy::LOCK_SLOT_COUNT];
         for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
         {
-            switch (lock->Type[i])
-            {
-                case LOCK_KEY_ITEM:
-                    // Needs the specific key in the bags (keys aren't consumed
-                    // by opening, so possession alone is the requirement).
-                    if (lock->Index[i] && bot->HasItemCount(lock->Index[i], 1))
-                        return true;
-                    break;
-                case LOCK_KEY_SKILL:
-                {
-                    SkillType const skill = SkillByLockType(LockType(lock->Index[i]));
-                    if (skill == SKILL_NONE)
-                        break;
-                    if (bot->HasSkill(skill) &&
-                        bot->GetSkillValue(skill) >= lock->Skill[i])
-                        return true;
-                    break;
-                }
-                default:
-                    break;
-            }
+            slots[i].keyType = lock->Type[i];
+            slots[i].index = lock->Index[i];
+            slots[i].requiredSkill = lock->Skill[i];
         }
-        return false;               // locked, and the bot can't satisfy it
+
+        int32 const lockpick = bot->HasSkill(SKILL_LOCKPICKING)
+                                   ? static_cast<int32>(bot->GetSkillValue(SKILL_LOCKPICKING))
+                                   : -1;
+        return DcDoorPolicy::CanOpenSlots(
+            slots, DcDoorPolicy::LOCK_SLOT_COUNT,
+            go->HasGameObjectFlag(GO_FLAG_LOCKED),
+            // Keys aren't consumed by opening, so possession is the requirement.
+            [bot](uint32 itemEntry) { return bot->HasItemCount(itemEntry, 1); },
+            lockpick);
     }
 
     // Party-readiness gate for resuming the advance (HP/MP/spread). Shared body
@@ -2593,14 +2595,35 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
 
         if (canOpen)
         {
-            std::string const& lastSaid =
-                context->GetValue<std::string&>("dungeon clear last said reason")->Get();
-            if (lastSaid != openingReason)
+            if (!DcEngageGeometry::IsDoorClosed(door))
+            {
+                // The door is open NOW (our click landed, or a player beat us
+                // to it) — only the 500ms-cached blocking-door value hasn't
+                // noticed yet. Drop the stall immediately so the status panel
+                // stops reporting Blocked at an open door; Advance resumes the
+                // moment the value refreshes empty.
+                ClearStall(context);
+                return true;
+            }
+
+            // Click whenever the door actually reads SHUT, on a per-door
+            // cooldown — not the old "once per announced reason" latch. Gates
+            // with door.autoCloseTime re-shut themselves seconds after opening
+            // (King's Square Gate: 3s); under the latch, a gate that re-closed
+            // before Advance ran never got a second click and the run sat
+            // "Blocked" at a door it held the key for.
+            DcApproachState& doorAppr =
+                context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+            uint32 const now = getMSTime();
+            if (doorAppr.lastDoorUseGuid != door->GetGUID() ||
+                getMSTimeDiff(doorAppr.lastDoorUseMs, now) >= DC_DOOR_REUSE_MS)
             {
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] door-blocked: opening {} as a player would (entitled)",
                          bot->GetName(), door->GetGUID().ToString());
                 door->Use(bot);
+                doorAppr.lastDoorUseGuid = door->GetGUID();
+                doorAppr.lastDoorUseMs = now;
             }
             StallDungeonClear(botAI, openingReason);
             return true;

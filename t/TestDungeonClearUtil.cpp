@@ -564,14 +564,19 @@ TEST_F(DungeonClearStatusTest, StatusPausedWithReason)
     EXPECT_EQ(DcStatusPublisher::BuildStatusPayload(botAI), expected);
 }
 
-// Test status push when the clear is stalled (e.g. door blocked)
-TEST_F(DungeonClearStatusTest, StatusStalledDoor)
+// A stall with a flagged blocking door is only reported as "door_blocked"
+// when the door GO resolves AND still reads closed RIGHT NOW — the cached
+// blocking-door value and the stall string both outlive the door opening, and
+// trusting them kept the panel shouting "Blocked" at an open gate. Here the
+// GUID resolves to nothing (no GO exists in the test map), so the truthful
+// report is the generic stall, not a door claim we can't verify.
+TEST_F(DungeonClearStatusTest, StatusStalledDoorUnverifiedFallsBackToStalled)
 {
     context->SetValue<bool>("dungeon clear enabled", true);
     context->SetRefValue<std::string>("dungeon clear stall reason", "door_blocked");
     context->SetValue<ObjectGuid>("dungeon clear blocking door", ObjectGuid(uint64(12345)));
 
-    std::string expected = "STATUS\t1\t0\tNone\tdoor_blocked\t0\tdoor_blocked\t\t0\t0";
+    std::string expected = "STATUS\t1\t0\tNone\tdoor_blocked\t0\tstalled\t\t0\t0";
     EXPECT_EQ(DcStatusPublisher::BuildStatusPayload(botAI), expected);
 }
 

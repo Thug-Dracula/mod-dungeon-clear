@@ -282,12 +282,14 @@ bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
     // Authored non-blocking (decorative / always-passable) doors never count.
     if (info->door.ignoredByPathing)
         return false;
-    // The GOState->open/closed mapping is inverted by the door.startOpen
-    // template flag: a normal door (startOpen=0) is closed at GO_STATE_READY,
-    // but a gate that spawns open (startOpen=1) also sits at GO_STATE_READY
-    // while appearing OPEN. So closed iff GO_STATE_READY xor startOpen.
-    bool const startOpen = info->door.startOpen != 0;
-    return (go->GetGoState() == GO_STATE_READY) != startOpen;
+    // Physical truth on this core: a door's collision follows GOState ALONE —
+    // GO_STATE_READY has collision ON (blocking), both ACTIVE states have it
+    // OFF (passable). The template's startOpen flag plays no runtime role:
+    // GameObject::AddToWorld and SetGoState both do
+    // EnableCollision(state == GO_STATE_READY). The previous XOR against
+    // startOpen misread every startOpen=1 gate spawned ACTIVE (the Stratholme
+    // portcullises) as closed, parking the tank in front of an open gate.
+    return go->GetGoState() == GO_STATE_READY;
 }
 bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
                                          float tz, float corridorWidth)

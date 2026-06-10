@@ -122,6 +122,23 @@ namespace
         }
         return h;
     }
+
+    // True when the run is stalled on a flagged blocking door that still reads
+    // closed RIGHT NOW. Resolves the GO and checks its live state instead of
+    // trusting the 500ms-cached blocking-door value, so the panel never paints
+    // "Blocked by Door" at a gate that has already swung open.
+    bool StallDoorStillClosed(PlayerbotAI* botAI, AiObjectContext* context,
+                              std::string const& stall)
+    {
+        if (stall.empty())
+            return false;
+        ObjectGuid const doorGuid =
+            context->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
+        if (doorGuid.IsEmpty())
+            return false;
+        GameObject* door = botAI->GetGameObject(doorGuid);
+        return door && DcEngageGeometry::IsDoorClosed(door);
+    }
 }
 
 void DcStatusPublisher::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)
@@ -215,10 +232,18 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
                              : "Clearing trash from the path.";
             }
         }
-        else if (!stall.empty())
+        // "Blocked by a door" must be LIVE truth, not cache residue: the
+        // blocking-door value refreshes on a 500ms interval and the stall
+        // string only clears when Advance next runs (which can sit behind the
+        // loot/rest gates for many seconds while the party regroups at the
+        // doorway). Right after a gate opens, both are stale — and the addon
+        // paints "stalled" as Blocked too, so the panel kept shouting
+        // "Blocked" at an open gate. Re-check the flagged door's actual state
+        // here, and let looting/resting (the truthful post-door states) win
+        // over a leftover stall string.
+        else if (StallDoorStillClosed(botAI, context, stall))
         {
-            ObjectGuid door = context->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
-            stateStr = door.IsEmpty() ? "stalled" : "door_blocked";
+            stateStr = "door_blocked";
             // The stall reason already rides in its own field; leave detail empty.
         }
         else if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
@@ -242,6 +267,12 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
                                                                             DcPartyState::RestMinMpPct(bot),
                                                                             gate.maxSpread, gate.anchor);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
+        }
+        else if (!stall.empty())
+        {
+            // Genuine non-door stall (unreachable boss, dead-end escalation…)
+            // — or a door stall whose door has not yet been re-verified open.
+            stateStr = "stalled";
         }
         else
         {
