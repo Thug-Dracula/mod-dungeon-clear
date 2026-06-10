@@ -437,6 +437,38 @@ TEST_F(DungeonClearGroupTest, GroupCollapseIssuesScenario)
     EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f), expected);
 }
 
+// 7. Camp-anchored spread (pull mode): the party is pinned at a camp behind the
+// scouting tank, so it can never satisfy a tank-anchored spread once the camp
+// standoff reaches PartyMaxSpread — that was the tank-waits/party-held deadlock.
+// Anchored at the camp, a party that is set where it was told to hold is ready.
+TEST_F(DungeonClearGroupTest, GroupSpreadAnchoredAtCampScenario)
+{
+    // Tank scouted 50yd ahead of the camp; whole party holds within 3yd of it.
+    Position const camp(50.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i)
+        members[i]->Relocate(50.0f + 0.5f * (i + 1), 0.0f, 0.0f);
+
+    // Tank-anchored: every member is ~50yd out -> the old permanent "catch up".
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f));
+
+    // Camp-anchored: the party is set at camp -> ready.
+    EXPECT_TRUE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f, &camp));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f, &camp), "");
+}
+
+// 8. Camp-anchored spread still catches a genuine straggler far from the camp.
+TEST_F(DungeonClearGroupTest, GroupSpreadAnchoredStragglerScenario)
+{
+    Position const camp(50.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i)
+        members[i]->Relocate(50.0f + 0.5f * (i + 1), 0.0f, 0.0f);
+    members[2]->Relocate(100.0f, 0.0f, 0.0f);  // 50yd past the camp
+
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f, &camp));
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f, &camp),
+              "Waiting on Member3 (out of range)");
+}
+
 class DungeonClearStatusTest : public DungeonClearTestBase
 {
 protected:
