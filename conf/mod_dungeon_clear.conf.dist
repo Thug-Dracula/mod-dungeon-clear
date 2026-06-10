@@ -644,3 +644,16 @@ DungeonClear.PullDynamicPartyLag = 15.0
 #
 
 DungeonClear.PullDynamicRollInLead = 8.0
+
+#
+#    DungeonClear.SpectateSpeed
+#        Movement speed multiplier for the spectator free-camera (`.dc spectate`
+#        or the addon's Spectate button) — how fast the detached camera flies,
+#        as a multiple of normal run speed. The camera is a possessed invisible
+#        dummy, so this affects only the camera, never the character (which
+#        keeps running under bot AI at its own speed).
+#
+#        Default: 2.5
+#
+
+DungeonClear.SpectateSpeed = 2.5

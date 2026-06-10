@@ -198,6 +198,10 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "SwimEnable",            DcType::Bool,   1,   0,    1,  false },
     { "SwimMaxRange",          DcType::Float, 250, 30, 1000,  false },
 
+    // Spectator free-camera (`.dc spectate`): movement speed multiplier applied
+    // to the possessed camera dummy (flight and run). See Util/DcSpectator.h.
+    { "SpectateSpeed",         DcType::Float, 2.5, 0.5,  8,  true  },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

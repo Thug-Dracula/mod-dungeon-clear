@@ -22,6 +22,7 @@
 #include <cmath>
 
 #include "DungeonClearDispatch.h"
+#include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -101,6 +102,25 @@ namespace
         }
         return true;
     }
+
+    // Spectator free-camera toggle. Acts on the ISSUER directly (session
+    // plumbing, not bot behavior) — it must NOT go through DispatchToTankBots
+    // or the action pipeline: the issuer may not even be the tank, and the
+    // possession belongs to their session alone. See Util/DcSpectator.h.
+    bool HandleSpectate(ChatHandler* handler)
+    {
+        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        if (!issuer)
+        {
+            handler->SendSysMessage("This command must be used in-game.");
+            return true;
+        }
+
+        std::string whyNot;
+        if (!DcSpectator::Toggle(issuer, &whyNot))
+            handler->SendSysMessage(whyNot);
+        return true;
+    }
 }
 
 class dungeon_clear_command_script : public CommandScript
@@ -121,6 +141,7 @@ public:
             { "bosses", HandleBosses, SEC_PLAYER, Console::No },
             { "go",     HandleGo,     SEC_PLAYER, Console::No },
             { "config", HandleConfig, SEC_PLAYER, Console::No },
+            { "spectate", HandleSpectate, SEC_PLAYER, Console::No },
         };
         static ChatCommandTable root = { { "dc", dcTable } };
         return root;

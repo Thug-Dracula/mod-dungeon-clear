@@ -42,6 +42,7 @@
 #include "ScriptMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include "PlayerScript.h"
 
 #include "Playerbots.h"
 #include "PlayerbotAI.h"
@@ -60,6 +61,7 @@
 #include "WarlockAiObjectContext.h"
 #include "WarriorAiObjectContext.h"
 
+#include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearActionContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
@@ -177,6 +179,50 @@ public:
     }
 };
 
+// Spectator-camera teardown safety net. A leaked possession leaves the human
+// controlling nothing (their mover is a despawning/orphaned dummy), and only we
+// can clean it up — so every exit path below calls DcSpectator::Stop, which is
+// idempotent and free to over-call. Note `dc off`/pause deliberately do NOT end
+// spectate: the feature is independent of the DC run (useful for watching any
+// bot activity, or nothing at all) — don't "fix" that by adding teardown there.
+class DungeonClearSpectatorPlayerScript : public PlayerScript
+{
+public:
+    DungeonClearSpectatorPlayerScript()
+        : PlayerScript("DungeonClearSpectatorPlayerScript", {
+            PLAYERHOOK_ON_BEFORE_TELEPORT,
+            PLAYERHOOK_ON_PLAYER_JUST_DIED,
+            PLAYERHOOK_ON_BEFORE_LOGOUT
+        }) {}
+
+    // Covers hearth, instance exit, summons, `.tele`, AND near-teleports —
+    // a near-teleport during spectate would hang un-acked in playerbots
+    // (its ack path does bot->m_mover->ToPlayer(), null while the mover is
+    // the camera dummy). Never vetoes the teleport.
+    bool OnPlayerBeforeTeleport(Player* player, uint32 /*mapid*/, float /*x*/,
+                                float /*y*/, float /*z*/, float /*orientation*/,
+                                uint32 /*options*/, Unit* /*target*/) override
+    {
+        DcSpectator::Stop(player);
+        return true;
+    }
+
+    // Body death while the camera is away: release control back so the normal
+    // ghost/release flow works. Core may also break the charm itself — Stop is
+    // idempotent either way.
+    void OnPlayerJustDied(Player* player) override
+    {
+        DcSpectator::Stop(player);
+    }
+
+    // Despawn the dummy before the session goes away; never let the
+    // TempSummon outlive its possessor.
+    void OnPlayerBeforeLogout(Player* player) override
+    {
+        DcSpectator::Stop(player);
+    }
+};
+
 // Drives the orphaned-follow reaper once per world tick. A non-tank DC follower
 // installs a persistent MoveFollow generator to chase the tank; its own
 // follow-tank action tears that down when the DC tank goes away — but only while
@@ -219,5 +265,6 @@ void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
+    new DungeonClearSpectatorPlayerScript();
     new DungeonClearReaperScript();
 }

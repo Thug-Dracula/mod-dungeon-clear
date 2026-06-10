@@ -29,6 +29,7 @@
 
 #include "DungeonClearDispatch.h"
 #include "StringFormat.h"
+#include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -211,6 +212,18 @@ public:
         if (subCmd == "set" || subCmd == "reset" || subCmd == "sync")
         {
             HandleSettingsCommand(player, subCmd, param);
+            msg.clear();
+            type = CHAT_MSG_ADDON;
+            return;
+        }
+
+        // Spectator free-camera: acts on the sending player directly (session
+        // plumbing, not a tank-bot action) — never dispatched.
+        if (subCmd == "spectate")
+        {
+            std::string whyNot;
+            if (!DcSpectator::Toggle(player, &whyNot))
+                SendAddonError(player, whyNot);
             msg.clear();
             type = CHAT_MSG_ADDON;
             return;

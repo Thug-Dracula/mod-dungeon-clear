@@ -58,4 +58,7 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    DecideApproach (observation -> verdict) record + the live capture hook,
 #    gated by DcSettings RecordDecisions. Replayed offline by t/replay_decisions
 #    against t/fixtures/*.jsonl to lock every historical freeze as a regression.)
+# src/Util/DcSpectator.{h,cpp}
+#   (module-root src/Util/ — session plumbing, not bot AI: spectator
+#    free-camera via WORLD_TRIGGER possession, `.dc spectate` / addon button)
 # (this comment bumps mtime to force CMake re-glob on next build)
