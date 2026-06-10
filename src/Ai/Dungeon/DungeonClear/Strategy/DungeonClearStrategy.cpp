@@ -22,9 +22,10 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 
     // Advanced pull (LOS pull-to-camp). Sits ABOVE the engage triggers so, when
     // pull mode is on, the tank runs the pull-to-camp maneuver instead of the
-    // normal walk-in — but it is trash-only (its trigger stands down at the boss),
-    // so the at-boss engage below still owns boss pulls. Inert when pull mode is
-    // off. See DungeonClearPullTrigger / DungeonClearPullAction.
+    // normal walk-in — but it is trash-only (the pull-target scan vetoes dungeon
+    // bosses outright, and the trigger additionally stands down inside boss
+    // engage range), so the at-boss engage below still owns boss pulls. Inert
+    // when pull mode is off. See DungeonClearPullTrigger / DungeonClearPullAction.
     triggers.push_back(new TriggerNode(
         "dungeon clear pull",
         { NextAction("dungeon clear pull", 35.0f) }));

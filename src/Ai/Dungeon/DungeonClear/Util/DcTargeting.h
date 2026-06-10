@@ -74,9 +74,18 @@ public:
     // died), so a commit never aims at a corpse. Nullptr when no pull target.
     static Unit* GetPullTarget(PlayerbotAI* botAI);
 
+    // True when `entry` is one of the run's encounter bosses (membership test
+    // against the "dungeon bosses" value). Linear scan — the list is ≤ ~20
+    // entries; build a set snapshot alongside the vector if profiling ever
+    // cares. Keeps bosses out of the pull pipeline: the dedicated at-boss path
+    // (engage-range gate, anchor checks, door veto, party-ready gate) owns
+    // them, and scripted bosses misbehave when camp-dragged.
+    static bool IsDungeonBossEntry(AiObjectContext* ctx, uint32 entry);
+
     // Validity predicate for KEEPING the sticky pull target between scans:
-    // alive, hostile, not the pull context's abort target, within the scan
-    // look-ahead plus a slack band, level-reachable, and no closed door between.
+    // alive, hostile, not a dungeon boss, not the pull context's abort target,
+    // within the scan look-ahead plus a slack band, level-reachable, and no
+    // closed door between.
     // Deliberately does NOT require it to still be the closest blocker or
     // inside the scan corridor — packs drift while patrolling, and re-running
     // corridor membership is exactly the target-flapping instability the sticky

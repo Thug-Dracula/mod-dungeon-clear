@@ -475,6 +475,24 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     if (!trash)
         return nullptr;
 
+    // Never pull a boss: the dedicated at-boss path (engage-range gate, anchor
+    // checks, door veto, party-ready gate) owns boss engagements. Without this,
+    // a boss that becomes the nearest corridor blocker in the band between
+    // engage range and the look-ahead gets committed as a camp drag — scripted
+    // bosses (RP gossip starts, threshold adds, room-bound mechanics) misbehave
+    // when dragged, and players don't camp-pull bosses through corridors.
+    // Checked before the door veto (a tiny vector scan vs. a map-wide door
+    // collection). Deliberately NOT applied to the FindBlockingTrash* scans:
+    // in plain mode, walking in on a boss in the corridor band degenerates to
+    // a normal engage, which is acceptable — only the camp-drag is wrong.
+    if (IsDungeonBossEntry(context, trash->GetEntry()))
+    {
+        DC_PULL_DEBUG("[DC:{}] pull target vetoed — {} ({}) is a dungeon boss, "
+                      "at-boss path owns it",
+                      bot->GetName(), trash->GetName(), trash->GetGUID().ToString());
+        return nullptr;
+    }
+
     // Never pull a pack on the far side of a closed door (mirrors the trigger's
     // veto): some doors are navmesh-passable, so the tank would otherwise run
     // through and drag the pack back through the doorway.
@@ -486,6 +504,17 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     }
 
     return trash;
+}
+bool DcTargeting::IsDungeonBossEntry(AiObjectContext* ctx, uint32 entry)
+{
+    if (!ctx || !entry)
+        return false;
+    std::vector<DungeonBossInfo> const& bosses =
+        ctx->GetValue<std::vector<DungeonBossInfo>>("dungeon bosses")->Get();
+    for (DungeonBossInfo const& boss : bosses)
+        if (boss.entry == entry)
+            return true;
+    return false;
 }
 Unit* DcTargeting::GetPullTarget(PlayerbotAI* botAI)
 {
@@ -525,6 +554,12 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
     if (!bot || !ctx || !u)
         return false;
     if (!u->IsAlive() || !bot->IsHostileTo(u))
+        return false;
+
+    // Mirror the fresh scan's boss veto. The governor can only latch what the
+    // scan returned, so a boss should never be sticky — but the invariant
+    // (a boss is NEVER a pull target) is cheap to keep airtight locally.
+    if (IsDungeonBossEntry(ctx, u->GetEntry()))
         return false;
 
     // A pack a prior pull gave up on is handed to the normal walk-in engage;
