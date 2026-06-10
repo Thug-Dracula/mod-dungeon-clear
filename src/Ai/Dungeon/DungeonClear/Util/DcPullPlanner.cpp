@@ -738,13 +738,30 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
 
     // Walk BACK along the trail (newest -> oldest) accumulating corridor distance,
     // exactly like ComputeSafeCamp's preferred branch but without the clearance
-    // gate: take the first point at least `setback` behind us, stopping at maxDrag
-    // or a trail discontinuity (kJumpGuard). Track the farthest contiguous point
-    // as the fallback when the trail is shorter than the full setback (e.g. right
+    // gate: take the first reachable point at least `setback` behind us, stopping
+    // at a trail discontinuity (kJumpGuard). Fall back to the farthest reachable
+    // contiguous point when the trail is shorter than the full setback (e.g. right
     // after a fight, before the tank has laid much new trail).
+    //
+    // Reachability (a full PathGenerator build per probe) is tested LAZILY,
+    // mirroring DcLeaderSignal::GetLeaderScoutTrailPoint: only crumbs at/past the
+    // setback are probed on the walk, and the pre-setback crumbs only as a
+    // farthest-first fallback when no post-setback crumb was reachable. The
+    // previous version probed every crumb as it walked — one navmesh path build
+    // PER CRUMB per scout tick. The selected crumb is the same: the first
+    // bucket probes the post-setback crumbs in walk order (matching the eager
+    // loop's "first reachable >= setback"), and the fallback probes
+    // farthest-first, which is exactly the eager loop's "farthest reachable"
+    // running maximum.
+    //
+    // maxDrag caps how far past the setback the unreachable-crumb continuation
+    // may keep probing before giving up and falling back. (The eager version's
+    // maxDrag break was dead — it sat after the probe's `continue` and the
+    // setback `return`, so the walk used to run to the end of the trail; the
+    // cap is live deliberately now, bounding the worst case at a couple of
+    // probes instead of the whole 128-crumb buffer.)
     constexpr float kJumpGuard = 12.0f;
-    Position best = tankPos;
-    float bestAlong = 0.0f;
+    std::vector<std::pair<float, Position>> preSetback;  // (along, crumb), nearest-first
     Position prev = tankPos;
     float along = 0.0f;
     for (std::size_t i = crumbs.size(); i-- > 0; )
@@ -757,25 +774,27 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
         if (seg > kJumpGuard)
             break;  // discontinuity behind us — stop here
         along += seg;
+        if (along < setback)
+        {
+            preSetback.emplace_back(along, c);
+            continue;
+        }
         // Only trail to a crumb the party can reach over a complete generated
         // path — a seam crumb would make the follower move straight-line under
         // the map.
-        if (!IsNavReachable(bot, c))
-            continue;
-        if (along > bestAlong)
-        {
-            best = c;
-            bestAlong = along;
-        }
-        if (along >= setback)
+        if (IsNavReachable(bot, c))
             return c;
         if (along >= maxDrag)
-            break;
+            break;  // searched past the cap without a reachable crumb — fall back
     }
 
-    // Trail too short to reach the full setback: trail the farthest point we have
-    // (the party simply stacks closer behind the tank until more trail accrues).
-    return best;
+    // Trail too short to reach the full setback (or nothing reachable past it):
+    // trail the farthest reachable point we have (the party simply stacks closer
+    // behind the tank until more trail accrues).
+    for (auto it = preSetback.rbegin(); it != preSetback.rend(); ++it)
+        if (IsNavReachable(bot, it->second))
+            return it->second;
+    return tankPos;
 }
 bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius)
 {

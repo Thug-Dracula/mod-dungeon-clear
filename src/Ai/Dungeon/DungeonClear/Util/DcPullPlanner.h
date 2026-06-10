@@ -71,9 +71,10 @@ public:
                                                    float& clearanceOut, float& dragOut);
 
     // Lean, target-less twin of ComputeSafeCamp for the Idle SCOUT phase: returns
-    // a point `setback` back along the breadcrumb trail behind the tank (capped at
-    // maxDrag), so the camp can TRAIL the moving tank while no pull is committed
-    // and the party walks along behind it at a fixed standoff. No clearance test —
+    // a point `setback` back along the breadcrumb trail behind the tank (the
+    // search gives up at maxDrag), so the camp can TRAIL the moving tank while no
+    // pull is committed and the party walks along behind it at a fixed standoff.
+    // No clearance test —
     // the tank just walked this ground, so it is by definition clear, and there is
     // no pack to stay clear of yet. Falls back to the farthest contiguous trail
     // point, then to the tank's own position when the trail is too short. Returns
