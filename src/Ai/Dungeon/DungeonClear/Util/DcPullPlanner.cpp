@@ -5,7 +5,7 @@
 
 #include "DcPullPlanner.h"
 
-#include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::FindPullTarget (until DcTargeting moves)
+#include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::GetPullTarget (until DcTargeting moves)
 
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -410,16 +410,39 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
                 Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     };
 
-    std::optional<DungeonBossInfo> next =
-        context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
-    Unit* target = next.has_value() ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
+    Unit* target = DcTargeting::GetPullTarget(botAI);
     if (!target)
     {
-        // Nothing to size up: fall back to the Leeroy ladder and drop the latch.
-        pull.decisionTarget = ObjectGuid::Empty;
-        apply(false, 0u);
+        // No verdict standing: nothing to protect, keep the Leeroy ladder down.
+        if (pull.decisionTarget.IsEmpty())
+        {
+            pull.targetLostSince = 0;
+            apply(false, 0u);
+            return;
+        }
+        // A standing verdict survives a TRANSIENT no-target read (door-veto
+        // flicker, long-path cache mid-rebuild, far-targets poll boundary):
+        // dropping it instantly would flip the pull-mode bool, releasing the
+        // camp hold and stripping daze immunity for one bad tick, then re-derive
+        // everything — the party lurch. Only a target lost CONTINUOUSLY past the
+        // grace genuinely went away (died, despawned, walked off).
+        constexpr uint32 kVerdictGraceMs = 1500;
+        if (DungeonClearMath::ShouldDropPullVerdict(false, pull.targetLostSince,
+                                                    getMSTime(), kVerdictGraceMs,
+                                                    pull.targetLostSince))
+        {
+            DC_PULL_DEBUG("[DC:{}] dynamic: pull target {} stayed lost past the "
+                          "{}ms grace -> dropping the standing verdict",
+                          bot->GetName(), pull.decisionTarget.ToString(),
+                          kVerdictGraceMs);
+            pull.decisionTarget = ObjectGuid::Empty;
+            pull.targetLostSince = 0;
+            apply(false, 0u);
+        }
+        // Within grace: keep verdict, camp hold and daze immunity as-is.
         return;
     }
+    pull.targetLostSince = 0;
 
     // Per-pack latch, UPGRADE-ONLY while approaching the SAME pack.
     //

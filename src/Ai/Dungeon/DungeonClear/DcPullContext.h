@@ -72,6 +72,11 @@ struct DcPullContext
     uint32      decision       = 0;              // 0 none / 1 leeroy / 2 advanced
     ObjectGuid  decisionTarget;                  // pack the verdict applies to
     uint32      decisionSince  = 0;              // last re-classification timestamp
+    uint32      targetLostSince = 0;             // getMSTime() the pull target first
+                                                 // resolved null while a Dynamic
+                                                 // verdict was standing; 0 = present.
+                                                 // Grace latch for DungeonClearMath::
+                                                 // ShouldDropPullVerdict.
 
     void Reset() { *this = DcPullContext{}; }
 

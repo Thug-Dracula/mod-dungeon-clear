@@ -141,6 +141,26 @@ bool DungeonClearMath::ShouldAbortPullForCc(bool impaired, std::uint32_t ccSince
     return elapsed >= graceMs;
 }
 
+bool DungeonClearMath::ShouldDropPullVerdict(bool targetPresent, std::uint32_t lostSince,
+                                             std::uint32_t now, std::uint32_t graceMs,
+                                             std::uint32_t& lostSinceOut)
+{
+    if (targetPresent)
+    {
+        lostSinceOut = 0;
+        return false;
+    }
+    // Arm the latch on the first lost tick. Never store 0 (it means "present"),
+    // so a target lost at the very first millisecond still latches.
+    std::uint32_t const start = lostSince != 0 ? lostSince : (now != 0 ? now : 1u);
+    lostSinceOut = start;
+    // Guard the unsigned subtraction: start is normally <= now (latched this tick
+    // or earlier), but the now==0 corner can leave start (1) ahead of now. Clamp to
+    // 0 elapsed there. graceMs == 0 => drops immediately on the first tick.
+    std::uint32_t const elapsed = now >= start ? now - start : 0u;
+    return elapsed >= graceMs;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)

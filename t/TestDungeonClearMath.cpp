@@ -349,3 +349,69 @@ TEST(DungeonClearCcAssistTest, ZeroNowLatchesToOne)
     EXPECT_FALSE(ShouldAbortPullForCc(true, 0u, 0u, 1000u, out));
     EXPECT_EQ(out, 1u);
 }
+
+// ---------------------------------------------------------------------------
+// ShouldDropPullVerdict — the no-target verdict-drop grace gate.
+// ---------------------------------------------------------------------------
+using DungeonClearMath::ShouldDropPullVerdict;
+
+// Target present: never drop, latch cleared to 0 (even from a stale value).
+TEST(DungeonClearVerdictGraceTest, PresentClearsLatch)
+{
+    std::uint32_t out = 12345u;
+    EXPECT_FALSE(ShouldDropPullVerdict(true, 10000u, 20000u, 1500u, out));
+    EXPECT_EQ(out, 0u);
+}
+
+// First null tick arms the latch (to `now`) but does not yet drop the verdict.
+TEST(DungeonClearVerdictGraceTest, FirstNullTickArmsButHolds)
+{
+    std::uint32_t out = 0u;
+    EXPECT_FALSE(ShouldDropPullVerdict(false, 0u, 5000u, 1500u, out));
+    EXPECT_EQ(out, 5000u);
+}
+
+// A target lost continuously past the grace drops the verdict; latch preserved.
+TEST(DungeonClearVerdictGraceTest, DropsAfterGraceElapsed)
+{
+    std::uint32_t out = 0u;
+    // Armed at 5000, grace 1500ms: still holding at 6499, drops at 6500.
+    EXPECT_FALSE(ShouldDropPullVerdict(false, 5000u, 6499u, 1500u, out));
+    EXPECT_EQ(out, 5000u);
+    EXPECT_TRUE(ShouldDropPullVerdict(false, 5000u, 6500u, 1500u, out));
+    EXPECT_EQ(out, 5000u);
+}
+
+// A transient null (door-veto flicker, cache mid-rebuild) that resolves within
+// the grace re-arms fresh next time, so flickers never accumulate to a drop.
+TEST(DungeonClearVerdictGraceTest, FlickerDoesNotAccumulate)
+{
+    std::uint32_t out = 0u;
+    // Lost at 5000 (arm), present again at 5400 (latch -> 0), lost again at 5800
+    // re-arms at 5800 — not at the original 5000 — so the grace restarts.
+    EXPECT_FALSE(ShouldDropPullVerdict(false, 0u, 5000u, 1500u, out));
+    EXPECT_EQ(out, 5000u);
+    EXPECT_FALSE(ShouldDropPullVerdict(true, out, 5400u, 1500u, out));
+    EXPECT_EQ(out, 0u);
+    EXPECT_FALSE(ShouldDropPullVerdict(false, out, 5800u, 1500u, out));
+    EXPECT_EQ(out, 5800u);
+    // 5800 + 1500 = 7300 is when it drops, proving the 5000 loss didn't count.
+    EXPECT_FALSE(ShouldDropPullVerdict(false, out, 7299u, 1500u, out));
+    EXPECT_TRUE(ShouldDropPullVerdict(false, out, 7300u, 1500u, out));
+}
+
+// Zero grace drops on the very first null tick (the pre-grace behavior).
+TEST(DungeonClearVerdictGraceTest, ZeroGraceDropsImmediately)
+{
+    std::uint32_t out = 0u;
+    EXPECT_TRUE(ShouldDropPullVerdict(false, 0u, 5000u, 0u, out));
+}
+
+// Latching at now == 0 stores 1, not 0 (0 means "present"), so a target lost at
+// the very first millisecond still latches and can drop.
+TEST(DungeonClearVerdictGraceTest, ZeroNowLatchesToOne)
+{
+    std::uint32_t out = 99u;
+    EXPECT_FALSE(ShouldDropPullVerdict(false, 0u, 0u, 1500u, out));
+    EXPECT_EQ(out, 1u);
+}

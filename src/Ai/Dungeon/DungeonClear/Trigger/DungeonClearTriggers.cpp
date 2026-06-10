@@ -476,7 +476,7 @@ bool DungeonClearPullTrigger::IsActive()
     if (!IsBetweenPullsReady(bot, context))
         return false;
 
-    Unit* trash = DcTargeting::FindPullTarget(botAI, *next);
+    Unit* trash = DcTargeting::GetPullTarget(botAI);
     if (!trash)
         return false;
 
@@ -488,7 +488,7 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
     }
 
-    // We fire even while the pack is still beyond run-in reach (FindPullTarget
+    // We fire even while the pack is still beyond run-in reach (the pull-target scan
     // already caps the look-ahead at ~35yd). The action does NOT commit yet — its
     // Idle branch yields to Advance to glide the tank closer — but running it now
     // lets it PUBLISH a prospective camp each glide tick so the party walks up to
