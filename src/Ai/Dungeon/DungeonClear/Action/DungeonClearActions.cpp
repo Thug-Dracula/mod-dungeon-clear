@@ -2034,7 +2034,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
         bool const noPackInRange =
             !nextForTrail.has_value() ||
-            !DcTargeting::FindPullTarget(botAI, *nextForTrail);
+            !DcTargeting::GetPullTarget(botAI);
         if (!bot->IsInCombat() &&
             pullPhase == DcPullPhase::Idle && noPackInRange)
         {
@@ -3141,7 +3141,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // Begin a pull: choose a SAFE camp back along the cleared route, hold
             // here, and let the party reposition to it (the tank doesn't retreat).
             Unit* trash = next.has_value()
-                ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
+                ? DcTargeting::GetPullTarget(botAI) : nullptr;
             if (!trash)
             {
                 DC_PULL_TRACE("[DC:{}] pull idle: no pull target -> yield to advance",
@@ -3279,7 +3279,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
         {
             // Tag the pack. The moment combat starts the non-combat trigger stops
             // firing and DungeonClearPullManeuverAction drags it back to camp.
-            Unit* trash = next.has_value() ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
+            Unit* trash = next.has_value() ? DcTargeting::GetPullTarget(botAI) : nullptr;
             if (!trash)
             {
                 // Pack died / despawned before we tagged it — nothing to pull.

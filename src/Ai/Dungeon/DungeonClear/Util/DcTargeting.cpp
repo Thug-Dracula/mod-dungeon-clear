@@ -54,6 +54,7 @@
 #include "Timer.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
@@ -75,6 +76,16 @@ namespace
     // A closed door reduced to its GO-origin point, carried with Z so the
     // corridor tests can reject doors on another floor.
     struct DoorPt { float x, y, z; };
+
+    // Pull-target scan envelope. kPullLookAhead is the same look-ahead the
+    // blocking-trash trigger uses, so the pull aims at the very pack the normal
+    // flow would otherwise walk in to. kPullStickySlack is the extra distance a
+    // STICKY pull target (DungeonClearPullTargetValue) may drift past the
+    // look-ahead before it is released for a fresh scan — packs patrol while
+    // approached, and releasing right on the scan boundary would reintroduce
+    // the target flapping the sticky latch exists to remove.
+    constexpr float kPullLookAhead = 35.0f;
+    constexpr float kPullStickySlack = 10.0f;
 
     // Closed `GAMEOBJECT_TYPE_DOOR`s on the map, culled to within `radius` of
     // (cx,cy). Used to truncate the corridor trash scan at the first door so the
@@ -436,7 +447,7 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
 
     // Same look-ahead / band the blocking-trash trigger uses; keep them aligned
     // so the pull aims at the very pack the normal flow would otherwise pull.
-    constexpr float kLookAhead = 35.0f;
+    constexpr float kLookAhead = kPullLookAhead;
     constexpr float kWidth = 18.0f;
     constexpr float kConeRange = 35.0f;
     float const kConeHalfAngle = static_cast<float>(M_PI) / 3.0f;  // 60°
@@ -475,6 +486,64 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     }
 
     return trash;
+}
+Unit* DcTargeting::GetPullTarget(PlayerbotAI* botAI)
+{
+    if (!botAI)
+        return nullptr;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return nullptr;
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+    if (!ctx)
+        return nullptr;
+
+    Value<ObjectGuid>* value = ctx->GetValue<ObjectGuid>("dungeon clear pull target");
+    ObjectGuid guid = value->Get();
+    if (guid.IsEmpty())
+        return nullptr;
+
+    // Re-resolve the cached GUID every call so the position stays live and we
+    // never touch a pointer that may have been freed since the scan.
+    if (Unit* u = ObjectAccessor::GetUnit(*bot, guid))
+        if (u->IsAlive())
+            return u;
+
+    // Cached GUID went stale within the interval (the pack died / despawned).
+    // Force one recompute now instead of reporting "no target" for the rest of
+    // the interval: a commit must never aim at a corpse, and the governor must
+    // see the NEXT pack, not a phantom null. Steady state never reaches this.
+    value->Reset();
+    guid = value->Get();
+    if (guid.IsEmpty())
+        return nullptr;
+    Unit* fresh = ObjectAccessor::GetUnit(*bot, guid);
+    return (fresh && fresh->IsAlive()) ? fresh : nullptr;
+}
+bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Unit* u)
+{
+    if (!bot || !ctx || !u)
+        return false;
+    if (!u->IsAlive() || !bot->IsHostileTo(u))
+        return false;
+
+    // A pack a prior pull gave up on is handed to the normal walk-in engage;
+    // keeping it sticky would pin the scan on the very pack the pipeline is
+    // trying to move past.
+    DcPullContext const& pull =
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    if (!pull.abortTarget.IsEmpty() && u->GetGUID() == pull.abortTarget)
+        return false;
+
+    if (bot->GetExactDist2d(u) > kPullLookAhead + kPullStickySlack)
+        return false;
+    if (!DcEngageGeometry::IsLevelReachable(bot, u))
+        return false;
+    // Mirrors the fresh scan's veto: a door shutting on the pack releases it.
+    if (DcEngageGeometry::ClosedDoorBetween(bot, u->GetPositionX(),
+                                            u->GetPositionY(), u->GetPositionZ()))
+        return false;
+    return true;
 }
 Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
 {

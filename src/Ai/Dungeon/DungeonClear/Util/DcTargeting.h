@@ -65,6 +65,24 @@ public:
     // run). Reads the bot's AI values via `botAI`.
     static Unit* FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& next);
 
+    // Live pull-target resolve through the cached/sticky "dungeon clear pull
+    // target" GUID (see DungeonClearPullTargetValue) instead of re-running the
+    // corridor scan at every call site — the pull pipeline asks for it 5+ times
+    // per out-of-combat tick. Re-resolves the GUID via ObjectAccessor every call
+    // (the position stays live, no pointer outlives the tick) and forces one
+    // recompute when the cached GUID went stale within the interval (the pack
+    // died), so a commit never aims at a corpse. Nullptr when no pull target.
+    static Unit* GetPullTarget(PlayerbotAI* botAI);
+
+    // Validity predicate for KEEPING the sticky pull target between scans:
+    // alive, hostile, not the pull context's abort target, within the scan
+    // look-ahead plus a slack band, level-reachable, and no closed door between.
+    // Deliberately does NOT require it to still be the closest blocker or
+    // inside the scan corridor — packs drift while patrolling, and re-running
+    // corridor membership is exactly the target-flapping instability the sticky
+    // latch removes.
+    static bool IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Unit* u);
+
     // Scans every loaded creature on the bot's map for an alive hostile that
     // (a) is not already in combat with someone else and (b) the bot can path
     // to. Returns the closest such unit, or nullptr. Used by the stalled

@@ -84,6 +84,23 @@ namespace DungeonClearMath
                               std::uint32_t now, std::uint32_t graceMs,
                               std::uint32_t& ccSinceOut);
 
+    // Dynamic-verdict drop grace gate (pure). A standing Leeroy/Advanced verdict
+    // must survive a TRANSIENT no-target read (door veto flicker, long-path cache
+    // mid-rebuild, far-targets poll boundary): dropping it instantly flips the
+    // pull-mode bool, releasing the camp hold and stripping daze immunity for a
+    // single bad tick, then re-deriving everything — the party lurch. `targetPresent`
+    // is the caller's verdict that the pull target resolved this tick. `lostSince`
+    // is the timestamp the target first resolved null while the verdict was
+    // standing (0 = present). Each tick: while lost, arm/keep the latch and drop
+    // once it has persisted for `graceMs`; while present, disarm it. Mirrors
+    // ShouldAbortPullForCc's latch/clear contract (including the now==0 corner
+    // and graceMs==0 => drop on the first lost tick). Returns true to drop the
+    // verdict and writes the updated latch to `lostSinceOut` (persisted in
+    // DcPullContext::targetLostSince by the caller).
+    bool ShouldDropPullVerdict(bool targetPresent, std::uint32_t lostSince,
+                               std::uint32_t now, std::uint32_t graceMs,
+                               std::uint32_t& lostSinceOut);
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,
