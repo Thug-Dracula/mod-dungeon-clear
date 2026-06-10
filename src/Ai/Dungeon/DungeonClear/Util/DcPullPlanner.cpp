@@ -127,9 +127,12 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         return false;
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-    // Packmate radius — mobs this close to the target are its own pack and come
-    // along regardless; also a search/broad-phase pad. (ComputeSafeCamp uses the
-    // same value, so "pack" means the same thing across the feature.)
+    // Search/broad-phase pad ONLY: widens the grid scan below so no mob whose
+    // aggro reach could matter is missed. Pack identity in the estimate itself
+    // comes from each mob's own aggro reach and the engine packId in the math
+    // kernel, NOT from this constant. (ComputeSafeCamp has its own same-valued
+    // kPackRadius, and THERE it does decide packmate identity — which mobs come
+    // along to camp regardless and so don't count against camp clearance.)
     constexpr float kPackRadius = 12.0f;
 
     // Dynamic verdict = estimate how many mobs aggro if we Leeroy on top of the

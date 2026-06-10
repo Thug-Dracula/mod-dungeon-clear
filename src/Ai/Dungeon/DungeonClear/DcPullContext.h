@@ -74,6 +74,23 @@ struct DcPullContext
     uint32      decisionSince  = 0;              // last re-classification timestamp
 
     void Reset() { *this = DcPullContext{}; }
+
+    // The ONLY way to transition into Engage (used by DcSetPullPhase and
+    // DcLeaderSignal::AbortLeaderPull, which live in different TUs). Entering
+    // Engage ends the pull — camp arrival, CC-abort, evade release, return-leg
+    // wedge, or a forced abort — and the tag latch is per-PULL, not per-run: the
+    // next pull of the same still-alive pack must be free to tag it again.
+    // Without the clear, a re-pull of an evaded pack sits in "already tagged,
+    // hold for aggro" until the leg watchdog dumps it to the normal walk-in.
+    // abortTarget is deliberately NOT touched here: its lifecycle (set on tag
+    // timeout/wedge, cleared at the Engage->Idle cleanup) prevents pull livelock
+    // on a problem pack.
+    void EnterEngage(uint32 nowMs)
+    {
+        phase = DcPullPhase::Engage;
+        phaseSince = nowMs;
+        tagTarget = ObjectGuid::Empty;
+    }
 };
 
 #endif

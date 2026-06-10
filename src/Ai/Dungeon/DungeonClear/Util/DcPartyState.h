@@ -8,6 +8,7 @@
 
 #include <string>
 
+class AiObjectContext;
 class Player;
 
 class DcPartyState
@@ -36,6 +37,23 @@ public:
     // Dead members are not blocking — the party-died trigger handles them.
     // Callers pass RestMinHpPct()/RestMinMpPct() for the recovery thresholds.
     static bool IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread);
+
+    // Between-pulls gate: party HP/MP recovered (RestMinHpPct/RestMinMpPct) and
+    // spread within DungeonClear.PartyMaxSpread — except while a pull maneuver is
+    // actually HOLDING the party at camp (Forming/Advancing/Returning), where the
+    // spread requirement is deliberately waived: the party then holds back at camp
+    // while the tank scouts ahead, so a spread check measured against the tank
+    // would never pass and the tank would stop pulling after the first camp.
+    // While merely advancing between packs (Idle phase) the spread stays enforced
+    // so the tank still stops to let the party catch up.
+    //
+    // `requireNoLoot` additionally fails the gate while the bot has a corpse to
+    // walk to ("has available loot"): the trigger ladder wants that (never start
+    // a pull over pending loot), but the advance action must NOT — it handles
+    // loot separately in Execute behind a commit-timeout, and folding the loot
+    // flag in there would defeat the timeout. One shared body for both sides so
+    // they can never drift again (they were two copies, and had).
+    static bool IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot);
 
     // Returns true if any LIVING bot party member on the bot's map (excluding
     // `bot` itself) currently has a corpse it intends to loot — in any phase,

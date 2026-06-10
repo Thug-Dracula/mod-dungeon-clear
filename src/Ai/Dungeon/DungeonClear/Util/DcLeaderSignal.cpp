@@ -243,15 +243,24 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    // Pull behavior only matters while the run is live, unpaused, and pull mode
-    // is on. A paused/off leader holds the whole party via the normal gates.
+    // Pull behavior only matters while the run is live and pull mode is on. A
+    // paused/off leader holds the whole party via the normal gates — EXCEPT
+    // while a maneuver phase is actually holding the party at camp: `dc pause`
+    // mid-drag deliberately lets the drag finish (abandoning the tank with a
+    // live pack on it is worse; see DungeonClearPullManeuverTrigger), so the
+    // holding signal must survive the pause or the followers would be released
+    // from camp — and ReapStrandedPassives would strip their passive — while
+    // the tank is still dragging the pack home. Once the phase resolves to
+    // Engage/Idle the paused gate takes over and the run holds as usual.
     if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get() ||
         !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
         return false;
 
     DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
     if (pull.phase == DcPullPhase::Idle)
+        return false;
+    if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
         return false;
 
     phaseOut = static_cast<uint32>(pull.phase);
@@ -273,11 +282,19 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
     if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get() ||
         !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
         return false;
 
     DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    // Honor `paused` only while NO maneuver phase is holding: a pause mid-drag
+    // lets the drag finish (see DungeonClearPullManeuverTrigger), and the party
+    // must stay pinned at camp until it resolves to Engage — releasing them
+    // here would walk them into the inbound pack. Same rule as
+    // GetLeaderPullInfo above; `enabled` stays first so `dc off` still releases
+    // everyone instantly.
+    if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        return false;
     Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
     // is nothing to hold at, so let the caller fall back (briefly) to follow.
@@ -472,7 +489,9 @@ void DcLeaderSignal::AbortLeaderPull(Player* bot)
     DcPullContext& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
     if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
     {
-        pull.phase = DcPullPhase::Engage;
+        // Through EnterEngage (not a bare phase write) so the per-pull tag latch
+        // is cleared on this Engage entry too — same rule as DcSetPullPhase.
+        pull.EnterEngage(getMSTime());
         DC_PULL_INFO("[DC:{}] advanced-pull: leader pull aborted (forced to Engage) "
                      "-> party released", leader->GetName());
     }

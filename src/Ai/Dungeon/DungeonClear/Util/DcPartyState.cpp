@@ -52,7 +52,9 @@
 #include "Timer.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -117,6 +119,23 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
         }
     }
     return true;
+}
+bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
+{
+    if (!bot || !context)
+        return false;
+    if (requireNoLoot && context->GetValue<bool>("has available loot")->Get())
+        return false;
+    // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
+    // PartyMaxSpread actually takes effect — the registry marks it
+    // player-facing, and reading conf directly here silently ignored it.
+    float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+    // Waive the spread requirement ONLY while a pull maneuver is actually
+    // holding the party at camp — see the header comment for the full why.
+    if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(
+            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().phase)))
+        maxSpread = 100000.0f;
+    return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), maxSpread);
 }
 bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 {

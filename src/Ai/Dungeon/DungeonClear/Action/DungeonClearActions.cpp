@@ -519,33 +519,14 @@ namespace
         return false;               // locked, and the bot can't satisfy it
     }
 
-    // Party-readiness gate for resuming the advance (HP/MP/spread). Loot is
-    // handled separately in Execute so it can enforce a commit-timeout; see
-    // the loot-yield block there.
-    bool IsBetweenPullsReady(Player* bot)
+    // Party-readiness gate for resuming the advance (HP/MP/spread). Shared body
+    // in DcPartyState (one implementation with the trigger ladder, which had
+    // drifted as two copies). requireNoLoot is false here: loot is handled
+    // separately in Execute so it can enforce a commit-timeout; see the
+    // loot-yield block there.
+    bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
     {
-        // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
-        // PartyMaxSpread actually takes effect — the registry marks it
-        // player-facing, and reading conf directly here silently ignored it.
-        float maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
-        // Drop the spread requirement ONLY while a pull maneuver is actually in
-        // progress (Forming/Advancing/Returning): then the party deliberately holds
-        // back at camp while the tank scouts ahead, so a spread check measured
-        // against the TANK would never pass once it moves out — and the tank would
-        // stop advancing for good (the reported stall). While merely advancing
-        // between packs en route to the boss (Idle phase) — even in Dynamic mode
-        // when the NEXT pack is flagged Advanced — keep enforcing PartyMaxSpread so
-        // the tank still stops to let the party catch up. The pull itself is gated
-        // separately (pull trigger + Forming party-set gate).
-        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
-        {
-            DcPullContext const& pull =
-                botAI->GetAiObjectContext()->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
-            if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
-                maxSpread = 100000.0f;
-        }
-        return DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot),
-                                              DcPartyState::RestMinMpPct(bot), maxSpread);
+        return DcPartyState::IsBetweenPullsReady(bot, context, /*requireNoLoot*/ false);
     }
 
     // Commit a freshly-built path into the cache and reset the follower so we
@@ -1211,7 +1192,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                       "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
                       "for at-boss [partyReady={} availLoot={} canLoot={}]",
                       bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
-                      IsBetweenPullsReady(bot) ? 1 : 0,
+                      IsBetweenPullsReady(bot, context) ? 1 : 0,
                       AI_VALUE(bool, "has available loot") ? 1 : 0,
                       AI_VALUE(bool, "can loot") ? 1 : 0);
             if (bot->isMoving())
@@ -1306,7 +1287,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
 // The multiplier suppresses wander actions during the wait.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
 {
-    if (!IsBetweenPullsReady(bot))
+    if (!IsBetweenPullsReady(bot, context))
     {
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
@@ -3105,6 +3086,13 @@ namespace
     void DcSetPullPhase(AiObjectContext* context, DcPullPhase p)
     {
         DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        if (p == DcPullPhase::Engage)
+        {
+            // Engage entry also clears the per-pull tag latch; the invariant
+            // lives in DcPullContext::EnterEngage (shared with AbortLeaderPull).
+            pull.EnterEngage(getMSTime());
+            return;
+        }
         pull.phase = p;
         pull.phaseSince = getMSTime();
     }
