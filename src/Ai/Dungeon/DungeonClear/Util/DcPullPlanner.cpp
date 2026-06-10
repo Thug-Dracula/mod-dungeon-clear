@@ -728,15 +728,8 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
         return std::nullopt;
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-    // NOTE: maxDrag has never bounded this walk. The eager version clamped it to
-    // >= setback, then checked `along >= maxDrag` only after the reachability
-    // probe and the setback return — a reachable crumb at/past setback returned
-    // first, and an unreachable crumb `continue`d past the check, so the break
-    // could never execute. Kept in the signature (the call site still passes
-    // PullMaxDrag) and deliberately unused here to preserve selection exactly;
-    // making it a live bound on the unreachable-crumb continuation would be a
-    // (small) behavior change for a deliberate follow-up.
-    (void)maxDrag;
+    if (maxDrag < setback)
+        maxDrag = setback;
 
     Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
@@ -755,11 +748,18 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
     // setback are probed on the walk, and the pre-setback crumbs only as a
     // farthest-first fallback when no post-setback crumb was reachable. The
     // previous version probed every crumb as it walked — one navmesh path build
-    // PER CRUMB per scout tick. The selected crumb is identical either way: the
-    // first bucket probes the post-setback crumbs in the same walk order the
-    // eager loop did (its `continue` on an unreachable crumb never broke the
-    // walk), and the fallback probes farthest-first, which is exactly the
-    // eager loop's "farthest reachable" running maximum.
+    // PER CRUMB per scout tick. The selected crumb is the same: the first
+    // bucket probes the post-setback crumbs in walk order (matching the eager
+    // loop's "first reachable >= setback"), and the fallback probes
+    // farthest-first, which is exactly the eager loop's "farthest reachable"
+    // running maximum.
+    //
+    // maxDrag caps how far past the setback the unreachable-crumb continuation
+    // may keep probing before giving up and falling back. (The eager version's
+    // maxDrag break was dead — it sat after the probe's `continue` and the
+    // setback `return`, so the walk used to run to the end of the trail; the
+    // cap is live deliberately now, bounding the worst case at a couple of
+    // probes instead of the whole 128-crumb buffer.)
     constexpr float kJumpGuard = 12.0f;
     std::vector<std::pair<float, Position>> preSetback;  // (along, crumb), nearest-first
     Position prev = tankPos;
@@ -784,6 +784,8 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
         // the map.
         if (IsNavReachable(bot, c))
             return c;
+        if (along >= maxDrag)
+            break;  // searched past the cap without a reachable crumb — fall back
     }
 
     // Trail too short to reach the full setback (or nothing reachable past it):
