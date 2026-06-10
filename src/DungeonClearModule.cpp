@@ -280,6 +280,48 @@ public:
     }
 };
 
+// Spectator-camera death guard. THE crash fix for "body dies while spectating":
+// spectate possesses the camera dummy via a direct SetCharmedBy(player,
+// CHARM_TYPE_POSSESS) — an *aura-less* possession. When the player body (the
+// charmer) dies, Unit::setDeathState(JustDied) -> Unit::RemoveAllControlled ->
+// Player::StopCastingCharm runs FIRST, deep inside Unit::Kill and long before
+// Player::KillPlayer fires OnPlayerJustDied. StopCastingCharm only knows how to
+// undo possession by removing the possess AURA (Player.cpp RemoveAurasByType
+// SPELL_AURA_MOD_POSSESS); with no such aura, GetCharmGUID() stays set and the
+// function hits its ABORT() — a hard server crash. The existing OnPlayerJustDied
+// -> Stop net cannot prevent it; it runs too late.
+//
+// Fix: catch the lethal blow at the OnDamage chokepoint (Unit::DealDamage, fired
+// with the final post-absorb damage and the victim's health NOT yet reduced —
+// well before the `health <= damage` Kill at Unit.cpp). If a spectating player's
+// body is about to die, tear the possession down cleanly here. DcSpectator::Stop
+// runs the proper RemoveCharmedBy, so by the time setDeathState reaches
+// StopCastingCharm there is no charm left to choke on, and the body dies into the
+// normal ghost/release flow. Stop is idempotent; the OnPlayerJustDied/teardown
+// nets stay as backstops for the rare non-DealDamage instakill paths.
+class DungeonClearSpectatorDeathGuardScript : public UnitScript
+{
+public:
+    DungeonClearSpectatorDeathGuardScript()
+        : UnitScript("DungeonClearSpectatorDeathGuardScript", true, {
+            UNITHOOK_ON_DAMAGE
+        }) {}
+
+    void OnDamage(Unit* /*attacker*/, Unit* victim, uint32& damage) override
+    {
+        if (!victim || !victim->IsPlayer())
+            return;
+        // Only a lethal blow matters — a survivable hit must not eject the human
+        // from spectate. health is still the pre-damage value at this point.
+        if (damage < victim->GetHealth())
+            return;
+
+        Player* player = victim->ToPlayer();
+        if (DcSpectator::IsActive(player))
+            DcSpectator::Stop(player);
+    }
+};
+
 // Drives the orphaned-follow reaper once per world tick. A non-tank DC follower
 // installs a persistent MoveFollow generator to chase the tank; its own
 // follow-tank action tears that down when the DC tank goes away — but only while
@@ -326,5 +368,6 @@ void AddSC_dungeon_clear_module()
     // it sorts after playerbots' AI-update hook (see the ordering contract).
     new DungeonClearSpectatorMoverBeginScript();
     new DungeonClearSpectatorPlayerScript();
+    new DungeonClearSpectatorDeathGuardScript();
     new DungeonClearReaperScript();
 }
