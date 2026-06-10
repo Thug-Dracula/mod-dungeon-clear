@@ -95,6 +95,56 @@ namespace
     }
 }
 
+// Spectator AI-mover window, opening half. Playerbots drives every bot's AI
+// (including a self-bot's) from its PlayerScript::OnPlayerAfterUpdate, and many
+// bot actions are injected into core packet handlers (HandleUseItemOpcode,
+// HandleGameObjectUseOpcode, …) that silently drop when the session's m_mover
+// isn't the player — exactly the state spectate creates (the mover is the
+// camera dummy). Net effect: a spectating warlock self-bot could not soulstone
+// itself, use a healthstone, potion, or eat/drink. Fix: bracket playerbots'
+// hook with a scoped swap of m_mover back to the player.
+//
+// ORDERING CONTRACT (what makes the bracket work): hooks run in script
+// registration order (ScriptRegistry::EnabledHooks appends in AddScript
+// order), and the generated module loader registers mod-dungeon-clear before
+// mod-playerbots (alphabetical) — so this Begin script, registered in
+// AddSC_dungeon_clear_module(), fires BEFORE playerbots' UpdateAI. The End
+// script is registered on the first world tick from
+// DungeonClearRegistrarWorldScript, which lands it after every load-time
+// script, closing the window AFTER playerbots. All three hooks run
+// back-to-back on the player's map thread; client movement packets for the
+// dummy are processed in the session phases, never inside the window.
+class DungeonClearSpectatorMoverBeginScript : public PlayerScript
+{
+public:
+    DungeonClearSpectatorMoverBeginScript()
+        : PlayerScript("DungeonClearSpectatorMoverBeginScript", {
+            PLAYERHOOK_ON_AFTER_UPDATE
+        }) {}
+
+    void OnPlayerAfterUpdate(Player* player, uint32 /*p_time*/) override
+    {
+        DcSpectator::BeginBotAiMoverWindow(player);
+    }
+};
+
+// Closing half of the mover window — see DungeonClearSpectatorMoverBeginScript
+// for the full story. NOT registered in AddSC_dungeon_clear_module(): it must
+// be instantiated on the first world tick so it sorts after playerbots' hook.
+class DungeonClearSpectatorMoverEndScript : public PlayerScript
+{
+public:
+    DungeonClearSpectatorMoverEndScript()
+        : PlayerScript("DungeonClearSpectatorMoverEndScript", {
+            PLAYERHOOK_ON_AFTER_UPDATE
+        }) {}
+
+    void OnPlayerAfterUpdate(Player* player, uint32 /*p_time*/) override
+    {
+        DcSpectator::EndBotAiMoverWindow(player);
+    }
+};
+
 class DungeonClearRegistrarWorldScript : public WorldScript
 {
 public:
@@ -124,6 +174,13 @@ public:
         dc_access::SharedActionContexts()->Add(new DungeonClearActionContext());
         dc_access::SharedTriggerContexts()->Add(new DungeonClearTriggerContext());
         dc_access::SharedValueContexts()->Add(new DungeonClearValueContext());
+
+        // Closing half of the spectator AI-mover window. Registered HERE (first
+        // world tick, not AddSC) so its hook sorts after playerbots' UpdateAI
+        // hook — see DungeonClearSpectatorMoverEndScript. Safe to register now:
+        // map threads only run inside sMapMgr->Update, never concurrently with
+        // this world-thread hook.
+        new DungeonClearSpectatorMoverEndScript();
 
         LOG_INFO("module", "mod-dungeon-clear: registered DungeonClear contexts "
                            "(strategy/action/trigger/value) into all class "
@@ -265,6 +322,9 @@ void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
+    // Opening half only — the End script registers on the first world tick so
+    // it sorts after playerbots' AI-update hook (see the ordering contract).
+    new DungeonClearSpectatorMoverBeginScript();
     new DungeonClearSpectatorPlayerScript();
     new DungeonClearReaperScript();
 }

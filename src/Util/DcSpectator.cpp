@@ -15,6 +15,8 @@
 
 #include "Util/DcSpectator.h"
 
+#include <atomic>
+#include <mutex>
 #include <unordered_map>
 
 #include "Chat.h"
@@ -29,8 +31,26 @@ namespace
 {
     // player guid -> possessed camera-dummy guid. Never store the dummy as a
     // raw Creature* — resolve via ObjectAccessor at each use so a despawn race
-    // can't dangle. World-thread only, so no locking.
+    // can't dangle. Guarded by g_mutex: teardown hooks fire on map threads and
+    // the AI mover window reads this from every map thread (see header).
+    std::mutex g_mutex;
     std::unordered_map<ObjectGuid, ObjectGuid> g_spectators;
+
+    // Lock-free fast path for the per-tick mover window: zero on the
+    // overwhelmingly common no-spectator server, so the window costs one
+    // relaxed atomic load per bot tick.
+    std::atomic<uint32> g_activeCount{0};
+
+    // Snapshot the dummy guid for a player, or false when not spectating.
+    bool LookupDummy(Player* player, ObjectGuid& dummyGuid)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        auto it = g_spectators.find(player->GetGUID());
+        if (it == g_spectators.end())
+            return false;
+        dummyGuid = it->second;
+        return true;
+    }
 
     void Announce(Player* player, char const* msg)
     {
@@ -50,7 +70,10 @@ namespace DcSpectator
 {
     bool IsActive(Player* player)
     {
-        return player && g_spectators.count(player->GetGUID()) != 0;
+        if (!player)
+            return false;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return g_spectators.count(player->GetGUID()) != 0;
     }
 
     bool Start(Player* player, std::string* whyNot)
@@ -100,7 +123,11 @@ namespace DcSpectator
         dummy->SetSpeed(MOVE_FLIGHT, speed, true);
         dummy->SetSpeed(MOVE_RUN, speed, true);
 
-        g_spectators[player->GetGUID()] = dummy->GetGUID();
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_spectators[player->GetGUID()] = dummy->GetGUID();
+        }
+        g_activeCount.fetch_add(1, std::memory_order_release);
         Announce(player, "Spectator camera on — your character stays under bot control. Toggle again to return.");
         return true;
     }
@@ -110,12 +137,16 @@ namespace DcSpectator
         if (!player)
             return;
 
-        auto it = g_spectators.find(player->GetGUID());
-        if (it == g_spectators.end())
-            return;
-
-        ObjectGuid const dummyGuid = it->second;
-        g_spectators.erase(it);
+        ObjectGuid dummyGuid;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            auto it = g_spectators.find(player->GetGUID());
+            if (it == g_spectators.end())
+                return;
+            dummyGuid = it->second;
+            g_spectators.erase(it);
+        }
+        g_activeCount.fetch_sub(1, std::memory_order_release);
 
         if (Creature* dummy = ObjectAccessor::GetCreature(*player, dummyGuid))
         {
@@ -145,5 +176,39 @@ namespace DcSpectator
             return true;
         }
         return Start(player, whyNot);
+    }
+
+    void BeginBotAiMoverWindow(Player* player)
+    {
+        if (!player || g_activeCount.load(std::memory_order_acquire) == 0)
+            return;
+
+        ObjectGuid dummyGuid;
+        if (!LookupDummy(player, dummyGuid))
+            return;
+
+        // Only swap when the mover really is our dummy — if some other charm
+        // owns the mover, leave it alone.
+        Unit* mover = player->m_mover;
+        if (mover && mover->GetGUID() == dummyGuid)
+            player->m_mover = player;   // raw swap; no SetMover side effects
+    }
+
+    void EndBotAiMoverWindow(Player* player)
+    {
+        if (!player || g_activeCount.load(std::memory_order_acquire) == 0)
+            return;
+
+        ObjectGuid dummyGuid;
+        if (!LookupDummy(player, dummyGuid))
+            return;     // Stop() ran mid-window and already restored control
+
+        if (player->m_mover != player)
+            return;     // window never opened (foreign charm) — nothing to undo
+
+        if (Creature* dummy = ObjectAccessor::GetCreature(*player, dummyGuid))
+            player->m_mover = dummy;
+        // Dummy unresolvable while still registered: leave the mover on the
+        // player; the teardown safety net will Stop() and clear the half-state.
     }
 }
