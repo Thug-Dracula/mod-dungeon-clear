@@ -101,6 +101,18 @@ namespace DungeonClearMath
                                std::uint32_t now, std::uint32_t graceMs,
                                std::uint32_t& lostSinceOut);
 
+    // Leeroy roll-in gate (pure). True when the party's scout-lag hold should
+    // release because the tank is committing to a Leeroy on the verdicted pack:
+    // the standing decision is Leeroy (1) and the tank is within
+    // `commitRange + lead` (2D) of the live target. `decision` 0 (none, still
+    // scouting) and 2 (Advanced — the camp machinery owns the party) never roll
+    // in, nor does a dead/unresolvable target. The game-state resolution
+    // (decision, live target, distances) stays in
+    // DcLeaderSignal::IsLeaderDynamicScouting; this carries only the decision
+    // logic so it is unit-testable.
+    bool ShouldRollInForLeeroy(std::uint32_t decision, bool targetAlive,
+                               float tankToTarget2d, float commitRange, float lead);
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,

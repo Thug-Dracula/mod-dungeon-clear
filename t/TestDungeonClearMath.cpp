@@ -415,3 +415,47 @@ TEST(DungeonClearVerdictGraceTest, ZeroNowLatchesToOne)
     EXPECT_FALSE(ShouldDropPullVerdict(false, 0u, 0u, 1500u, out));
     EXPECT_EQ(out, 1u);
 }
+
+// ---------------------------------------------------------------------------
+// ShouldRollInForLeeroy — the Leeroy roll-in scout-lag release gate.
+// ---------------------------------------------------------------------------
+using DungeonClearMath::ShouldRollInForLeeroy;
+
+// Only decision == 1 (standing Leeroy) releases; 0 (none, still scouting) and
+// 2 (Advanced — the camp machinery owns the party) hold the lag even in range.
+TEST(DungeonClearRollInTest, OnlyLeeroyDecisionRollsIn)
+{
+    EXPECT_FALSE(ShouldRollInForLeeroy(0u, true, 10.0f, 20.0f, 8.0f));
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 10.0f, 20.0f, 8.0f));
+    EXPECT_FALSE(ShouldRollInForLeeroy(2u, true, 10.0f, 20.0f, 8.0f));
+}
+
+// A dead/unresolvable verdict target never rolls in, regardless of distance.
+TEST(DungeonClearRollInTest, DeadTargetNeverRollsIn)
+{
+    EXPECT_FALSE(ShouldRollInForLeeroy(1u, false, 10.0f, 20.0f, 8.0f));
+    EXPECT_FALSE(ShouldRollInForLeeroy(1u, false, 0.0f, 20.0f, 8.0f));
+}
+
+// Boundary is inclusive at commitRange + lead; just beyond it holds.
+TEST(DungeonClearRollInTest, BoundaryAtCommitPlusLead)
+{
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 28.0f, 20.0f, 8.0f));
+    EXPECT_FALSE(ShouldRollInForLeeroy(1u, true, 28.1f, 20.0f, 8.0f));
+}
+
+// lead == 0 releases only once the tank reaches the commit range itself.
+TEST(DungeonClearRollInTest, ZeroLeadReleasesOnlyAtCommitRange)
+{
+    EXPECT_FALSE(ShouldRollInForLeeroy(1u, true, 20.5f, 20.0f, 0.0f));
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 20.0f, 20.0f, 0.0f));
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 15.0f, 20.0f, 0.0f));
+}
+
+// Degenerate distances (tank on top of / past the pack) still roll in — the
+// tank could not be more committed.
+TEST(DungeonClearRollInTest, ZeroOrNegativeDistanceRollsIn)
+{
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 0.0f, 20.0f, 8.0f));
+    EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, -1.0f, 20.0f, 8.0f));
+}

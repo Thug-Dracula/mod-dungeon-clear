@@ -161,6 +161,20 @@ bool DungeonClearMath::ShouldDropPullVerdict(bool targetPresent, std::uint32_t l
     return elapsed >= graceMs;
 }
 
+bool DungeonClearMath::ShouldRollInForLeeroy(std::uint32_t decision, bool targetAlive,
+                                             float tankToTarget2d, float commitRange,
+                                             float lead)
+{
+    // Only a standing LEEROY verdict (1) commits the tank to charging the pack.
+    // No verdict (0) means it is still sizing the pack up, and Advanced (2)
+    // hands the party to hold-at-camp — neither may release the scout lag.
+    if (decision != 1u || !targetAlive)
+        return false;
+    // The boundary is inclusive: at exactly commitRange + lead the tank is
+    // committing, so the party starts rolling.
+    return tankToTarget2d <= commitRange + lead;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)

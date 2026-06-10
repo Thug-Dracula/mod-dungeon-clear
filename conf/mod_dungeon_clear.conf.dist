@@ -626,3 +626,21 @@ DungeonClear.PullCombatSpread = 6.0
 #
 
 DungeonClear.PullDynamicPartyLag = 15.0
+
+#
+#    DungeonClear.PullDynamicRollInLead
+#        Dynamic pull only. How far outside the tank's commit range (yards) the
+#        party's scout lag (above) releases when the standing verdict is Leeroy.
+#        Once the tank closes to commit range + this lead on the verdicted pack it
+#        is committing to the charge, so the party stops holding at the lag ring
+#        and closes the gap during the tank's final approach — arriving within a
+#        second or two of first contact like a real group, instead of standing
+#        flat-footed until combat registers and only then starting a 15-20yd run.
+#        0 releases only at commit range itself; larger values start the party
+#        rolling earlier alongside the tank. Advanced verdicts are unaffected (the
+#        party holds at camp as before).
+#
+#        Default: 8.0
+#
+
+DungeonClear.PullDynamicRollInLead = 8.0

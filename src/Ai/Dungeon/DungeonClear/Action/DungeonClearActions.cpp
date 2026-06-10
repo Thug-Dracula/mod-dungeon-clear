@@ -819,6 +819,20 @@ namespace
         }
     }
 
+    // Face `unit` if we're meaningfully off-axis. One facing packet when needed,
+    // none when already facing (the HasInArc guard keeps it idempotent across a
+    // multi-second hold), so it is safe to call every hold tick. Used at the
+    // pull's park-and-wait sites: a tank parked side-on to the pack it is about
+    // to pull, or a party staring in random directions at camp, are instant bot
+    // tells. Never call this mid-glide — facing packets on a moving bot cause
+    // rubber-banding.
+    void DcFaceIfNeeded(Player* bot, Unit* unit)
+    {
+        if (!bot || !unit || unit == bot || bot->HasInArc(CAST_ANGLE_IN_FRONT, unit))
+            return;
+        ServerFacade::instance().SetFacingTo(bot, unit);
+    }
+
     // --- Submerged swim legs (Tier A) ------------------------------------
     // 3D proximity at which the swim cursor treats a point as reached.
     constexpr float DC_SWIM_POINT_REACHED = 3.0f;
@@ -2012,7 +2026,21 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
             camp.GetPositionZ() == 0.0f;
         if (campUnset)
-            camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        {
+            // Seed from the trail (setback behind the tank along walked ground)
+            // rather than at the tank's feet, for the same monotone-party-motion
+            // reason as the dynamic-upgrade seed in UpdateDynamicPullMode: a
+            // feet-seed has the party walk forward TO the tank instead of holding
+            // behind it. ComputeTrailCamp falls back to the tank position itself
+            // when no trail exists yet (mode just toggled on, tank hasn't moved).
+            float const setback = DcSettings::GetFloat(bot, "PullSetback");
+            float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+            std::optional<Position> const seed =
+                DcPullPlanner::ComputeTrailCamp(botAI, setback, maxDrag);
+            camp = seed ? *seed
+                        : Position(bot->GetPositionX(), bot->GetPositionY(),
+                                   bot->GetPositionZ());
+        }
 
         // TRAIL the camp forward while merely scouting (phase Idle, out of combat).
         // Without this the camp stays frozen at the LAST fight's spot until a new
@@ -3235,6 +3263,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             StopActiveSplineGlide(bot);
             if (bot->isMoving())
                 bot->StopMoving();
+            // Square up on the pack for the dwell at the commit spot.
+            DcFaceIfNeeded(bot, trash);
             DcSetPullPhase(context, DcPullPhase::Forming);
             // clearance == -1 means no other pack is anywhere near the camp.
             float const clrDisp =
@@ -3257,6 +3287,9 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // the party is actually set, so the pull never drags into open ground.
             if (bot->isMoving())
                 bot->StopMoving();
+            // Keep facing the pack across the multi-second dwell (idempotent —
+            // re-faces only if the pack repositioned us off-axis).
+            DcFaceIfNeeded(bot, DcTargeting::GetPullTarget(botAI));
 
             bool const partySet =
                 DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
@@ -3315,6 +3348,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         // backstop if the tag somehow drew no aggro.
                         if (bot->isMoving())
                             bot->StopMoving();
+                        DcFaceIfNeeded(bot, trash);
                         DC_PULL_TRACE("[DC:{}] pull advancing: tagged, holding for aggro "
                                       "({:.1f}yd to target)", bot->GetName(),
                                       bot->GetExactDist(trash));
@@ -3413,6 +3447,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 // backstop if nothing aggros (resisted / non-hostile).
                 if (bot->isMoving())
                     bot->StopMoving();
+                DcFaceIfNeeded(bot, trash);
                 DC_PULL_TRACE("[DC:{}] pull advancing: at aggro edge ({:.1f}yd, "
                               "hold for aggro)", bot->GetName(), toTag);
                 return true;
@@ -3751,6 +3786,9 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     {
         if (bot->isMoving())
             bot->StopMoving();
+        // A waiting party watches their tank work: face the LEADER (not the
+        // pack) once parked — never while still walking to camp.
+        DcFaceIfNeeded(bot, DcLeaderSignal::FindLeaderTank(bot));
         DC_PULL_TRACE("[DC:{}] hold-at-camp: parked ({:.1f}yd, passive={})",
                       bot->GetName(), toCamp, passive);
         // During a holding phase (the tank is tagging) OWN the tick so nothing can

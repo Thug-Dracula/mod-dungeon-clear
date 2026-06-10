@@ -166,6 +166,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     // then does the party arrive (it holds at camp for Advanced, or catches up to
     // charge once the tank commits the Leeroy). See DungeonClearFollowTankAction.
     { "PullDynamicPartyLag",   DcType::Float, 15,   6,  40,  true  },
+    // Dynamic pull only: Leeroy roll-in. How far OUTSIDE the tank's commit range
+    // (yd) the scout lag above releases when the standing verdict is Leeroy — the
+    // tank is committing to the charge, so the party closes the gap DURING its
+    // final approach and arrives roughly with first contact, instead of standing
+    // flat-footed at the lag ring until combat registers and only then starting a
+    // 15-20yd run (the 2-3s "bots watching their tank fight" beat on every Leeroy).
+    // 0 = release only once the tank reaches commit range; larger = the party
+    // rolls earlier alongside the tank. See DcLeaderSignal::IsLeaderDynamicScouting.
+    { "PullDynamicRollInLead", DcType::Float,  8,   0,  30,  true  },
 
     // Liquid avoidance. The route producers include water/magma polys so the
     // bot CAN swim/wade when there is no dry alternative, but with these per-area

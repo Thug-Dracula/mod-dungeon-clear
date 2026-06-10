@@ -54,6 +54,7 @@
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -397,7 +398,36 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
         return false;
     DcPullContext const& pull =
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
-    return pull.phase == DcPullPhase::Idle;
+    if (pull.phase != DcPullPhase::Idle)
+        return false;
+
+    // Leeroy roll-in: with a standing Leeroy verdict, release the lag as the tank
+    // closes to commit range + PullDynamicRollInLead on the verdicted pack — the
+    // tank is committing to the charge, so the party closes the remaining gap
+    // DURING the final approach and arrives roughly with first contact, instead
+    // of standing flat-footed at the lag ring until combat registers and only
+    // then starting a 15-20yd run. Advanced verdicts are untouched: the camp
+    // machinery owns the party there (and the Advanced flip after a release is
+    // covered too — hold-at-camp outranks follow-tank, so the party walks back).
+    if (!pull.decisionTarget.IsEmpty())
+    {
+        Unit* target = ObjectAccessor::GetUnit(*leader, pull.decisionTarget);
+        bool const targetAlive = target && target->IsAlive();
+        float const tankToTarget = targetAlive ? leader->GetExactDist2d(target) : 0.0f;
+        float const commitRange = targetAlive
+            ? DcEngageGeometry::PullCommitRange(leader, target, DC_PULL_START_RANGE)
+            : 0.0f;
+        float const lead = DcSettings::GetFloat(leader, "PullDynamicRollInLead");
+        if (DungeonClearMath::ShouldRollInForLeeroy(pull.decision, targetAlive,
+                                                    tankToTarget, commitRange, lead))
+        {
+            DC_PULL_TRACE("[DC:{}] scout-lag: leeroy roll-in — tank {:.1f}yd from "
+                          "pack (commit {:.1f} + lead {:.1f}) -> lag released",
+                          bot->GetName(), tankToTarget, commitRange, lead);
+            return false;
+        }
+    }
+    return true;
 }
 bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out)
 {

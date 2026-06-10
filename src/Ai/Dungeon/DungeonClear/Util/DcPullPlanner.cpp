@@ -402,12 +402,26 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             return;
         context->GetValue<bool>("dungeon clear pull mode")->Set(want);
         DcLeaderSignal::SetLeaderDazeImmunity(bot, want);
-        // Switching to Advanced: seed a camp at the tank so followers have an
-        // immediate hold point (mirrors DcPullAction's On activation); the pull
-        // pipeline overwrites it with the real safe camp on commit.
+        // Switching to Advanced: seed a camp so followers have an immediate hold
+        // point (mirrors DcPullAction's On activation); the pull pipeline
+        // overwrites it with the real safe camp on commit. Seed from the
+        // breadcrumb trail — setback BEHIND the tank along walked ground — not at
+        // the tank's feet: on a mid-approach LEEROY->ADVANCED upgrade the tank is
+        // well forward (sometimes near the pack), and a feet-seed briefly surged
+        // the party TOWARD the danger until the Idle prospective-camp publish
+        // overwrote it a tick or two later. The trail seed keeps the party's
+        // motion monotone (toward ground behind the tank, never forward past it);
+        // ComputeTrailCamp itself falls back to the tank position when no trail
+        // exists yet (fresh run) — identical to the old seed then.
         if (want)
-            pull.camp =
-                Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        {
+            float const setback = DcSettings::GetFloat(bot, "PullSetback");
+            float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+            std::optional<Position> const seed = ComputeTrailCamp(botAI, setback, maxDrag);
+            pull.camp = seed ? *seed
+                             : Position(bot->GetPositionX(), bot->GetPositionY(),
+                                        bot->GetPositionZ());
+        }
     };
 
     Unit* target = DcTargeting::GetPullTarget(botAI);
