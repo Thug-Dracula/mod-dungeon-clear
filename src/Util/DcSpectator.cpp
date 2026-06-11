@@ -21,6 +21,7 @@
 
 #include "Chat.h"
 #include "Creature.h"
+#include "Map.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "TemporarySummon.h"
@@ -82,6 +83,12 @@ namespace DcSpectator
             return Refuse(whyNot, "No player.");
         if (IsActive(player))
             return Refuse(whyNot, "Already spectating.");
+        // Spectator mode is a dungeon-clear feature: the camera follows bots
+        // running an instance. Outside a dungeon there is nothing to spectate,
+        // and possessing a WORLD_TRIGGER in the open world has caused issues.
+        Map* map = player->GetMap();
+        if (!map || !map->IsDungeon())
+            return Refuse(whyNot, "Spectator mode is only available inside a dungeon.");
         if (!player->IsAlive())
             return Refuse(whyNot, "You are dead.");
         if (player->GetVehicle())
