@@ -31,6 +31,19 @@ public:
     bool IsActive() override;
 };
 
+// Fires at a room-wide-aggro boss (RoomAggroRegistry) while room trash remains
+// AND the player's chosen pull type is NOT pull-to-camp for this pack (pull mode
+// current is false: Off, or Dynamic chose Leeroy). Drives the Leeroy room-clear
+// engage. When pull-to-camp IS in effect the higher-priority pull pipeline owns
+// the room clear instead, so this stands down. Either way the boss pull stays
+// gated until the room is clear. See DcTargeting::IsRoomClearActive.
+class DungeonClearRoomTrashTrigger : public Trigger
+{
+public:
+    DungeonClearRoomTrashTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear room trash", 1) {}
+    bool IsActive() override;
+};
+
 class DungeonClearPartyDiedTrigger : public Trigger
 {
 public:

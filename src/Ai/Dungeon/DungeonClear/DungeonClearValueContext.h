@@ -16,6 +16,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearPartyTankValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearPullModeCurrentValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearPullTargetValue.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearRoomTrashValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Ai/Dungeon/DungeonClear/Value/NextDungeonBossValue.h"
 
@@ -43,6 +44,7 @@ public:
         creators["dungeon clear long path"] = &DungeonClearValueContext::dungeon_clear_long_path;
         creators["dungeon clear current hop"] = &DungeonClearValueContext::dungeon_clear_current_hop;
         creators["dungeon clear far targets"] = &DungeonClearValueContext::dungeon_clear_far_targets;
+        creators["dungeon clear room trash remaining"] = &DungeonClearValueContext::dungeon_clear_room_trash_remaining;
         creators["dungeon clear blocking door"] = &DungeonClearValueContext::dungeon_clear_blocking_door;
         creators["dungeon clear engage trash target"] = &DungeonClearValueContext::dungeon_clear_engage_trash_target;
         creators["dungeon clear follower state"] = &DungeonClearValueContext::dungeon_clear_follower_state;
@@ -79,6 +81,7 @@ private:
     static UntypedValue* dungeon_clear_long_path(PlayerbotAI* ai) { return new DungeonClearLongPathValue(ai); }
     static UntypedValue* dungeon_clear_current_hop(PlayerbotAI* ai) { return new DungeonClearCurrentHopValue(ai); }
     static UntypedValue* dungeon_clear_far_targets(PlayerbotAI* ai) { return new DungeonClearFarTargetsValue(ai); }
+    static UntypedValue* dungeon_clear_room_trash_remaining(PlayerbotAI* ai) { return new DungeonClearRoomTrashValue(ai); }
     static UntypedValue* dungeon_clear_blocking_door(PlayerbotAI* ai) { return new DungeonClearBlockingDoorValue(ai); }
     static UntypedValue* dungeon_clear_engage_trash_target(PlayerbotAI* ai) { return new DungeonClearEngageTrashTargetValue(ai); }
     static UntypedValue* dungeon_clear_follower_state(PlayerbotAI* ai) { return new DungeonClearFollowerStateValue(ai); }

@@ -89,6 +89,17 @@ inline constexpr DcSettingDef kDcSettings[] =
     // See DungeonClearRegroupCombat{Trigger,Action}.
     { "CombatRegroup",         DcType::Bool,   1,   0,   1,  true  },
     { "CombatRegroupDistance", DcType::Float, 17,  10,  60,  true  },
+    // Room-wide-aggro pre-clear (RoomAggroRegistry). ClearRoomBeforeBoss is the
+    // master toggle: for the handful of bosses that force the whole room into
+    // combat on engage (SM Cathedral, Shadow Lab, Pandemonius, Dagran, …), clear
+    // that room BEFORE pulling the boss instead of eating the pile. The clear
+    // honours the chosen pull type. RoomClearTimeout is the no-progress give-up:
+    // if the remaining room trash hasn't dropped for this many seconds (an
+    // unreachable straggler / a respawn churn) the tank stops holding and pulls
+    // the boss anyway, noting it in chat. 0 = never give up (not recommended).
+    { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
+    { "RoomClearTimeout",      DcType::UInt,  30,   0,  300,  true  },
+
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },
     { "BossEngageRangeCap",    DcType::Float, 30,  10,  60,  true  },
     { "TrashWidthFloor",       DcType::Float,  8,   4,  30,  true  },

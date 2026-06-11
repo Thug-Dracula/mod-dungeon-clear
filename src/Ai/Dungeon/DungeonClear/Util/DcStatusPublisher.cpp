@@ -275,6 +275,15 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
             // — or a door stall whose door has not yet been re-verified open.
             stateStr = "stalled";
         }
+        // Room-wide-aggro boss: the tank is deliberately clearing the room before
+        // pulling the boss. Reported after loot/rest (which are truthful sub-states
+        // between room pulls) but before the generic moving/idle, so the panel
+        // explains why the tank is working trash next to a boss it isn't pulling.
+        else if (DcTargeting::IsRoomClearActive(bot, context))
+        {
+            stateStr = "clearing_room";
+            detail = "Clearing the room before pulling " + bossName + ".";
+        }
         else
         {
             // No blocking condition — report what the advance action is up to,

@@ -2531,6 +2531,24 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
     return true;
 }
 
+bool DungeonClearRoomClearAction::Execute(Event /*event*/)
+{
+    // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
+    if (AI_VALUE(bool, "dungeon clear paused"))
+        return false;
+
+    // Nearest remaining room-trash unit (the value already excludes the boss,
+    // other encounter bosses, anything inside the boss's aggro sphere, and
+    // unreachable/door-blocked units). EngageDirect walks to ITS attack range —
+    // not toward the boss — so the careful nearest-first clear never face-pulls
+    // the boss.
+    Unit* target = DcTargeting::NearestRoomTrash(bot, context);
+    if (!target)
+        return false;
+
+    return EngageDirect(target);
+}
+
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
     Unit* target = DcTargeting::FindNearestReachableHostile(bot);
@@ -3358,6 +3376,41 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 DcEngageGeometry::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
             if (toTrash > commitRange)
             {
+                // Room-wide-aggro pre-clear (RoomAggroRegistry): the pull is aimed
+                // at a ROOM mob near a flagged boss, not a corridor pack. Yielding
+                // to Advance here would glide the tank toward the BOSS and wake it
+                // — exactly what the pre-clear exists to prevent. Instead publish a
+                // prospective camp (so the party trails up in parallel) and walk
+                // straight to the room-trash unit until it is within commit range,
+                // then fall through to the normal Forming handshake below.
+                if (DcTargeting::IsRoomClearActive(bot, context))
+                {
+                    float const sb = DcSettings::GetFloat(bot, "PullSetback");
+                    float const sr = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+                    float const md = DcSettings::GetFloat(bot, "PullMaxDrag");
+                    float clr = 0.0f, drg = 0.0f;
+                    if (std::optional<Position> ahead = DcPullPlanner::ComputeSafeCamp(
+                            botAI, trash, sb, sr, md, clr, drg))
+                    {
+                        bool const unset = camp.GetPositionX() == 0.0f &&
+                                           camp.GetPositionY() == 0.0f &&
+                                           camp.GetPositionZ() == 0.0f;
+                        pull.campPublishedMs = now;
+                        if (unset || ahead->GetExactDist2d(trash) + 3.0f <
+                                         camp.GetExactDist2d(trash))
+                            camp = *ahead;
+                    }
+                    MoveTo(trash->GetMapId(), trash->GetPositionX(),
+                           trash->GetPositionY(), trash->GetPositionZ(),
+                           /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                           /*exact_waypoint*/ false,
+                           MovementPriority::MOVEMENT_NORMAL);
+                    DC_PULL_TRACE("[DC:{}] pull idle (room-clear): closing on room "
+                                  "trash {} at {:.1f}yd (commit {:.1f})",
+                                  bot->GetName(), trash->GetGUID().ToString(),
+                                  toTrash, commitRange);
+                    return true;
+                }
                 float const setback = DcSettings::GetFloat(bot, "PullSetback");
                 float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
                 float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");

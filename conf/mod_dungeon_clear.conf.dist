@@ -237,6 +237,39 @@ DungeonClear.DynamicAggroRange = 1
 DungeonClear.AggroRangeMargin = 2.0
 
 #
+#    DungeonClear.ClearRoomBeforeBoss
+#        1 (default): for the handful of bosses that force the WHOLE room into
+#        combat the instant they are engaged (a scripted CallForHelp / grid pull
+#        — e.g. SM Cathedral's Mograine, Shadow Labyrinth's Blackheart,
+#        Mana-Tombs' Pandemonius, BRD's Emperor Dagran), the tank clears that
+#        room BEFORE pulling the boss instead of eating the whole pile when the
+#        pull goes off. The room is the script's own radius-sphere around the
+#        live boss; anything glued so close to the boss it can't be separated is
+#        left to come with the boss. The clear honours your chosen pull type
+#        (Off/Leeroy walks in and tanks each pack; Advanced/Dynamic pulls them
+#        back to a safe camp away from the boss). 0 disables — the boss is pulled
+#        with the room alive, as it was before this feature.
+#
+#        Default: 1
+#
+
+DungeonClear.ClearRoomBeforeBoss = 1
+
+#
+#    DungeonClear.RoomClearTimeout
+#        Seconds the tank keeps holding the boss pull to clear the room (see
+#        ClearRoomBeforeBoss) without the remaining count dropping, before it
+#        gives up and pulls the boss anyway (noting it in chat). Stops a livelock
+#        on an unreachable straggler or a respawn that keeps the count flat. Any
+#        real progress re-arms the clock.
+#            0 = never give up (not recommended — can livelock)
+#
+#        Default: 30
+#
+
+DungeonClear.RoomClearTimeout = 30
+
+#
 #    DungeonClear.BossEngageRangeFloor / DungeonClear.BossEngageRangeCap
 #        Clamp the dynamic boss engage hand-off distance to [floor, cap] yards.
 #        The floor keeps the tank from having to reach point-blank melee on a
