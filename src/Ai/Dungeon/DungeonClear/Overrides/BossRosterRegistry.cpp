@@ -15,7 +15,7 @@ namespace
     // that flows through the existing entry-keyed machinery (skip / sticky /
     // cleared-anchor latch) without colliding with any spawn.
     constexpr uint32 OBJECTIVE_ENTRY_BASE = 0x4F000000u;
-    [[maybe_unused]] constexpr uint32 OBJ(uint32 seq) { return OBJECTIVE_ENTRY_BASE | seq; }
+    constexpr uint32 OBJ(uint32 seq) { return OBJECTIVE_ENTRY_BASE | seq; }
 
     // Build a boss anchor with an inherited completion bit. `completionFrom` is
     // the auto-derived entry whose encounterIndex (kill-bit) this boss borrows
@@ -38,7 +38,7 @@ namespace
     // Build a travel-objective anchor. `orderIndex` slots it into the encounter
     // ordering; `gateEntry` (optional) is a creature whose live presence also
     // satisfies the objective; `hook` (optional) is an ObjectiveHookRegistry id.
-    [[maybe_unused]] DungeonBossInfo MakeObjective(uint32 entry, uint32 encounterIndex, uint32 mapId,
+    DungeonBossInfo MakeObjective(uint32 entry, uint32 encounterIndex, uint32 mapId,
                                   char const* name, float x, float y, float z,
                                   float arriveRadius = 0.0f, uint32 gateEntry = 0,
                                   uint32 hook = 0)
@@ -92,30 +92,56 @@ namespace
                 t.push_back(std::move(p));
             }
 
-            // --- TODO: Sunken Temple (map 109) ---------------------------
-            // Bosses do not spawn until the party traverses the zone-wide
-            // Atal'ai statue / Jammal'an event. Add travel objectives at the
-            // event waypoints so the tank leads the party through it, e.g.:
+            // --- Sunken Temple (map 109) — EXPERIMENTAL, needs live test -
+            // The Avatar of Hakkar (8443) is summoned at the central Altar of
+            // Hakkar only after the Atal'ai sacrifice event; it has NO creature
+            // spawn, so BossSpawnIndex never emits it and the tank never goes to
+            // the altar. Add a travel objective at the altar (GO "Altar of
+            // Hakkar" coords) so the tank leads the party down into the central
+            // pit, clearing the priest event en route. gateEntry 8443 resolves
+            // the objective the moment the Avatar actually manifests. Ordered at
+            // bit 7 — after Hazzas (bit 6), before Shade of Eranikus (bit 8).
             //
-            //   BossRosterPatch p; p.mapId = 109;
-            //   p.add = {
-            //       MakeObjective(OBJ(1), /*orderIndex*/ 0, 109,
-            //                     "Atal'ai Statue Circuit", X, Y, Z,
-            //                     /*arriveRadius*/ 10.0f),
-            //   };
-            //
-            // Coords intentionally deferred: they need live navmesh
-            // verification (the statues sit around the central chamber rim).
+            // EXPERIMENTAL: whether the Avatar summon triggers off the trash the
+            // bots kill (vs a scripted statue/quest gate) is unverified — if the
+            // tank reaches the altar and nothing spawns, `dc skip` past it. The
+            // statue-puzzle boss Atal'alarion is left in the auto-list as-is (it
+            // has a real spawn) — the bot can't run that ordered-click puzzle, so
+            // expect to `dc skip` it too.
+            {
+                BossRosterPatch p;
+                p.mapId = 109;
+                p.add = {
+                    MakeObjective(OBJ(1), /*orderIndex*/ 7, 109,
+                                  "Altar of Hakkar (Avatar event)",
+                                  -420.8f, 94.7f, -174.2f,
+                                  /*arriveRadius*/ 15.0f, /*gateEntry*/ 8443),
+                };
+                t.push_back(std::move(p));
+            }
 
-            // --- TODO: ZulFarrak (map 209) -------------------------------
-            // The pyramid (Gahz'rilla / Sergeant Bly prisoner) event triggers
-            // when the party reaches the top of the temple steps. Add the
-            // executioner / temple-top as an objective leading the tank up:
-            //
-            //   p.add = { MakeObjective(OBJ(1), idx, 209, "Temple Summit",
-            //                           X, Y, Z, 12.0f, /*gateEntry*/ ...) };
-            //
-            // Coords deferred pending live verification.
+            // --- ZulFarrak (map 209) -------------------------------------
+            // The temple-summit (Sandfury prisoner) event fires when the party
+            // reaches the top of the great staircase, and completing it opens
+            // the door to the final boss Chief Ukorz Sandscalp (bit 7). Without
+            // a target up there the tank heads straight for Ukorz, hits his
+            // closed door, and stalls. Add a travel objective at the Sandfury
+            // Executioner's spot (top of the stairs, verified from the creature
+            // table) ordered at bit 7 — the equal-index tie-break sorts an
+            // objective BEFORE the boss it shares an index with, so the tank goes
+            // up and triggers the event first; arrival latches it done and the
+            // tank then proceeds to Ukorz with the door open.
+            {
+                BossRosterPatch p;
+                p.mapId = 209;
+                p.add = {
+                    MakeObjective(OBJ(1), /*orderIndex*/ 7, 209,
+                                  "Temple Summit (Executioner event)",
+                                  1886.8f, 1289.9f, 46.0f,
+                                  /*arriveRadius*/ 12.0f),
+                };
+                t.push_back(std::move(p));
+            }
 
             return t;
         }();
@@ -173,9 +199,21 @@ std::vector<DungeonBossInfo> BossRosterRegistry::Apply(uint32 mapId, std::vector
     for (DungeonBossInfo& a : adds)
         result.push_back(std::move(a));
 
+    // Sort by encounter index. Tie-break: at an equal index an Objective sorts
+    // BEFORE a Boss, so an objective sharing a boss's bit is reached first. The
+    // candidate picker (NextDungeonBossValue::PickTarget) advances to the
+    // lowest index STRICTLY greater than the one just finished, so an objective
+    // tied with the boss it must precede (e.g. ZulFarrak's summit event at bit 7,
+    // the same bit as Chief Ukorz) would otherwise be skipped past; ordering it
+    // first makes the picker hand it over before the boss.
     std::stable_sort(result.begin(), result.end(),
                      [](DungeonBossInfo const& l, DungeonBossInfo const& r)
-                     { return l.encounterIndex < r.encounterIndex; });
+                     {
+                         if (l.encounterIndex != r.encounterIndex)
+                             return l.encounterIndex < r.encounterIndex;
+                         return l.kind == DungeonAnchorKind::Objective &&
+                                r.kind == DungeonAnchorKind::Boss;
+                     });
 
     return result;
 }
