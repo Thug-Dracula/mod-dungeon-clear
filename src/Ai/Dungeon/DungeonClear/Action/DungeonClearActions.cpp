@@ -3111,6 +3111,36 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         Position trailPoint;
         if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint))
         {
+            // ARRIVAL HOLD. The hold gate above measures STRAIGHT-LINE distance to
+            // the tank (toTank <= lag), but the trail point is the crumb at `lag`
+            // yards of WALKED (path) distance behind the tank. On a curved corridor
+            // the two disagree: a crumb 15yd back along the trail can sit ~16yd
+            // straight-line from the tank, so a follower standing ON that crumb
+            // still reads toTank > lag and never satisfies the hold gate. Without
+            // this guard it re-issues MoveTo to the crumb it already occupies every
+            // tick, micro-stepping around it forever — the reported "two steps
+            // forward, two steps back" dance — and, because it's perpetually
+            // "moving", never sits to drink/eat, stalling the tank's between-pulls
+            // rest gate on its mana. So: if the bot has effectively reached the
+            // trail point, HOLD here (same teardown + tick-yield as the in-bubble
+            // branch) instead of demanding a straight-line gate it can't meet while
+            // parked on a curved crumb. The slack is just the path-vs-straight
+            // curvature over one lag; a few yards covers it without parking short.
+            constexpr float kTrailArrival = 4.0f;
+            if (bot->GetExactDist(&trailPoint) <= kTrailArrival)
+            {
+                if (bot->GetMotionMaster() &&
+                    bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+                {
+                    if (bot->isMoving())
+                        bot->StopMoving();
+                    bot->GetMotionMaster()->Clear();
+                }
+                DC_PULL_TRACE("[DC:{}] scout-lag: holding at trail point "
+                              "({:.1f}yd behind tank, lag {:.1f})",
+                              bot->GetName(), toTank, lag);
+                return false;
+            }
             // normal_only: reject (don't straight-line to) a point that isn't
             // reachable over a real navmesh path. Crumbs are already gated for
             // reachability, but keep the guard as a belt-and-braces backstop.
@@ -4098,14 +4128,33 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
         }
     }
 
+    // Band the approach priority exactly as EngageDirect does. COMBAT priority
+    // can't be interrupted by the bot's combat reflexes, so on a LONG assist run
+    // (the follower is far behind because the tank scouted/Leeroy-charged well
+    // ahead, or it is out of LOS at the far end of a corridor) an unconditional
+    // COMBAT move makes the follower plow straight through every pack it aggros
+    // en route without stopping to fight — dragging a mob train to the far point
+    // and wiping the group. Use COMBAT only for the final close approach; past
+    // that, NORMAL, so the follower stops and fights what it pulls on the way in
+    // (stock combat takes the intervening pack; the assist re-fires and resumes
+    // once it dies — a controlled leapfrog instead of a runaway charge).
+    float const distance = bot->GetExactDist(moveTo);
+    float const attackRange = botAI->IsMelee(bot)
+        ? (bot->GetCombatReach() + moveTo->GetCombatReach() + 1.0f)
+        : (botAI->GetRange("spell") - CONTACT_DISTANCE);
+    MovementPriority const prio =
+        (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
+            ? MovementPriority::MOVEMENT_COMBAT
+            : MovementPriority::MOVEMENT_NORMAL;
+
     DC_PULL_TRACE("[DC:{}] assist camp: closing on out-of-LOS fight ({:.1f}yd, "
-                  "target={})", bot->GetName(), bot->GetExactDist(moveTo),
-                  target ? target->GetGUID().ToString() : "leader");
+                  "target={}, prio={})", bot->GetName(), distance,
+                  target ? target->GetGUID().ToString() : "leader",
+                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
     MoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
            moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
-           /*normal_only*/ false, /*exact_waypoint*/ false,
-           MovementPriority::MOVEMENT_COMBAT);
+           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }
 
@@ -4135,12 +4184,24 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
         y = bot->GetPositionY() + (tank->GetPositionY() - bot->GetPositionY()) * frac;
     }
 
-    DC_PULL_TRACE("[DC:{}] regroup: closing on tank {} ({:.1f}yd, los={})",
+    // Band the priority like EngageDirect / the camp assist: COMBAT only for the
+    // final close approach, NORMAL beyond. An unconditional COMBAT regroup runs a
+    // stranded follower (a healer that lost LOS while the tank pushed far ahead)
+    // straight through any packs between it and the tank without stopping to
+    // fight — the same plow-through runaway. NORMAL on the long leg lets it break
+    // off and clear what it aggros, then resume regrouping once that mob dies.
+    float const toDest = bot->GetExactDist2d(x, y);
+    MovementPriority const prio =
+        (toDest <= DC_COMBAT_APPROACH_RANGE)
+            ? MovementPriority::MOVEMENT_COMBAT
+            : MovementPriority::MOVEMENT_NORMAL;
+
+    DC_PULL_TRACE("[DC:{}] regroup: closing on tank {} ({:.1f}yd, los={}, prio={})",
                   bot->GetName(), tank->GetName(), dist,
-                  bot->IsWithinLOSInMap(tank) ? 1 : 0);
+                  bot->IsWithinLOSInMap(tank) ? 1 : 0,
+                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
     MoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
-           /*normal_only*/ false, /*exact_waypoint*/ false,
-           MovementPriority::MOVEMENT_COMBAT);
+           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }
