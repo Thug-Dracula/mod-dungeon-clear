@@ -51,6 +51,21 @@ struct DcApproachState
     ObjectGuid lastDoorUseGuid;      // door the last Use() was issued on
     uint32 lastDoorUseMs       = 0;  // when it was issued (getMSTime)
 
+    // Blocked-state watchdog: how long the door-blocked action has been parked
+    // at one closed door it believes it can open, without the door actually
+    // opening. The entitlement check is template-level and CAN be wrong (SFK's
+    // Arugal's Lair is an event door wearing the same empty-lock-85 template as
+    // a plain clickable Deadmines door), and the click gate measures range to
+    // the GO origin, which on wide gates sits outside DC_DOOR_USE_RANGE of the
+    // path-side parking spot — both leave the bot "working" a door forever.
+    // After DungeonClear.DoorBlockedTimeout seconds the action gives up and
+    // takes the same auto-pause path as a door it knows it can't open.
+    // doorStallLastMs re-arms the window: a gap in observations means the stall
+    // ended (door opened, run moved on) and a later stall starts fresh.
+    ObjectGuid doorStallGuid;        // door the current Blocked stall is on
+    uint32 doorStallSinceMs    = 0;  // when that stall began (getMSTime)
+    uint32 doorStallLastMs     = 0;  // last tick the stall was observed
+
     // --- long-path cache state --------------------------------------------
     // The cached long-range A* result lives in its own value ("dungeon clear
     // long path"); these are the bookkeeping fields that govern when it rebuilds
@@ -80,6 +95,9 @@ struct DcApproachState
         doneNotEngagedTicks = 0;
         pursuitFailTicks    = 0;
         lastPos             = Position();
+        doorStallGuid.Clear();
+        doorStallSinceMs    = 0;
+        doorStallLastMs     = 0;
     }
 
     // Reached engage range: clear the dead-end escalation counter and the

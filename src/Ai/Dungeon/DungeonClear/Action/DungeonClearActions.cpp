@@ -145,6 +145,16 @@ namespace
     // against is 50yd+, so room-local is the right cut.
     constexpr float DC_DOOR_USE_RANGE = 25.0f;
 
+    // Observation-gap re-arm for the Blocked-state watchdog (DcApproachState::
+    // doorStall*). A stall older than this with no fresh observation is treated
+    // as ended — the door opened or the run moved on — so the next stall on the
+    // same door starts a fresh DungeonClear.DoorBlockedTimeout window instead
+    // of inheriting stale accrual. Deliberately LONGER than door.autoCloseTime
+    // cycles (~3s shut/open on auto-closing gates): a bot livelocked clicking a
+    // gate open and watching it re-shut keeps accruing across cycles and still
+    // times out into the pause.
+    constexpr uint32 DC_DOOR_STALL_REARM_MS = 10000;
+
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
     // (250yd) of a moving player. Beyond this distance, a boss simply not being
@@ -2576,6 +2586,9 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     std::string const pauseReason =
         "A door blocks the path to " + target +
         " and I can't open it. Paused — open it and hit Resume.";
+    std::string const timeoutReason =
+        "The door to " + target +
+        " won't open for me. Paused — open it (or finish its event) and hit Resume.";
     std::string const openingReason = "Opening the door to " + target + ".";
 
     ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
@@ -2603,6 +2616,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
 
         bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
                              BotCanOpenDoorLikePlayer(bot, door);
+        bool timedOut = false;
 
         if (canOpen)
         {
@@ -2617,11 +2631,35 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                 return true;
             }
 
+            DcApproachState& doorAppr =
+                context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+            uint32 const now = getMSTime();
+
+            // Blocked-state watchdog. The entitlement above is template-level
+            // truth and CAN be wrong (SFK's Arugal's Lair is an event door
+            // wearing the same empty-lock-85 template as a plain clickable
+            // Deadmines door), and the click gate below measures range to the
+            // GO origin, which on wide gates sits outside DC_DOOR_USE_RANGE of
+            // the path-side parking spot — either way the bot would work the
+            // door forever. After DoorBlockedTimeout seconds with the door
+            // still shut, give up and fall through to the auto-pause below:
+            // the stashed GUID still auto-resumes the run the moment the door
+            // really opens (event completes, or a player opens it).
+            if (doorAppr.doorStallGuid != door->GetGUID() ||
+                getMSTimeDiff(doorAppr.doorStallLastMs, now) >= DC_DOOR_STALL_REARM_MS)
+            {
+                doorAppr.doorStallGuid = door->GetGUID();
+                doorAppr.doorStallSinceMs = now;
+            }
+            doorAppr.doorStallLastMs = now;
+            timedOut = getMSTimeDiff(doorAppr.doorStallSinceMs, now) >=
+                       DcSettings::GetUInt(bot, "DoorBlockedTimeout") * 1000;
+
             // A click is only legitimate from beside the door. Parked far from
             // it (mis-flag, or the walk-in hasn't closed the gap yet), hold
             // position and report instead of toggling a GO no player could
             // reach — Use() has no range check of its own.
-            if (!bot->IsWithinDistInMap(door, DC_DOOR_USE_RANGE))
+            if (!timedOut && !bot->IsWithinDistInMap(door, DC_DOOR_USE_RANGE))
             {
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] door-blocked: entitled to open {} '{}' but "
@@ -2638,24 +2676,25 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             // (King's Square Gate: 3s); under the latch, a gate that re-closed
             // before Advance ran never got a second click and the run sat
             // "Blocked" at a door it held the key for.
-            DcApproachState& doorAppr =
-                context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
-            uint32 const now = getMSTime();
-            if (doorAppr.lastDoorUseGuid != door->GetGUID() ||
-                getMSTimeDiff(doorAppr.lastDoorUseMs, now) >= DC_DOOR_REUSE_MS)
+            if (!timedOut)
             {
-                LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] door-blocked: opening {} '{}' as a player would (entitled)",
-                         bot->GetName(), door->GetGUID().ToString(), door->GetName());
-                door->Use(bot);
-                doorAppr.lastDoorUseGuid = door->GetGUID();
-                doorAppr.lastDoorUseMs = now;
+                if (doorAppr.lastDoorUseGuid != door->GetGUID() ||
+                    getMSTimeDiff(doorAppr.lastDoorUseMs, now) >= DC_DOOR_REUSE_MS)
+                {
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] door-blocked: opening {} '{}' as a player would (entitled)",
+                             bot->GetName(), door->GetGUID().ToString(), door->GetName());
+                    door->Use(bot);
+                    doorAppr.lastDoorUseGuid = door->GetGUID();
+                    doorAppr.lastDoorUseMs = now;
+                }
+                StallDungeonClear(botAI, openingReason);
+                return true;
             }
-            StallDungeonClear(botAI, openingReason);
-            return true;
         }
 
-        // Can't open it ourselves — auto-pause and force the navigation dead.
+        // Can't open it ourselves — or timed out working a door we thought we
+        // could — auto-pause and force the navigation dead.
         // Set the flag once on transition: the door-blocked trigger gates on
         // !paused, so it won't re-fire and re-announce every tick.
         if (!AI_VALUE(bool, "dungeon clear paused"))
@@ -2675,9 +2714,12 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                 mm->Clear();
             bot->StopMovingOnCurrentPos();
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] door-blocked: can't open {} -> auto-pausing",
-                     bot->GetName(), door ? door->GetGUID().ToString() : "(none)");
-            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + pauseReason);
+                     "[DC:{}] door-blocked: {} {} -> auto-pausing",
+                     bot->GetName(),
+                     timedOut ? "timed out working" : "can't open",
+                     door ? door->GetGUID().ToString() : "(none)");
+            DcStatusPublisher::SendAddonMessage(
+                botAI, "CHAT\t" + (timedOut ? timeoutReason : pauseReason));
             botAI->DoSpecificAction("dc status", event, true);
         }
         return true;

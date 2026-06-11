@@ -56,6 +56,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "BetterLootRolling",     DcType::Bool,   0,   0,   1,  false },
 
     { "IgnoreChests",          DcType::Bool,   1,   0,   1,  true  },
+
+    // Seconds the tank may sit in the Blocked state working one closed door
+    // (clicking it / holding beside it) before giving up and auto-pausing the
+    // run, exactly as it does for a door it knows it can't open. Covers the
+    // doors the template-level entitlement check gets wrong: event gates that
+    // wear a plain empty-lock template (SFK's Arugal's Lair), and wide gates
+    // whose GO origin sits outside click range of the path-side parking spot.
+    // The pause stashes the door, so the run still auto-resumes the moment the
+    // door really opens (event completes, or a player opens it).
+    { "DoorBlockedTimeout",    DcType::UInt,   5,   3, 120,  true  },
     { "RestHealthPct",         DcType::UInt,   0,   0, 100,  true  },
     { "RestManaPct",           DcType::UInt,   0,   0, 100,  true  },
     { "PreventBotRelease",     DcType::Bool,   1,   0,   1,  true  },
