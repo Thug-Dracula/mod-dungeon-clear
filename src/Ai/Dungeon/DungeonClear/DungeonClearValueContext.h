@@ -33,6 +33,7 @@ public:
         creators["dungeon clear pause reason"] = &DungeonClearValueContext::dungeon_clear_pause_reason;
         creators["dungeon clear paused door"] = &DungeonClearValueContext::dungeon_clear_paused_door;
         creators["dungeon clear skipped"] = &DungeonClearValueContext::dungeon_clear_skipped;
+        creators["dungeon clear cleared anchors"] = &DungeonClearValueContext::dungeon_clear_cleared_anchors;
         creators["dungeon clear seen bosses"] = &DungeonClearValueContext::dungeon_clear_seen_bosses;
         creators["dungeon clear sticky boss"] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
         creators["dungeon clear selected boss"] = &DungeonClearValueContext::dungeon_clear_selected_boss;
@@ -70,6 +71,7 @@ private:
     static UntypedValue* dungeon_clear_pause_reason(PlayerbotAI* ai) { return new DungeonClearPauseReasonValue(ai); }
     static UntypedValue* dungeon_clear_paused_door(PlayerbotAI* ai) { return new DungeonClearPausedDoorValue(ai); }
     static UntypedValue* dungeon_clear_skipped(PlayerbotAI* ai) { return new DungeonClearSkippedValue(ai); }
+    static UntypedValue* dungeon_clear_cleared_anchors(PlayerbotAI* ai) { return new DungeonClearClearedAnchorsValue(ai); }
     static UntypedValue* dungeon_clear_seen_bosses(PlayerbotAI* ai) { return new DungeonClearSeenBossesValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
     static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }

@@ -59,11 +59,12 @@ namespace
             // isolated == true: filter to the bot's wing.
             //
             // Entries are the kill-creature credit-entries from
-            // instance_encounters (what BossSpawnIndex emits), NOT every
-            // lore boss: the Cathedral's tracked encounters are Fairbanks and
-            // Whitemane — Scarlet Commander Mograine (3976) has no
-            // DungeonEncounter row, so he never appears in the boss list and
-            // must not be listed here.
+            // instance_encounters (what BossSpawnIndex emits) PLUS any boss
+            // injected by BossRosterRegistry. The Cathedral's tracked encounters
+            // are Fairbanks and Whitemane; the roster patch removes Whitemane
+            // (event-locked) and injects Scarlet Commander Mograine (3976), so
+            // 3976 is listed here too — otherwise the wing filter, which runs
+            // after the patch, would drop the injected boss.
             {189, {true, {
                 {"Scarlet Monastery (Graveyard)", {
                     3983,   // Interrogator Vishas
@@ -78,7 +79,8 @@ namespace
                 }},
                 {"Scarlet Monastery (Cathedral)", {
                     4542,   // High Inquisitor Fairbanks
-                    3977,   // High Inquisitor Whitemane
+                    3976,   // Scarlet Commander Mograine (injected by roster patch)
+                    3977,   // High Inquisitor Whitemane (removed by patch; kept for wing detection)
                 }},
             }}},
 

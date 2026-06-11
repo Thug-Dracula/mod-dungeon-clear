@@ -13,7 +13,7 @@
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
-#include "Ai/Dungeon/DungeonClear/Overrides/BossOverrideRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Playerbots.h"
 
@@ -131,8 +131,10 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
     uint32 const mapId = bot->GetMapId();
     Difficulty const difficulty = map->GetDifficulty();
 
-    if (std::vector<DungeonBossInfo> const* over = BossOverrideRegistry::Get(mapId, difficulty))
-        return SnapAll(map, FilterToCurrentWing(bot, mapId, *over));
+    // Apply per-dungeon roster corrections (remove wrong/event-locked bosses,
+    // add real bosses or travel objectives) before wing-filtering and snapping.
+    std::vector<DungeonBossInfo> roster =
+        BossRosterRegistry::Apply(mapId, BossSpawnIndex::Get(mapId, difficulty));
 
-    return SnapAll(map, FilterToCurrentWing(bot, mapId, BossSpawnIndex::Get(mapId, difficulty)));
+    return SnapAll(map, FilterToCurrentWing(bot, mapId, std::move(roster)));
 }

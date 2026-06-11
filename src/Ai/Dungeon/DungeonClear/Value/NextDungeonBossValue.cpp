@@ -151,6 +151,12 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     std::unordered_set<uint32> const& skipped =
         AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
 
+    // Travel objectives (BossRosterRegistry) have no kill-bit; once reached they
+    // are latched here by DcObjectiveArriveAction so they drop out of the
+    // candidate list exactly like a killed boss.
+    std::unordered_set<uint32> const& cleared =
+        AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors");
+
     // The completed-encounter mask is the authoritative kill signal. It is
     // set by Map::UpdateEncounterState from the same KillRewarder path that
     // grants loot and quest credit (KillRewarder.cpp -> UpdateEncounterState),
@@ -186,7 +192,10 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             if (info.entry == selectedEntry)
             {
                 bool invalid = false;
-                if (info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+                if (cleared.count(info.entry))
+                    invalid = true;
+                else if (info.kind == DungeonAnchorKind::Boss &&
+                         info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
                     invalid = true;
 
                 if (!invalid)
@@ -240,8 +249,18 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         if (skipped.count(info.entry))
             continue;
 
+        // Travel objective already reached this run (latched on arrival). Its
+        // encounterIndex is just an ordering hint, not a real DBC bit, so it
+        // must be filtered here rather than via the completion mask below.
+        if (cleared.count(info.entry))
+            continue;
+
         // Authoritative: this encounter is already complete in this instance.
-        if (info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+        // Objectives never carry a real kill-bit, so the mask is consulted for
+        // Boss anchors only (an objective's ordering index could otherwise
+        // collide with an unrelated boss's set bit and vanish prematurely).
+        if (info.kind == DungeonAnchorKind::Boss &&
+            info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
             continue;
 
         BossLiveState const state = LookupLive(liveness, info.entry);

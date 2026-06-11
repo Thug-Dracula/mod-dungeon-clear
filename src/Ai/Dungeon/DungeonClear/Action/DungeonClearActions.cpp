@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -1219,6 +1221,15 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
     float const engageDist = st.engageDist;
     bool const atBoss = st.atBoss;
 
+    // Travel objectives have no engage handoff. Keep navigating to the anchor;
+    // DungeonClearAtObjectiveTrigger (rel 30, outranks Advance) takes over once
+    // the tank is inside the arrival radius. Holding here on the boss engage
+    // range — which is wider than the arrival radius — would strand the tank
+    // short of the objective forever (the at-boss trigger that would normally
+    // release the hold is gated off for non-Boss anchors).
+    if (next->kind != DungeonAnchorKind::Boss)
+        return Step::Continue;
+
     if (atBoss)
     {
         ChunkedPathfinder::Result const& currentPath =
@@ -1361,6 +1372,12 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStall(AdvanceState const& st)
 {
     DungeonBossInfo const* next = st.next;
+
+    // Travel objectives are not creatures — "not in the creature store" is their
+    // normal state. Arrival is owned by DungeonClearAtObjectiveTrigger (which
+    // outranks Advance); never stall the approach to an objective.
+    if (next->kind != DungeonAnchorKind::Boss)
+        return Step::Continue;
 
     if (!DcTargeting::IsCreaturePresentOnMap(bot, next->entry))
     {
@@ -2579,6 +2596,51 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     // If pathing to the boss is still blocked after this kill, we want the
     // stall trigger to fire again next tick.
     return EngageDirect(target);
+}
+
+bool DcObjectiveArriveAction::Execute(Event /*event*/)
+{
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
+        return false;
+
+    // Hold at the anchor while the (optional) hook runs — HaltForHold cancels a
+    // launched escort glide so the tank doesn't coast past the objective.
+    HaltForHold(bot);
+
+    ObjectiveArriveResult const result =
+        ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next);
+
+    if (result == ObjectiveArriveResult::Running)
+    {
+        // Hook still working — keep holding; it is called again next tick.
+        SetPhase(context, "objective");
+        return true;
+    }
+
+    if (result == ObjectiveArriveResult::Blocked)
+    {
+        // The event needs the human (something the bot can't drive). Stall so
+        // the player can sort it; they can also `dc skip` past the objective.
+        StallDungeonClear(botAI, "I can't progress the event at " + next->name +
+                                     " on my own. Sort it and I'll continue, or `dc skip`.");
+        return true;
+    }
+
+    // Done (or no hook): latch the objective complete so NextDungeonBossValue
+    // advances and never re-targets it (objectives have no kill-bit to read).
+    auto& cleared =
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    if (cleared.insert(next->entry).second)
+    {
+        ClearStall(context);
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tReached " + next->name + " \xe2\x80\x94 continuing.");
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[dungeon-clear] {} reached objective '{}' (entry {}) — marked cleared",
+                  bot->GetName(), next->name, next->entry);
+    }
+    SetPhase(context, "");
+    return true;
 }
 
 bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)

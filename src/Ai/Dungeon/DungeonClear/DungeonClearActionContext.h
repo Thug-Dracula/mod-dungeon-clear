@@ -21,6 +21,7 @@ public:
         creators["dungeon clear advance"] = &DungeonClearActionContext::advance;
         creators["dungeon clear engage trash"] = &DungeonClearActionContext::engage_trash;
         creators["dungeon clear engage boss"] = &DungeonClearActionContext::engage_boss;
+        creators["dungeon clear objective arrive"] = &DungeonClearActionContext::objective_arrive;
         creators["dungeon clear room clear"] = &DungeonClearActionContext::room_clear;
         creators["dungeon clear clear stalled"] = &DungeonClearActionContext::clear_stalled;
         creators["dungeon clear follow tank"] = &DungeonClearActionContext::follow_tank;
@@ -68,6 +69,7 @@ private:
     static Action* advance(PlayerbotAI* ai) { return new DungeonClearAdvanceAction(ai); }
     static Action* engage_trash(PlayerbotAI* ai) { return new DungeonClearEngageTrashAction(ai); }
     static Action* engage_boss(PlayerbotAI* ai) { return new DungeonClearEngageBossAction(ai); }
+    static Action* objective_arrive(PlayerbotAI* ai) { return new DcObjectiveArriveAction(ai); }
     static Action* room_clear(PlayerbotAI* ai) { return new DungeonClearRoomClearAction(ai); }
     static Action* clear_stalled(PlayerbotAI* ai) { return new DungeonClearClearStalledAction(ai); }
     static Action* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankAction(ai); }

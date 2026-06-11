@@ -259,6 +259,7 @@ bool DcOnAction::Execute(Event event)
     ApplyPullSetting(bot, context, AI_VALUE(uint32, "dungeon clear pull setting"));
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
     // Fresh approach FSM: clears every stuck/recovery counter, the pursuit/dead-
@@ -477,6 +478,7 @@ bool DcBossesAction::Execute(Event event)
     }
 
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
+    auto const& cleared = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors");
     auto& seen = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear seen bosses");
 
     // The completed-encounter mask is the authoritative "the group killed it"
@@ -494,6 +496,36 @@ bool DcBossesAction::Execute(Event event)
 
     for (DungeonBossInfo const& info : bosses)
     {
+        // Travel objectives (BossRosterRegistry) are not creatures and carry no
+        // kill-bit — their completion is the cleared-anchor latch. Report them
+        // as a labelled line so the panel shows the event waypoint and whether
+        // the tank has reached it.
+        if (info.kind == DungeonAnchorKind::Objective)
+        {
+            std::string const objStatus =
+                cleared.count(info.entry) ? "dead"
+                : skipped.count(info.entry) ? "skipped"
+                                            : "alive";
+            std::string const objName = "Objective: " + info.name;
+
+            std::ostringstream objMsg;
+            objMsg << "BOSS\t" << info.entry << "\t" << info.encounterIndex << "\t"
+                   << objName << "\t" << objStatus << "\t"
+                   << static_cast<int>(info.x) << "\t" << static_cast<int>(info.y) << "\t"
+                   << static_cast<int>(info.z) << "\t";
+            DcStatusPublisher::SendAddonMessage(botAI, objMsg.str());
+
+            if (!silent)
+            {
+                std::ostringstream line;
+                line << info.encounterIndex << ". " << objName << " @ ("
+                     << static_cast<int>(info.x) << ", " << static_cast<int>(info.y) << ", "
+                     << static_cast<int>(info.z) << ") [" << objStatus << "]";
+                DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + line.str());
+            }
+            continue;
+        }
+
         bool const killed =
             info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)) != 0u;
         bool const liveOnMap = DcTargeting::FindLiveCreatureOnMap(bot, info.entry) != nullptr;
@@ -625,9 +657,17 @@ bool DcGoAction::Execute(Event event)
         return false;
     }
 
+    if (matched->kind == DungeonAnchorKind::Objective &&
+        AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors").count(matched->entry))
+    {
+        botAI->TellError("Objective " + matched->name + " is already done.");
+        return false;
+    }
+
     InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
-    if (matched->encounterIndex < 32 && (completedMask & (1u << matched->encounterIndex)))
+    if (matched->kind == DungeonAnchorKind::Boss &&
+        matched->encounterIndex < 32 && (completedMask & (1u << matched->encounterIndex)))
     {
         botAI->TellError("Boss " + matched->name + " is already dead (encounter complete).");
         return false;

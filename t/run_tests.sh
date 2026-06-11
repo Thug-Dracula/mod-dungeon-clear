@@ -27,7 +27,7 @@ cmake --build build --target dungeon_clear_tests -j$(nproc)
 # regressions and the replay harness round-trip/fixture runner).
 echo "Running unit tests..."
 cd "${BUILD_DIR}"
-./dungeon_clear_tests --gtest_filter='*DungeonClear*:Dc*:RoomAggro*'
+./dungeon_clear_tests --gtest_filter='*DungeonClear*:Dc*:RoomAggro*:BossRoster*'
 
 echo "----------------------------------------------------------"
 echo "Tests completed successfully!"

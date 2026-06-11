@@ -18,6 +18,7 @@ public:
         // Engine triggers (state predicates).
         creators["dungeon clear idle"] = &DungeonClearTriggerContext::idle;
         creators["dungeon clear at boss"] = &DungeonClearTriggerContext::at_boss;
+        creators["dungeon clear at objective"] = &DungeonClearTriggerContext::at_objective;
         creators["dungeon clear blocking trash"] = &DungeonClearTriggerContext::blocking_trash;
         creators["dungeon clear room trash"] = &DungeonClearTriggerContext::room_trash;
         creators["dungeon clear party died"] = &DungeonClearTriggerContext::party_died;
@@ -55,6 +56,7 @@ public:
 private:
     static Trigger* idle(PlayerbotAI* ai) { return new DungeonClearIdleTrigger(ai); }
     static Trigger* at_boss(PlayerbotAI* ai) { return new DungeonClearAtBossTrigger(ai); }
+    static Trigger* at_objective(PlayerbotAI* ai) { return new DungeonClearAtObjectiveTrigger(ai); }
     static Trigger* blocking_trash(PlayerbotAI* ai) { return new DungeonClearBlockingTrashTrigger(ai); }
     static Trigger* room_trash(PlayerbotAI* ai) { return new DungeonClearRoomTrashTrigger(ai); }
     static Trigger* party_died(PlayerbotAI* ai) { return new DungeonClearPartyDiedTrigger(ai); }

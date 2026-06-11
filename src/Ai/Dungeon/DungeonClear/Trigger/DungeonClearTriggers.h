@@ -24,6 +24,19 @@ public:
     bool IsActive() override;
 };
 
+// Fires when the next anchor is a travel OBJECTIVE (DungeonAnchorKind::Objective,
+// injected by BossRosterRegistry — e.g. a Sunken Temple event waypoint) and the
+// tank has arrived within its arriveRadius (or its gateEntry creature is alive).
+// Drives DcObjectiveArriveAction, which runs an optional on-arrival hook and
+// then marks the objective cleared so the clear advances. Objectives never reach
+// the combat/engage triggers (those stand down for non-Boss anchors).
+class DungeonClearAtObjectiveTrigger : public Trigger
+{
+public:
+    DungeonClearAtObjectiveTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear at objective", 1) {}
+    bool IsActive() override;
+};
+
 class DungeonClearBlockingTrashTrigger : public Trigger
 {
 public:

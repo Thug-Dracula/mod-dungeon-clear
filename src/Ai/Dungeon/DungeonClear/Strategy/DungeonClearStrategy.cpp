@@ -35,6 +35,14 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear at boss",
         { NextAction("dungeon clear engage boss", 30.0f) }));
 
+    // Arrived at a travel OBJECTIVE (BossRosterRegistry, non-combat anchor).
+    // Peer of at-boss (30) — mutually exclusive via the anchor-kind check in
+    // each trigger — so the objective is completed and the clear advances
+    // instead of trying to engage a non-creature target.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear at objective",
+        { NextAction("dungeon clear objective arrive", 30.0f) }));
+
     // Blocking trash on the path to the next boss.
     triggers.push_back(new TriggerNode(
         "dungeon clear blocking trash",

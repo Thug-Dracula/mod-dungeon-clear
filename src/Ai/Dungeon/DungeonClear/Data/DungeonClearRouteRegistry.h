@@ -18,10 +18,10 @@
 // the boss creature's spawn point. Lookup is keyed by (mapId, difficulty,
 // bossEntry); a miss simply means anchor-free chunking is used for that boss.
 //
-// Registration mirrors `BossOverrideRegistry`: each dungeon drops a self-
-// contained `Overrides/Routes/<DungeonName>Route.cpp` file that constructs a
-// static `Register` instance whose constructor calls Register(). Adding or
-// removing a route never edits any existing file.
+// Registration mirrors the other DungeonClear data registries: each dungeon
+// drops a self-contained `Overrides/Routes/<DungeonName>Route.cpp` file that
+// constructs a static `Register` instance whose constructor calls Register().
+// Adding or removing a route never edits any existing file.
 class DungeonClearRouteRegistry
 {
 public:

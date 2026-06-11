@@ -140,6 +140,20 @@ public:
     bool Execute(Event event) override;
 };
 
+// Drives a travel OBJECTIVE (DungeonAnchorKind::Objective from
+// BossRosterRegistry) once the tank has reached it (DungeonClearAtObjectiveTrigger
+// fired). Runs the objective's optional on-arrival hook (ObjectiveHookRegistry):
+// on Done / no hook it latches the anchor into "dungeon clear cleared anchors"
+// so NextDungeonBossValue advances to the next target; on Running it holds the
+// tank at the anchor; on Blocked it stalls the run for the human. Never engages
+// combat — objectives are not creatures.
+class DcObjectiveArriveAction : public MovementAction
+{
+public:
+    DcObjectiveArriveAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear objective arrive") {}
+    bool Execute(Event event) override;
+};
+
 class DungeonClearDisableOnDeathAction : public Action
 {
 public:

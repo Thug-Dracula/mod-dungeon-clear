@@ -98,6 +98,11 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
+    // Travel objectives are not combat targets — the at-objective trigger owns
+    // arrival. Stand down so engage-boss never fires on a non-creature anchor.
+    if (next->kind != DungeonAnchorKind::Boss)
+        return false;
+
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
     if (!DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
@@ -158,6 +163,41 @@ bool DungeonClearAtBossTrigger::IsActive()
     // Don't pull while party is still recovering or tank-side loot is pending.
     // The idle-trigger's advance action holds the tank in place meanwhile.
     return IsBetweenPullsReady(bot, context);
+}
+
+bool DungeonClearAtObjectiveTrigger::IsActive()
+{
+    if (!IsEnabled(context, bot))
+        return false;
+    if (!bot || bot->isDead())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
+        return false;
+
+    // Satisfied when the tank has reached the anchor (within arriveRadius), or
+    // when the optional gate creature has spawned alive (the event already fired
+    // its result, e.g. the real boss is up), so we don't need to babysit it.
+    float const radius = next->arriveRadius > 0.0f
+                             ? next->arriveRadius
+                             : DcSettings::GetFloat(bot, "ObjectiveArriveRadius");
+    if (bot->GetExactDist(next->x, next->y, next->z) <= radius)
+        return true;
+
+    if (next->gateEntry)
+    {
+        for (auto const& kv : map->GetCreatureBySpawnIdStore())
+        {
+            Creature* c = kv.second;
+            if (c && c->GetEntry() == next->gateEntry && c->IsAlive())
+                return true;
+        }
+    }
+    return false;
 }
 
 bool DungeonClearBlockingTrashTrigger::IsActive()

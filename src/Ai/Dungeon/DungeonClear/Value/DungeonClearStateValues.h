@@ -93,6 +93,27 @@ private:
     std::unordered_set<uint32> data;
 };
 
+// Travel-objective anchors (BossRosterRegistry, DungeonAnchorKind::Objective)
+// that have been completed this run. Unlike bosses, objectives have no kill-bit
+// to read, so DcObjectiveArriveAction latches the anchor's entry here on
+// arrival; NextDungeonBossValue filters these out so the clear advances and the
+// objective never re-targets (even after the bot moves away). Reset on
+// dc on / dc off / death / cleared alongside the skipped set so a fresh run
+// starts clean.
+class DungeonClearClearedAnchorsValue : public ManualSetValue<std::unordered_set<uint32>&>
+{
+public:
+    DungeonClearClearedAnchorsValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear cleared anchors")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::unordered_set<uint32> data;
+};
+
 // Boss entries that have been observed alive on the map at least once during
 // the current run. This is what lets the status report tell a boss that "was
 // alive and is now gone" (missing) apart from one we simply haven't reached

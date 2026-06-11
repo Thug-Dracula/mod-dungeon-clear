@@ -100,6 +100,12 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
     { "RoomClearTimeout",      DcType::UInt,  30,   0,  300,  true  },
 
+    // Travel-objective anchors (BossRosterRegistry, e.g. Sunken Temple event
+    // waypoints): the default arrival radius at which a non-combat objective is
+    // marked done and the clear advances. A roster row may override per-anchor
+    // (DungeonBossInfo::arriveRadius); 0 there falls back to this.
+    { "ObjectiveArriveRadius", DcType::Float,  8,   3,   40,  true  },
+
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },
     { "BossEngageRangeCap",    DcType::Float, 30,  10,  60,  true  },
     { "TrashWidthFloor",       DcType::Float,  8,   4,  30,  true  },
