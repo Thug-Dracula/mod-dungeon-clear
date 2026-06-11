@@ -18,6 +18,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -100,6 +101,15 @@ bool DungeonClearAtBossTrigger::IsActive()
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
     if (!DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+        return false;
+
+    // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the
+    // whole room, so HOLD the boss pull while any room trash remains. The
+    // room-clear driver (Off/Leeroy) or the pull pipeline (advanced/dynamic)
+    // clears it first; the gate reopens the instant the room is clear (or the
+    // RoomClearTimeout valve fires inside the value). Cheap cached read.
+    if (RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
+        !AI_VALUE(GuidVector, "dungeon clear room trash remaining").empty())
         return false;
 
     // A closed door between us and the boss means it's BEYOND it and not actually
@@ -250,6 +260,35 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     }
 
     return true;
+}
+
+bool DungeonClearRoomTrashTrigger::IsActive()
+{
+    if (!IsEnabled(context, bot))
+        return false;
+    if (!bot || bot->IsInCombat() || bot->isDead())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    // Only at a flagged boss with room trash still up.
+    if (!DcTargeting::IsRoomClearActive(bot, context))
+        return false;
+
+    // When pull-to-camp is in effect for this pack, the higher-priority pull
+    // pipeline (relevance 35) owns the room clear so it honours the advanced/
+    // dynamic pull type. This Leeroy room-clear is the Off / Dynamic-chose-Leeroy
+    // path; stand down whenever the behavioural pull bool is set.
+    if (AI_VALUE(bool, "dungeon clear pull mode current"))
+        return false;
+
+    // Same between-pulls gating the other engage triggers use (loot, party
+    // catch-up, rest) so the room is cleared one careful pull at a time.
+    if (!IsBetweenPullsReady(bot, context))
+        return false;
+
+    return DcTargeting::NearestRoomTrash(bot, context) != nullptr;
 }
 
 bool DungeonClearPartyDiedTrigger::IsActive()
@@ -472,7 +511,12 @@ bool DungeonClearPullTrigger::IsActive()
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
         return false;
-    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    // Normally the pull pipeline stands down at the boss (the at-boss engage owns
+    // it). The one exception is a room-wide-aggro boss with room trash still up:
+    // there the pull pipeline is what clears that room (honouring advanced/dynamic
+    // pull), so it must stay live at the boss until the room is clear.
+    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE) &&
+        !DcTargeting::IsRoomClearActive(bot, context))
         return false;
     if (!IsBetweenPullsReady(bot, context))
         return false;

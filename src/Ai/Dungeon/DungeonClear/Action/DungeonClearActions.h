@@ -102,6 +102,24 @@ public:
     bool Execute(Event event) override;
 };
 
+// Clears a room-wide-aggro boss's room (RoomAggroRegistry) before the boss is
+// pulled, for the Leeroy case (pull mode current false: Off, or Dynamic chose
+// Leeroy). Walks the tank to the NEAREST remaining room-trash unit and tanks it
+// in place via EngageDirect — nearest-first so the tank works the room from its
+// edge inward and the boss's own aggro sphere (excluded from the remaining set)
+// is approached last, never waking the boss. When pull-to-camp is in effect the
+// pull pipeline owns the room clear instead (this trigger stands down). Sits at
+// relevance 26 (between engage-trash 25 and engage-boss 30).
+class DungeonClearRoomClearAction : public DungeonClearEngageActionBase
+{
+public:
+    DungeonClearRoomClearAction(PlayerbotAI* botAI)
+        : DungeonClearEngageActionBase(botAI, "dungeon clear room clear")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Fallback when the tank can't path to the next boss. Picks the closest
 // reachable hostile anywhere on the map and pulls it; clearing obstacles
 // usually unblocks the path on the next advance tick.

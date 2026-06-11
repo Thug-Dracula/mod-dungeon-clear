@@ -40,6 +40,16 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear blocking trash",
         { NextAction("dungeon clear engage trash", 25.0f) }));
 
+    // Room-wide-aggro boss pre-clear (RoomAggroRegistry): at a flagged boss, clear
+    // the room before the boss is pulled. Relevance 26 — between engage-trash (25)
+    // and engage-boss (30) — so it preempts the (stood-down) corridor scan and the
+    // boss pull is held by the at-boss gate until the room is clear. This node is
+    // the Off / Dynamic-chose-Leeroy path (walk in and tank in place); when
+    // pull-to-camp is in effect the pull pipeline (35) owns the room clear instead.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear room trash",
+        { NextAction("dungeon clear room clear", 26.0f) }));
+
     // Stalled fallback: only fires when Advance/EngageBoss has set a stall
     // reason because no path to the next boss exists. Sits above the default
     // advance (15) so the fallback kill wins, and below at-boss (30) and

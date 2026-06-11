@@ -121,6 +121,21 @@ public:
     // falling back to spawn-store creature scanning.
     static InstanceScript* GetInstanceScript(Player* bot);
 
+    // --- Room-wide-aggro pre-clear (RoomAggroRegistry) --------------------
+
+    // True when the next boss is a flagged room-aggro boss AND the tank is at
+    // its engage range AND room trash still remains to clear (the "dungeon clear
+    // room trash remaining" value is non-empty). This is the predicate that both
+    // holds the boss pull and routes the trash clear: while it is true the boss
+    // gate stands down and the pull pipeline / room-clear action work the room.
+    static bool IsRoomClearActive(Player* bot, AiObjectContext* ctx);
+
+    // The nearest remaining room-trash unit (from "dungeon clear room trash
+    // remaining"), or nullptr. Nearest-first so the tank clears the room from
+    // its edge inward and reaches the boss's own aggro sphere last, minimising
+    // the chance of waking the boss while clearing.
+    static Unit* NearestRoomTrash(Player* bot, AiObjectContext* ctx);
+
 };
 
 #endif  // _DC_TARGETING_H

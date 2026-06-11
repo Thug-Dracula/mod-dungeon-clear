@@ -54,6 +54,7 @@
 #include "Timer.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -452,6 +453,21 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     constexpr float kConeRange = 35.0f;
     float const kConeHalfAngle = static_cast<float>(M_PI) / 3.0f;  // 60°
 
+    // Room-wide-aggro pre-clear: while the tank is at a flagged boss with room
+    // trash still up, the pull pipeline targets that ROOM trash (nearest-first),
+    // not the corridor to the boss. This is what makes advanced/dynamic pull
+    // honour the player's chosen pull type for the room clear — the same
+    // pull-to-camp machinery, just aimed at the room instead of the corridor —
+    // while the boss gate (DungeonClearAtBossTrigger) holds the boss pull. Off /
+    // Leeroy clears the same nearest unit via the room-clear engage action.
+    if (IsRoomClearActive(bot, context))
+    {
+        if (Unit* room = NearestRoomTrash(bot, context))
+            return room;
+        // Nothing reachable this tick — fall through; the corridor scan below
+        // returns null at the boss, so the gate simply keeps holding.
+    }
+
     GuidVector const& farTargets = context->GetValue<GuidVector>("dungeon clear far targets")->Get();
     GuidVector const& possibleTargets = context->GetValue<GuidVector>("possible targets")->Get();
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
@@ -691,4 +707,47 @@ InstanceScript* DcTargeting::GetInstanceScript(Player* bot)
         return nullptr;
     InstanceMap* im = map->ToInstanceMap();
     return im ? im->GetInstanceScript() : nullptr;
+}
+bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
+{
+    if (!bot || !ctx)
+        return false;
+
+    std::optional<DungeonBossInfo> next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+    if (!next.has_value())
+        return false;
+    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
+        return false;
+
+    // Cheap cached read first; the at-boss probe (level-reachability) runs only
+    // when there is actually room trash left to clear.
+    if (ctx->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty())
+        return false;
+
+    return DcEngageGeometry::IsAtBossEngage(bot, ctx, *next, DC_ENGAGE_RANGE);
+}
+Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
+{
+    if (!bot || !ctx)
+        return nullptr;
+
+    GuidVector const& remaining =
+        ctx->GetValue<GuidVector>("dungeon clear room trash remaining")->Get();
+
+    Unit* best = nullptr;
+    float bestDist = std::numeric_limits<float>::max();
+    for (ObjectGuid const guid : remaining)
+    {
+        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+        if (!u || !u->IsAlive())
+            continue;
+        float const d = bot->GetExactDist2d(u);
+        if (d < bestDist)
+        {
+            best = u;
+            bestDist = d;
+        }
+    }
+    return best;
 }
