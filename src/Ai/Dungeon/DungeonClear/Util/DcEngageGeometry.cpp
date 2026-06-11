@@ -436,6 +436,17 @@ float DcEngageGeometry::DistAlongPathToClosedDoor(
     if (!hit)
         return std::numeric_limits<float>::max();
 
+    // A band entry well BEHIND the bot's progress cursor is a door on the
+    // already-walked stretch (opened and passed, or a stale flag) — NOT a
+    // blocker ahead. Without this, max(0, behind) clamped it to "at door,
+    // 0yd", which instantly parked the run and even fired Use() at a door the
+    // bot was nowhere near. The slack covers parking inside the hitting
+    // segment itself (cursor legitimately runs a few yards past the entry
+    // while standing at the doorway).
+    constexpr float BEHIND_SLACK = 15.0f;
+    if (doorAccum + BEHIND_SLACK < cursorAccum)
+        return std::numeric_limits<float>::max();
+
     return std::max(0.0f, doorAccum - cursorAccum);
 }
 bool DcEngageGeometry::IsReachable(Player* bot, float x, float y, float z)

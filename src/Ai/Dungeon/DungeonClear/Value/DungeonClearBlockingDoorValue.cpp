@@ -107,12 +107,11 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     if (!path.reachable || path.segments.empty())
         return ObjectGuid::Empty;
 
-    // Build a series of 2D segments tracing the actual walked route, anchored
-    // on the bot's current position and clipped to DOOR_LOOK_AHEAD yards along
-    // the polyline. Anything past the look-ahead doesn't count — by the time
-    // the bot walks there, the value will re-evaluate.
+    // Build a series of 2D segments tracing the corridor AHEAD of the bot,
+    // clipped to DOOR_LOOK_AHEAD yards. Anything past the look-ahead doesn't
+    // count — by the time the bot walks there, the value will re-evaluate.
     //
-    // CRITICAL: chain the per-segment `polyline` points, NOT the segment
+    // CRITICAL #1: chain the per-segment `polyline` points, NOT the segment
     // endpoints (`seg.ex/ey`). The primary producer (LongRangePathfinder)
     // emits the ENTIRE winding route as a single PathSegment whose ex/ey is
     // only the final endpoint (the boss) — so chaining endpoints collapses the
@@ -120,50 +119,62 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     // sweeps through rooms the real path never enters and flags any closed door
     // that happens to lie near that straight line, even one nowhere on the
     // route. The polyline is the real smoothed corridor geometry.
-    float prevX = bot->GetPositionX();
-    float prevY = bot->GetPositionY();
+    //
+    // CRITICAL #2: start at the bot's PROGRESS point on the polyline (nearest
+    // vertex — the same cursor proxy DistAlongPathToClosedDoor uses), not at
+    // the route's origin. The cached path was built from wherever Advance last
+    // rebuilt, which can be far BEHIND a moving bot; chaining from the origin
+    // both spent the look-ahead budget on the already-walked stretch and
+    // synthesized a bot→origin bee-line through walls. Either one flagged
+    // doors behind the bot — observed in Stratholme right after opening the
+    // Baron-run service gate: a closed gate elsewhere got flagged, the panel
+    // showed Blocked at an open gate, and the run wandered off after the
+    // phantom blocker.
+    std::vector<G3D::Vector3> pts;
+    for (PathSegment const& pathSeg : path.segments)
+    {
+        if (pathSeg.polyline.empty())
+            pts.emplace_back(pathSeg.ex, pathSeg.ey, pathSeg.ez);
+        else
+            pts.insert(pts.end(), pathSeg.polyline.begin(), pathSeg.polyline.end());
+    }
+    if (pts.empty())
+        return ObjectGuid::Empty;
+
+    float const botX = bot->GetPositionX();
+    float const botY = bot->GetPositionY();
+    size_t cursor = 0;
+    float bestSq = std::numeric_limits<float>::max();
+    for (size_t i = 0; i < pts.size(); ++i)
+    {
+        float const dx = pts[i].x - botX;
+        float const dy = pts[i].y - botY;
+        float const d2 = dx * dx + dy * dy;
+        if (d2 < bestSq)
+        {
+            bestSq = d2;
+            cursor = i;
+        }
+    }
+
+    float prevX = botX;
+    float prevY = botY;
     float prevZ = bot->GetPositionZ();
     float accumulated = 0.0f;
 
     struct Seg { float ax, ay, az, bx, by, bz; };
     std::vector<Seg> segments;
 
-    bool reachedLookAhead = false;
-    for (PathSegment const& pathSeg : path.segments)
+    for (size_t i = cursor; i < pts.size(); ++i)
     {
-        // Anchored segments collapse to a single polyline point; non-anchored
-        // segments carry the full smoothed corridor. Fall back to the endpoint
-        // only if a segment somehow has no polyline at all.
-        if (pathSeg.polyline.empty())
-        {
-            float const dx = pathSeg.ex - prevX;
-            float const dy = pathSeg.ey - prevY;
-            segments.push_back(Seg{prevX, prevY, prevZ, pathSeg.ex, pathSeg.ey, pathSeg.ez});
-            accumulated += std::sqrt(dx * dx + dy * dy);
-            prevX = pathSeg.ex;
-            prevY = pathSeg.ey;
-            prevZ = pathSeg.ez;
-            if (accumulated >= DOOR_LOOK_AHEAD)
-                break;
-            continue;
-        }
-
-        for (G3D::Vector3 const& pt : pathSeg.polyline)
-        {
-            float const dx = pt.x - prevX;
-            float const dy = pt.y - prevY;
-            segments.push_back(Seg{prevX, prevY, prevZ, pt.x, pt.y, pt.z});
-            accumulated += std::sqrt(dx * dx + dy * dy);
-            prevX = pt.x;
-            prevY = pt.y;
-            prevZ = pt.z;
-            if (accumulated >= DOOR_LOOK_AHEAD)
-            {
-                reachedLookAhead = true;
-                break;
-            }
-        }
-        if (reachedLookAhead)
+        float const dx = pts[i].x - prevX;
+        float const dy = pts[i].y - prevY;
+        segments.push_back(Seg{prevX, prevY, prevZ, pts[i].x, pts[i].y, pts[i].z});
+        accumulated += std::sqrt(dx * dx + dy * dy);
+        prevX = pts[i].x;
+        prevY = pts[i].y;
+        prevZ = pts[i].z;
+        if (accumulated >= DOOR_LOOK_AHEAD)
             break;
     }
     if (segments.empty())
@@ -174,9 +185,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     // the first DOOR_LOOK_AHEAD yards of corridor.
     constexpr float CULL = DOOR_LOOK_AHEAD + 20.0f;
     ObjectGuid best;
+    GameObject* bestGo = nullptr;
     float bestDistFromBotSq = std::numeric_limits<float>::max();
-    float const botX = bot->GetPositionX();
-    float const botY = bot->GetPositionY();
 
     for (auto const& kv : map->GetGameObjectBySpawnIdStore())
     {
@@ -229,10 +239,29 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         {
             bestDistFromBotSq = distFromBotSq;
             best = go->GetGUID();
+            bestGo = go;
         }
     }
 
-    if (!best.IsEmpty())
+    // Announce at INFO whenever the flagged blocker CHANGES (including door →
+    // different door, the signature of a phantom flag) so field reports can
+    // name the exact GO without enabling debug logging. Steady-state repeats
+    // stay at DEBUG.
+    if (best != _lastFlagged)
+    {
+        _lastFlagged = best;
+        if (bestGo)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] blocking-door: flagged {} '{}' (entry {}) "
+                     "{:.1f}yd from bot as corridor-blocking",
+                     bot->GetName(), best.ToString(), bestGo->GetName(),
+                     bestGo->GetEntry(), std::sqrt(bestDistFromBotSq));
+        else
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] blocking-door: corridor clear (no blocking door)",
+                     bot->GetName());
+    }
+    else if (!best.IsEmpty())
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] blocking-door: flagged {} as corridor-blocking",
                   bot->GetName(), best.ToString());

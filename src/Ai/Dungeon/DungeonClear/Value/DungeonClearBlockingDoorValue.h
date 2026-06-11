@@ -32,6 +32,12 @@ public:
 
 protected:
     ObjectGuid Calculate() override;
+
+private:
+    // Last GUID this value flagged, for change-only INFO logging in
+    // Calculate (a flag switching door→door mid-run is the signature of a
+    // phantom blocker and must be visible without debug logs).
+    ObjectGuid _lastFlagged;
 };
 
 #endif

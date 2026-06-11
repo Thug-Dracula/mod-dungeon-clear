@@ -134,6 +134,17 @@ namespace
     // every AI tick while one Use is still swinging the door open.
     constexpr uint32 DC_DOOR_REUSE_MS = 2500;
 
+    // Never Use() a door the bot isn't actually standing at. GameObject::Use
+    // has NO server-side range check, so a mis-flagged far door (stale value /
+    // phantom blocker) would otherwise swing open from across the map — a
+    // silent event desync no real player could cause. Generous vs. the ~5yd
+    // client interact range because parking happens along-path at up to
+    // DC_DOOR_STOP_DISTANCE before the 8yd door band, and a wide gate's GO
+    // origin (its hinge) sits yards off the walkable centerline — legitimate
+    // parks measure up to ~20yd from the origin. The failure class this guards
+    // against is 50yd+, so room-local is the right cut.
+    constexpr float DC_DOOR_USE_RANGE = 25.0f;
+
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
     // (250yd) of a moving player. Beyond this distance, a boss simply not being
@@ -2606,6 +2617,21 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                 return true;
             }
 
+            // A click is only legitimate from beside the door. Parked far from
+            // it (mis-flag, or the walk-in hasn't closed the gap yet), hold
+            // position and report instead of toggling a GO no player could
+            // reach — Use() has no range check of its own.
+            if (!bot->IsWithinDistInMap(door, DC_DOOR_USE_RANGE))
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] door-blocked: entitled to open {} '{}' but "
+                         "{:.1f}yd away (> {:.0f}yd) -> holding, not clicking",
+                         bot->GetName(), door->GetGUID().ToString(),
+                         door->GetName(), bot->GetExactDist(door), DC_DOOR_USE_RANGE);
+                StallDungeonClear(botAI, openingReason);
+                return true;
+            }
+
             // Click whenever the door actually reads SHUT, on a per-door
             // cooldown — not the old "once per announced reason" latch. Gates
             // with door.autoCloseTime re-shut themselves seconds after opening
@@ -2619,8 +2645,8 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                 getMSTimeDiff(doorAppr.lastDoorUseMs, now) >= DC_DOOR_REUSE_MS)
             {
                 LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] door-blocked: opening {} as a player would (entitled)",
-                         bot->GetName(), door->GetGUID().ToString());
+                         "[DC:{}] door-blocked: opening {} '{}' as a player would (entitled)",
+                         bot->GetName(), door->GetGUID().ToString(), door->GetName());
                 door->Use(bot);
                 doorAppr.lastDoorUseGuid = door->GetGUID();
                 doorAppr.lastDoorUseMs = now;
