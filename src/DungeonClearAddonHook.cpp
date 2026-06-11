@@ -56,6 +56,19 @@ namespace
         SendAddonPayload(player, "DC\tERROR\t" + msg);
     }
 
+    // Tell the addon whether the spectator free-camera is enabled server-side so
+    // it can grey out / disable its Spectate button instead of letting the player
+    // click into a refusal. DungeonClear.SpectateEnable is a server-only flag, so
+    // this is the only way the addon learns it. Sent in answer to the addon's
+    // status poll (its panel heartbeat) — tank-independent, and refreshed every
+    // time the panel reopens or combat toggles.
+    void SendSpectateState(Player* player)
+    {
+        bool const enabled = DcSettings::GetBool(player, "SpectateEnable");
+        SendAddonPayload(player,
+            Acore::StringFormat("DC\tSPECTATE\t{}", enabled ? 1 : 0));
+    }
+
     // One "DC\tSETTINGS\t<key>\t<value>\t<min>\t<max>\t<type>\t<overridden>"
     // line describing one player-facing setting's effective value + schema, so
     // the addon can populate (and optionally render) its panel from the server.
@@ -228,6 +241,12 @@ public:
             type = CHAT_MSG_ADDON;
             return;
         }
+
+        // Piggyback the spectate-enabled flag on the addon's status poll: it's
+        // the panel's heartbeat (sent on open and on combat transitions), so the
+        // button stays in sync regardless of whether a tank bot is present.
+        if (subCmd == "status")
+            SendSpectateState(player);
 
         // Map subcommand strings to action names.
         std::string action;
