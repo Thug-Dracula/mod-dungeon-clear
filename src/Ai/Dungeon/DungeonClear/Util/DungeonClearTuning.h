@@ -43,7 +43,11 @@ constexpr float DC_ENGAGE_RANGE = 22.0f;
 // TUs feed it to DcTargeting::FindBlockingTrash, so it is one constant
 // despite the old per-context names (DC_ENGAGE_CONE_* / DC_TRASH_CONE_*).
 constexpr float DC_TRASH_CONE_RANGE = 35.0f;
-constexpr float DC_TRASH_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;  // 60°
+// pi/3 spelled as a literal rather than M_PI: MSVC only defines M_PI when
+// _USE_MATH_DEFINES is set before <cmath>, so the macro is absent on Windows
+// (broke the build with "M_PI: undeclared identifier"). The literal is
+// portable and keeps this header constant-expression and core-include-free.
+constexpr float DC_TRASH_CONE_HALF_ANGLE = 1.0471975512f;  // pi/3 == 60°
 
 // When true, evaluate "blocking trash" via the bot's actual mmap path polyline
 // instead of the geometric cone. Catches packs around corners and avoids "pack
