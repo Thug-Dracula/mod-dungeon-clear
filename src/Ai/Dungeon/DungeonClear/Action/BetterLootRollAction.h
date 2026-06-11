@@ -18,6 +18,13 @@
  * spec, Greed otherwise. The server's LootNeedRollLevel/LootGreedRollLevel
  * and unique-equipped post-checks still apply, exactly as in stock.
  *
+ * Improvement #3 (not in this class): bots roll immediately. Stock reaches
+ * "loot roll" only off the "very often" RandomTrigger (a 1-in-3 chance checked
+ * at most once per AiPlayerbot.RepeatDelay), so a pending roll sits unanswered
+ * for many seconds. DungeonClearLootRollPendingTrigger fires this same action
+ * every non-combat tick while a vote is pending — see DungeonClearTriggers.h
+ * and the node in DungeonClearStrategy.cpp.
+ *
  * Housed in this module (not in mod-playerbots) so the stock module stays
  * unedited and conflict-free on upstream pulls. The wiring is the same override
  * seam DungeonClear already uses for "auto release" (see StayDeadAction.h):

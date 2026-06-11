@@ -49,6 +49,8 @@ public:
         // not auto-vote on group loot (it shares the human's GUID and would
         // pre-empt their roll), and bots Need/Greed gear above their level
         // that they will wear once they reach it instead of greed/passing.
+        // DungeonClearLootRollPendingTrigger additionally drives this action
+        // the tick a roll window opens, instead of stock's randomized poll.
         // Server-wide, gated by DungeonClear.BetterLootRolling; inert (defers
         // to stock LootRollAction) when off. Last-registration-wins.
         creators["loot roll"] = &DungeonClearActionContext::better_loot_roll;

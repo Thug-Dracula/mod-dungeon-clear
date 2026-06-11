@@ -35,6 +35,7 @@ public:
         creators["dungeon clear assist camp"] = &DungeonClearTriggerContext::assist_camp;
         creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
         creators["dungeon clear regroup combat"] = &DungeonClearTriggerContext::regroup_combat;
+        creators["dungeon clear loot roll pending"] = &DungeonClearTriggerContext::loot_roll_pending;
 
         // Chat-command triggers (one per keyword/alias).
         creators["dc on"] = &DungeonClearTriggerContext::dc_on;
@@ -70,6 +71,7 @@ private:
     static Trigger* assist_camp(PlayerbotAI* ai) { return new DungeonClearAssistCampTrigger(ai); }
     static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
     static Trigger* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatTrigger(ai); }
+    static Trigger* loot_roll_pending(PlayerbotAI* ai) { return new DungeonClearLootRollPendingTrigger(ai); }
 
     static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }
     static Trigger* dungeon_clear_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear on"); }

@@ -127,6 +127,19 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear filter loot",
         { NextAction("dungeon clear filter loot", 9.0f) }));
 
+    // BetterLootRolling improvement #3: roll the moment a loot-roll window
+    // opens. Stock only reaches "loot roll" off the "very often" RandomTrigger
+    // (1-in-3 at most every RepeatDelay), leaving bots staring at an open roll
+    // for many seconds. This node drives the same action — the
+    // BetterLootRollAction override — every tick a vote is pending. The action
+    // is instant and resolves one roll per execute, so the trigger self-clears;
+    // relevance above the whole driving ladder (door reopened 90) so the vote
+    // never queues behind movement, below chat (100). Inert unless
+    // DungeonClear.BetterLootRolling is on (see the trigger).
+    triggers.push_back(new TriggerNode(
+        "dungeon clear loot roll pending",
+        { NextAction("loot roll", 95.0f) }));
+
     // Chat-keyword triggers (`dc on/off/skip/status/bosses` + long aliases).
     // Folded in here so there is a single "dungeon clear" strategy: one name to
     // apply (via config or the login hook), which is what lets self-bots —

@@ -94,6 +94,12 @@ DungeonClear.LootMinQuality = 0
 #        accounted for) and the stats suit its spec, Greed otherwise. The
 #        server's LootNeedRollLevel / LootGreedRollLevel policies and the
 #        unique-equipped check still apply as usual.
+#
+#        Third improvement: bots roll immediately. Stock playerbots polls for
+#        pending rolls on a randomized timer (a 1-in-3 chance checked every
+#        AiPlayerbot.RepeatDelay), so bots often stare at an open roll window
+#        for many seconds before voting. With this on, a bot casts its
+#        Need/Greed/Pass vote on the next AI tick after the window opens.
 #            0 = stock playerbots rolling (default)
 #            1 = improved rolling as described above
 #

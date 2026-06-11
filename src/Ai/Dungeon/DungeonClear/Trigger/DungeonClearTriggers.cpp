@@ -15,6 +15,7 @@
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -686,4 +687,34 @@ bool DungeonClearFilterLootTrigger::IsActive()
     // gap: during an active run the inline filters in advance/follow-tank already
     // run. `dc off` clears `enabled`, handing loot fully back to stock.
     return DcLeaderSignal::IsInPausedDungeonClearRun(bot);
+}
+
+bool DungeonClearLootRollPendingTrigger::IsActive()
+{
+    if (!DcSettings::GetBool(bot, "BetterLootRolling"))
+        return false;
+
+    // Self-bot: the vote is the human's to cast (BetterLootRollAction casts
+    // none), so an open window must not keep the trigger hot.
+    if (botAI->IsRealPlayer())
+        return false;
+
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    for (Roll* roll : group->GetRolls())
+    {
+        auto voteItr = roll->playerVote.find(bot->GetGUID());
+        if (voteItr == roll->playerVote.end() || voteItr->second != NOT_EMITED_YET)
+            continue;
+
+        // Mirror the action's only no-vote path: it skips a roll whose item
+        // template doesn't resolve, so such a roll must not fire the trigger
+        // every tick forever.
+        if (sObjectMgr->GetItemTemplate(roll->itemid))
+            return true;
+    }
+
+    return false;
 }
