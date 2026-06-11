@@ -198,8 +198,13 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "SwimEnable",            DcType::Bool,   1,   0,    1,  false },
     { "SwimMaxRange",          DcType::Float, 250, 30, 1000,  false },
 
-    // Spectator free-camera (`.dc spectate`): movement speed multiplier applied
-    // to the possessed camera dummy (flight and run). See Util/DcSpectator.h.
+    // Spectator free-camera (`.dc spectate`). SpectateEnable is the admin gate:
+    // the free-fly camera detaches the player from their body (the bots keep
+    // playing it), which some servers consider a cheat, so it is server-only and
+    // can be switched off entirely — DcSpectator::Start refuses with a message
+    // when it is 0. SpectateSpeed is the movement speed multiplier applied to the
+    // possessed camera dummy (flight and run). See Util/DcSpectator.h.
+    { "SpectateEnable",        DcType::Bool,   1,   0,   1,  false },
     { "SpectateSpeed",         DcType::Float, 2.5, 0.5,  8,  true  },
 
     // Server-only (not overridable from the addon).

@@ -83,6 +83,12 @@ namespace DcSpectator
             return Refuse(whyNot, "No player.");
         if (IsActive(player))
             return Refuse(whyNot, "Already spectating.");
+        // Admin gate: some servers treat detaching the player from their body as
+        // a cheat. Server-only conf flag, so a player can't override it. Only the
+        // entry path is gated — Stop() is always allowed so an in-progress
+        // spectate can still be ended if the flag is flipped off mid-session.
+        if (!DcSettings::GetBool(player, "SpectateEnable"))
+            return Refuse(whyNot, "Spectator mode is disabled on this server.");
         // Spectator mode is a dungeon-clear feature: the camera follows bots
         // running an instance. Outside a dungeon there is nothing to spectate,
         // and possessing a WORLD_TRIGGER in the open world has caused issues.

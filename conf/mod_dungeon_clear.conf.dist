@@ -646,6 +646,22 @@ DungeonClear.PullDynamicPartyLag = 15.0
 DungeonClear.PullDynamicRollInLead = 8.0
 
 #
+#    DungeonClear.SpectateEnable
+#        Master gate for the spectator free-camera (`.dc spectate` or the addon's
+#        Spectate button). The camera detaches the player from their character —
+#        the bots keep playing the body while the player free-flies the instance.
+#        Some servers consider this a cheat, so it can be disabled here: with 0,
+#        attempting to spectate is refused with "Spectator mode is disabled on
+#        this server." (an active spectate can still be ended). This is a
+#        server-only setting; players cannot override it from the addon.
+#            0 = disabled
+#            1 = enabled
+#        Default: 1 (enabled)
+#
+
+DungeonClear.SpectateEnable = 1
+
+#
 #    DungeonClear.SpectateSpeed
 #        Movement speed multiplier for the spectator free-camera (`.dc spectate`
 #        or the addon's Spectate button) — how fast the detached camera flies,
