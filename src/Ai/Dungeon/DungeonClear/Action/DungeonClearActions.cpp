@@ -3659,19 +3659,26 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     pull.fizzleTarget = pull.pullTarget;
                     pull.fizzleCount = 1;
                 }
+                // Health and distance discriminate WHY it fizzled: 100% health
+                // means the pack never engaged (or fully reset behind the LOS
+                // corner); reduced health means it fought and silently dropped
+                // combat when its target became unreachable.
                 if (pull.fizzleCount >= DC_PULL_FIZZLE_MAX)
                 {
                     pull.abortTarget = pull.fizzleTarget;
                     DC_PULL_INFO("[DC:{}] advanced-pull: pull of {} fizzled {}x "
-                                 "(pack alive and idle after the camp fight) -> "
-                                 "handing to normal engage", bot->GetName(),
-                                 pull.fizzleTarget.ToString(), pull.fizzleCount);
+                                 "(alive and idle after the camp fight, {:.0f}% hp, "
+                                 "{:.1f}yd) -> handing to normal engage",
+                                 bot->GetName(), pull.fizzleTarget.ToString(),
+                                 pull.fizzleCount, pulled->GetHealthPct(),
+                                 bot->GetExactDist(pulled));
                 }
                 else
                     DC_PULL_DEBUG("[DC:{}] advanced-pull: pull of {} fizzled "
-                                  "(pack alive and idle after the camp fight, "
-                                  "{}/{})", bot->GetName(),
-                                  pull.pullTarget.ToString(), pull.fizzleCount,
+                                  "(alive and idle after the camp fight, {:.0f}% hp, "
+                                  "{:.1f}yd, {}/{})", bot->GetName(),
+                                  pull.pullTarget.ToString(), pulled->GetHealthPct(),
+                                  bot->GetExactDist(pulled), pull.fizzleCount,
                                   DC_PULL_FIZZLE_MAX);
             }
             else
