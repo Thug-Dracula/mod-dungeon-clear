@@ -8,6 +8,7 @@
 
 #include "Action.h"
 #include "NamedObjectContext.h"
+#include "Ai/Dungeon/DungeonClear/Action/BetterLootRollAction.h"
 #include "Ai/Dungeon/DungeonClear/Action/DungeonClearActions.h"
 #include "Ai/Dungeon/DungeonClear/Action/DungeonClearChatActions.h"
 #include "Ai/Dungeon/DungeonClear/Action/StayDeadAction.h"
@@ -43,6 +44,14 @@ public:
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
         creators["dc go"] = &DungeonClearActionContext::dc_go;
+
+        // Override mod-playerbots' "loot roll": a bot in "bot self" mode does
+        // not auto-vote on group loot (it shares the human's GUID and would
+        // pre-empt their roll), and bots Need/Greed gear above their level
+        // that they will wear once they reach it instead of greed/passing.
+        // Server-wide, gated by DungeonClear.BetterLootRolling; inert (defers
+        // to stock LootRollAction) when off. Last-registration-wins.
+        creators["loot roll"] = &DungeonClearActionContext::better_loot_roll;
 
         // Override mod-playerbots' "auto release" so dead bots stay dead instead
         // of releasing to the graveyard. Dungeon/raid maps only, gated by
@@ -80,6 +89,7 @@ private:
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
     static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }
 
+    static Action* better_loot_roll(PlayerbotAI* ai) { return new DungeonClearBetterLootRollAction(ai); }
     static Action* auto_release(PlayerbotAI* ai) { return new DungeonClearStayDeadAction(ai); }
 };
 

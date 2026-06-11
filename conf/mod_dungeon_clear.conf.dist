@@ -73,6 +73,36 @@ DungeonClear.RecordDecisions = 0
 DungeonClear.LootMinQuality = 0
 
 #
+#    DungeonClear.BetterLootRolling
+#        Master toggle for a set of improvements to mod-playerbots' automatic
+#        group-loot rolling. Off by default (stock rolling).
+#
+#        First improvement: when you play in "bot self" mode (your own character
+#        running on autopilot), the bot no longer casts an automatic Need/Greed
+#        vote on group loot. Because the bot and you share one character GUID,
+#        the bot's automatic roll would otherwise be counted for you and your
+#        roll dialog would never matter — producing a double roll. With this on,
+#        only you roll on loot while in bot-self mode; bots with a separate human
+#        master are unaffected and keep rolling as before.
+#
+#        Second improvement: bots roll on gear they will grow into. Stock
+#        rolling greeds or passes on any weapon/armor whose required level is
+#        above the bot's current level, even when it is that bot's own future
+#        upgrade. With this on, an item blocked ONLY by its level requirement
+#        is judged as if the bot already were that level: Need when the bot
+#        will have the proficiency by then (mail/plate unlocking at 40 is
+#        accounted for) and the stats suit its spec, Greed otherwise. The
+#        server's LootNeedRollLevel / LootGreedRollLevel policies and the
+#        unique-equipped check still apply as usual.
+#            0 = stock playerbots rolling (default)
+#            1 = improved rolling as described above
+#
+#        Default: 0
+#
+
+DungeonClear.BetterLootRolling = 0
+
+#
 #    DungeonClear.IgnoreChests
 #        When enabled, the tank ignores treasure chests (and every other
 #        world object on the ground) while clearing, only ever stopping for

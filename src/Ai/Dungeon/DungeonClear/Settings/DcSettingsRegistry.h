@@ -44,6 +44,17 @@ struct DcSettingDef
 inline constexpr DcSettingDef kDcSettings[] =
 {
     { "LootMinQuality",        DcType::UInt,   0,   0,   6,  true  },
+
+    // Better Loot Rolling. Master toggle for a set of fixes to mod-playerbots'
+    // automatic group-loot rolling. Server-only: read straight from conf by the
+    // playerbots loot-roll action (no per-run override — it governs self-bot
+    // rolling everywhere, not just inside a dungeon run). First improvement: a
+    // bot in "bot self" mode (master == bot, the human's own character on
+    // autopilot) no longer casts an automatic Need/Greed vote, since bot and
+    // human share one GUID and the bot's vote pre-empts the player's roll
+    // dialog. With this on, only the player rolls. OFF preserves stock rolling.
+    { "BetterLootRolling",     DcType::Bool,   0,   0,   1,  false },
+
     { "IgnoreChests",          DcType::Bool,   1,   0,   1,  true  },
     { "RestHealthPct",         DcType::UInt,   0,   0, 100,  true  },
     { "RestManaPct",           DcType::UInt,   0,   0, 100,  true  },
