@@ -140,6 +140,44 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
         return camp;
     return slot;
 }
+Position DcPullPlanner::ComputeHealApproach(Player* bot, Unit* healTarget,
+                                            Position const& camp, float healRange)
+{
+    if (!bot || !healTarget)
+        return camp;
+
+    Position const tp = healTarget->GetPosition();
+
+    // Standoff: stop short of the heal target by a margin so we have LOS/range
+    // slack and never run onto it. Direction is target -> camp, so the landing
+    // point is always on the camp (safe) side of the target.
+    float const standoff = healRange * 0.85f;
+
+    float const dx = camp.GetPositionX() - tp.GetPositionX();
+    float const dy = camp.GetPositionY() - tp.GetPositionY();
+    float const campDist = std::sqrt(dx * dx + dy * dy);
+
+    // Camp already inside heal range of the target (the common drag-back case):
+    // no need to advance at all — hold at camp, which is itself in range.
+    if (campDist < 0.1f || campDist <= standoff)
+        return camp;
+
+    float const ux = dx / campDist;
+    float const uy = dy / campDist;
+    float const px = tp.GetPositionX() + ux * standoff;
+    float const py = tp.GetPositionY() + uy * standoff;
+    float const pz = tp.GetPositionZ();
+
+    // Snap through the navmesh exactly like ComputeCampSlot so the point can never
+    // land in a wall or off a ledge; fall back to camp on a bad probe.
+    PathGenerator gen(bot);
+    gen.CalculatePath(px, py, pz, /*forceDest*/ false);
+    if (gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY))
+        return camp;
+
+    G3D::Vector3 const end = gen.GetActualEndPosition();
+    return Position(end.x, end.y, end.z, camp.GetOrientation());
+}
 bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
 {
     if (!botAI || !target)

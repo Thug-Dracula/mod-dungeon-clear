@@ -4228,6 +4228,57 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
     }
 
+    // Held ranged healer: clamp its movement so it can APPROACH the tank to reach
+    // heal range but NEVER cross to the threat side of it. The healer carries the
+    // "stay" pin (ApplyFollowerPassive) which disables every stock mover — so on
+    // the yield below the cast-heal fires but nothing can walk the bot, killing
+    // the overshoot where a pure ranged healer ran past the tank to a heal/follow
+    // point that sits behind the tank (and behind = toward the pack when the tank
+    // faces camp on the drag-back). DC supplies the approach itself, clamped to
+    // the camp side of the heal target, so "approach yes, never past the tank".
+    if (passive && isHealer)
+    {
+        Unit* const healTarget = AI_VALUE(Unit*, "party member to heal");
+        uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
+        if (healTarget && lowestPct < sPlayerbotAIConfig.almostFullHealth)
+        {
+            float const healRange = botAI->GetRange("heal");
+            bool const canCast = bot->GetExactDist(healTarget) <= healRange &&
+                                 bot->IsWithinLOSInMap(healTarget);
+            if (canCast)
+            {
+                // In range + LOS: hold here and YIELD so the (movement-suppressed)
+                // cast-heal lands in place. "stay" guarantees no mover runs.
+                if (bot->isMoving())
+                    bot->StopMoving();
+                DC_PULL_TRACE("[DC:{}] healer: in range -> casting in place", bot->GetName());
+                return false;
+            }
+            // Out of range/LOS: drive a clamped approach toward a point at ~85%
+            // heal range on the CAMP side of the target. Own the tick (don't let
+            // the camp slot yank it straight back) and use MOVEMENT_COMBAT so it
+            // wins over any stale combat mover.
+            Position const approach =
+                DcPullPlanner::ComputeHealApproach(bot, healTarget, camp, healRange);
+            if (bot->GetExactDist(&approach) > DC_PULL_SLOT_RADIUS)
+            {
+                MoveTo(bot->GetMapId(), approach.GetPositionX(), approach.GetPositionY(),
+                       approach.GetPositionZ(), /*idle*/ false, /*react*/ false,
+                       /*normal_only*/ false, /*exact_waypoint*/ false,
+                       MovementPriority::MOVEMENT_COMBAT);
+                DC_PULL_TRACE("[DC:{}] healer: clamped approach to heal target", bot->GetName());
+                return true;
+            }
+            // At the clamped point but still no LOS/range (corner): hold, yield for
+            // a possible cast — never push past the clamp toward the pack.
+            if (bot->isMoving())
+                bot->StopMoving();
+            return false;
+        }
+        // Nobody needs healing — fall through to the normal camp-slot pin so the
+        // healer holds at / returns to camp like any other held follower.
+    }
+
     // Park at the leader's camp. Each follower aims for its own fuzzed slot — a
     // deterministic 1-2yd offset off the shared anchor, snapped to the navmesh —
     // so the party fans out instead of stacking on one identical point. Settle on
@@ -4249,23 +4300,10 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         // break the hold while the pull is live. While merely camped between pulls
         // (scout phase, passive==false) YIELD so the party can rest / loot at camp
         // — the multiplier suppresses wander / follow / self-pull for a camp-held
-        // follower, so yielding here can't let it drift off toward the tank.
-        //
-        // A healer (pinned with "stay", not "+passive") needs to heal the tank
-        // through the pull. The combat engine runs its heals, but stay-at-camp
-        // owning the tick at relevance 60 would block them. So while holding, a
-        // healer YIELDS the tick ONLY when a party member actually needs a heal
-        // (its cast-heal action then wins the tick); with nobody to heal it OWNS
-        // the tick like any held follower. The "stay" strategy is the real
-        // guarantee it never runs forward: even on the yield, reach-to-heal can't
-        // move it, so the heal only fires when the tank is already in range, and
-        // the pin above re-centers it on camp otherwise.
-        if (passive && isHealer)
-        {
-            uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
-            if (lowestPct < sPlayerbotAIConfig.almostFullHealth)
-                return false;
-        }
+        // follower, so yielding here can't let it drift off toward the tank. A
+        // healer's in-place / clamped-approach healing is handled in the dedicated
+        // block above and returns before reaching here; once nobody needs a heal it
+        // falls through to this camp pin like any other held follower.
         return passive;
     }
     // Priority matters the moment the party is already IN COMBAT when a pull

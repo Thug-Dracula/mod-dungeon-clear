@@ -228,17 +228,17 @@ void DcFollowerLifecycle::ApplyFollowerPassive(Player* follower)
 
     // Healers are deliberately NOT made fully passive: they must keep casting
     // heals on the tank through the drag-back. But they ARE pinned with the
-    // "stay" strategy so they heal IN PLACE. The bug this fixes: a healer chasing
-    // heal range runs playerbots' reach-to-heal movement (ReachPartyMemberToHeal
-    // -> MovementAction::ReachCombatTo), which, when the heal target is moving
-    // FORWARD and the healer is approaching from BEHIND it, predicts the target's
-    // position by pushing the destination up to 3yd PAST the target along its
-    // facing. On a pull the tank faces the pack and is running, so the healer's
-    // destination lands beyond the tank, INTO the mobs — it ran past the tank and
-    // aggroed more. "stay" disables exactly that action (ReachTargetAction::
-    // isUseful early-outs on HasStrategy("stay")) while leaving the cast-heal
-    // action free, so the healer only heals when the tank is already in range/LOS
-    // and otherwise waits at camp. We join g_dcPassivePlayers so
+    // "stay" strategy, which disables EVERY stock mover that voluntarily checks
+    // HasStrategy("stay") — reach-to-heal (ReachTargetAction), the melee/behind
+    // formation positioning (CombatFormationMoveAction), etc. The bug this fixes:
+    // a held healer ran PAST the tank into the pack. When the camp-hold yields the
+    // tick for the healer to cast, some stock mover would walk it to a heal/follow
+    // point that sits BEHIND the tank — and "behind the tank" is toward the pack
+    // while the tank faces camp on the drag-back. With "stay" no mover can run on
+    // that yield, so the cast-heal fires in place; the camp-hold action itself
+    // drives a CLAMPED approach (DcPullPlanner::ComputeHealApproach) when the tank
+    // is out of heal range, so the healer can still close the gap but never crosses
+    // to the threat side of the tank. We join g_dcPassivePlayers so
     // ReapStrandedPassives releases the healer (clearing the stay pin) on the SAME
     // schedule as the held DPS — it only advances once they do. Any aggro a heal
     // still pulls is the tank's to taunt off; the pet stays defensive (untouched).
