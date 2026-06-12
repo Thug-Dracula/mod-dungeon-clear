@@ -55,6 +55,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -659,6 +660,52 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
         }
     }
     return false;
+}
+bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
+                                             float& radiusOut)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader skirts in EngageDirect; this is for followers
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        return false;
+
+    // Same gate the tank's own skirt uses (RoomAggroSkirtPoint), read off the
+    // leader's context so the whole party shares one verdict: a flagged boss with
+    // room trash left and the tank at the boss room.
+    if (!DcTargeting::IsRoomClearActive(leader, ctx))
+        return false;
+
+    std::optional<DungeonBossInfo> next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+    if (!next.has_value())
+        return false;
+
+    Creature* boss = DcTargeting::GetLiveBoss(leader, ctx, next->entry);
+    if (!boss)
+        return false;
+
+    // Size the avoid-sphere with THIS follower's aggro range and reach: a low-level
+    // follower's notice distance against the boss can differ from the tank's, but
+    // the rest of the formula matches the tank's RoomAggroSkirtPoint exactly so the
+    // party and tank agree on where the sphere ends.
+    radiusOut = boss->GetAggroRange(bot) + bot->GetCombatReach() +
+                boss->GetCombatReach() +
+                DcSettings::GetFloat(bot, "AggroRangeMargin") +
+                DcSettings::GetFloat(bot, "RoomAggroPathPadding");
+    centerOut = Position(boss->GetPositionX(), boss->GetPositionY(),
+                         boss->GetPositionZ(), 0.0f);
+    return true;
 }
 void DcLeaderSignal::AbortLeaderPull(Player* bot)
 {

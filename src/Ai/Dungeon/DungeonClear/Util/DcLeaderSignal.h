@@ -121,6 +121,25 @@ public:
     // leader, the trail is empty, or no reachable point lies far enough back.
     static bool GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out);
 
+    // --- Room-aggro clear ----------------------------------------------------
+    // True when `bot`'s elected leader tank is mid room-aggro clear (a flagged
+    // RoomAggroRegistry boss with room trash still to clear, the tank at the boss
+    // room) — the window in which the tank skirts the boss's aggro sphere on its
+    // own approach (DungeonClearEngageActionBase::RoomAggroSkirtPoint). Writes the
+    // LIVE boss centre to `centerOut` and the avoid-sphere radius (the boss's real
+    // aggro range for THIS follower + both reaches + AggroRangeMargin +
+    // RoomAggroPathPadding — the same sizing the tank's skirt uses) to `radiusOut`.
+    // Followers read this so their close-follow to the tank can detour AROUND the
+    // sphere instead of cutting a straight line through it: the tank dodges the
+    // boss correctly, but a follower bee-lining to a tank parked on the far side of
+    // the sphere would otherwise run the party into aggro and wake the room. Reads
+    // the leader's context cross-bot (same pattern as IsLeaderDynamicScouting);
+    // pass any group member. Returns false (outputs untouched) for the leader
+    // itself, off/paused runs, when no room clear is active, or when the boss isn't
+    // loaded.
+    static bool GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
+                                         float& radiusOut);
+
     // Force the leader of `bot`'s group to abandon the current pull and release
     // the party (sets the leader's pull phase to Engage). Used by the camp-safety
     // valve when a held, passive follower is taking unexpected damage. No-op if
