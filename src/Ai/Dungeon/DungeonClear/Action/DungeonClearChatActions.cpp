@@ -22,6 +22,7 @@
 #include "InstanceScript.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -614,11 +615,35 @@ bool DcBossesAction::Execute(Event event)
         }
     }
 
+    // A room-aggro PRE-CLEAR event (IsRoomAggroPreClear) must be DONE before its
+    // boss is pulled, so it has to sort just BEFORE that boss in the panel — not
+    // at the end like an off-path gate. The addon sorts purely by the index field
+    // (and renders the ordinal position, never the raw index), so we give such an
+    // event a fractional index of (lowest room-aggro boss index in this list)
+    // - 0.5: it lands immediately ahead of the boss it gates and the panel
+    // renumbers cleanly. Computed here from the wing-filtered boss list so a split
+    // map only considers the bosses actually shown.
+    bool haveRoomAggroIndex = false;
+    uint32 roomAggroBossIndex = 0;
+    for (DungeonBossInfo const& info : bosses)
+    {
+        if (info.kind != DungeonAnchorKind::Boss)
+            continue;
+        if (!RoomAggroRegistry::Find(bot->GetMapId(), info.entry))
+            continue;
+        if (!haveRoomAggroIndex || info.encounterIndex < roomAggroBossIndex)
+        {
+            roomAggroBossIndex = info.encounterIndex;
+            haveRoomAggroIndex = true;
+        }
+    }
+
     // Off-path CONDITIONAL events (DungeonEventRegistry) are not in the boss list
     // — surface them too so the player can see a pending gate (e.g. "free the
-    // prisoner") and `dc skip` past it if a bot can't drive it. Listed as a
-    // BOSS line with a synthetic entry (the latch key) and encounterIndex 99 so
-    // they sort last; status is the latch state.
+    // prisoner") and `dc skip` past it if a bot can't drive it. Listed as a BOSS
+    // line with a synthetic entry (the latch key); status is the latch state.
+    // Room-aggro pre-clears sort just before their boss (see above); every other
+    // off-path event uses index 99 so it sorts last.
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
     {
         uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
@@ -628,9 +653,18 @@ bool DcBossesAction::Execute(Event event)
                                       : "alive";
         std::string const evName = "Event: " + ev->name;
 
+        // Default off-path position; room-aggro pre-clears slot in ahead of their
+        // gated boss with a "<bossIndex>-0.5" fractional index (guarding the
+        // unsigned underflow when the boss itself sits at index 0).
+        std::string idxField = "99";
+        if (DungeonEventRegistry::IsRoomAggroPreClear(*ev) && haveRoomAggroIndex)
+            idxField = roomAggroBossIndex == 0
+                           ? "-0.5"
+                           : std::to_string(roomAggroBossIndex - 1) + ".5";
+
         std::ostringstream evMsg;
-        evMsg << "BOSS\t" << latchKey << "\t99\t" << evName << "\t" << evStatus
-              << "\t0\t0\t0\t";
+        evMsg << "BOSS\t" << latchKey << "\t" << idxField << "\t" << evName << "\t"
+              << evStatus << "\t0\t0\t0\t";
         DcStatusPublisher::SendAddonMessage(botAI, evMsg.str());
 
         if (!silent)
