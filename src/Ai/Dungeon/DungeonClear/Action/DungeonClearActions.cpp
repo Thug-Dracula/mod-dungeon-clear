@@ -2715,7 +2715,8 @@ bool DcRunEventAction::Execute(Event /*event*/)
             {
                 float const safeRadius = boss->GetAggroRange(bot) +
                                          bot->GetCombatReach() + boss->GetCombatReach() +
-                                         DcSettings::GetFloat(bot, "AggroRangeMargin");
+                                         DcSettings::GetFloat(bot, "AggroRangeMargin") +
+                                         DcSettings::GetFloat(bot, "RoomAggroPathPadding");
                 if (std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
                         bot, boss->GetPositionX(), boss->GetPositionY(),
                         boss->GetPositionZ(), safeRadius, trash))

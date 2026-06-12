@@ -270,6 +270,21 @@ DungeonClear.ClearRoomBeforeBoss = 1
 DungeonClear.RoomClearTimeout = 30
 
 #
+#    DungeonClear.RoomAggroPathPadding
+#        Extra yards added to a room-aggro boss's avoid-sphere when the tank
+#        routes AROUND it to reach a trash pack during the pre-clear. The
+#        room-trash EXCLUSION sphere is the boss's exact aggro range + reaches +
+#        AggroRangeMargin; the orbiting APPROACH adds this slack on top so the
+#        tank skirts comfortably OUTSIDE aggro instead of grazing it and waking
+#        the boss (the SM Cathedral / Mograine failure mode). Raise it if the
+#        tank still clips the boss; lower it to hug the sphere tighter.
+#
+#        Default: 3.0
+#
+
+DungeonClear.RoomAggroPathPadding = 3.0
+
+#
 #    DungeonClear.BossEngageRangeFloor / DungeonClear.BossEngageRangeCap
 #        Clamp the dynamic boss engage hand-off distance to [floor, cap] yards.
 #        The floor keeps the tank from having to reach point-blank melee on a

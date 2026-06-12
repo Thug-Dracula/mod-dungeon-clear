@@ -104,6 +104,12 @@ inline constexpr DcSettingDef kDcSettings[] =
     // tank even reached the room.)
     { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
     { "RoomClearTimeout",      DcType::UInt, 180,   0,  600,  true  },
+    // Extra yards added to a room-aggro boss's avoid-sphere when the tank routes
+    // AROUND it to reach a trash pack (DcEngageGeometry::AggroSafeApproachPoint).
+    // The room-trash EXCLUSION sphere is sized to the boss's exact aggro range +
+    // reaches + AggroRangeMargin; the orbiting APPROACH wants a little more slack
+    // on top so the tank skirts comfortably outside aggro instead of grazing it.
+    { "RoomAggroPathPadding",  DcType::Float,  3,   0,   30,  true  },
 
     // Travel-objective anchors (BossRosterRegistry, e.g. Sunken Temple event
     // waypoints): the default arrival radius at which a non-combat objective is
