@@ -5,6 +5,8 @@
 
 #include "gtest/gtest.h"
 #include "DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorIndex.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "PlayerbotAIConfig.h"
 #include "Player.h"
 #include "WorldSession.h"
@@ -639,3 +641,77 @@ TEST_F(DungeonClearStatusTest, StatusFightingTrash)
 }
 
 
+
+// --- DcDoorIndex::NeedsRebuild (door-list cache policy) -------------------
+
+TEST(DcDoorIndexTest, RebuildsWhenNeverBuilt)
+{
+    // builtMs == 0 is the "never built" sentinel -> always rebuild.
+    EXPECT_TRUE(DcDoorIndex::NeedsRebuild(0, 1000, 100, 100));
+}
+
+TEST(DcDoorIndexTest, NoRebuildWhenFreshAndSameSize)
+{
+    // Built 500ms ago, store size unchanged, under the 2000ms TTL -> reuse.
+    EXPECT_FALSE(DcDoorIndex::NeedsRebuild(1000, 1500, 200, 200));
+}
+
+TEST(DcDoorIndexTest, RebuildsOnStoreSizeDelta)
+{
+    // Grids streamed in/out: store grew/shrank -> rebuild even if fresh.
+    EXPECT_TRUE(DcDoorIndex::NeedsRebuild(1000, 1100, 200, 201));
+    EXPECT_TRUE(DcDoorIndex::NeedsRebuild(1000, 1100, 201, 200));
+}
+
+TEST(DcDoorIndexTest, RebuildsOnTtlExpiry)
+{
+    // Same size but the snapshot has aged past kRebuildMs (2000ms).
+    EXPECT_FALSE(DcDoorIndex::NeedsRebuild(1000, 1000 + DcDoorIndex::kRebuildMs - 1, 50, 50));
+    EXPECT_TRUE(DcDoorIndex::NeedsRebuild(1000, 1000 + DcDoorIndex::kRebuildMs, 50, 50));
+}
+
+// --- DcTickMemo::MemoValid (within-tick window) --------------------------
+
+TEST(DcTickMemoTest, ZeroStampIsNeverValid)
+{
+    // stampMs == 0 is the "never filled" sentinel.
+    EXPECT_FALSE(DcTickMemo::MemoValid(0, 0));
+    EXPECT_FALSE(DcTickMemo::MemoValid(0, 1000));
+}
+
+TEST(DcTickMemoTest, WithinWindowIsValidBoundaryInclusive)
+{
+    EXPECT_TRUE(DcTickMemo::MemoValid(1000, 1000));                                  // same instant
+    EXPECT_TRUE(DcTickMemo::MemoValid(1000, 1000 + DcTickMemo::kMemoWindowMs));      // exactly at the edge
+}
+
+TEST(DcTickMemoTest, PastWindowIsStale)
+{
+    // One ms past the 50ms window — and a full AI tick (>=100ms) later.
+    EXPECT_FALSE(DcTickMemo::MemoValid(1000, 1000 + DcTickMemo::kMemoWindowMs + 1));
+    EXPECT_FALSE(DcTickMemo::MemoValid(1000, 1100));
+}
+
+TEST(DcTickMemoTest, MsWraparoundIsHandled)
+{
+    // stamp just below the uint32 ceiling, now just after wrap: getMSTimeDiff
+    // semantics give a small positive delta, so a near-stamp stays valid.
+    std::uint32_t const stamp = 0xFFFFFFF0u;     // ceiling - 15
+    EXPECT_TRUE(DcTickMemo::MemoValid(stamp, 0x00000005u));    // 20ms across the wrap
+    EXPECT_FALSE(DcTickMemo::MemoValid(stamp, 0x00000040u));   // ~80ms across the wrap
+}
+
+TEST(DcTickMemoTest, EnsureFreshResetsFieldsOnNewTick)
+{
+    DcTickMemo m;
+    m.EnsureFresh(1000);            // opens a tick
+    m.atBossEngage = 1;
+    m.betweenPullsReadyStrict = 0;
+    m.EnsureFresh(1000 + 10);       // same tick (<=50ms) -> fields survive
+    EXPECT_EQ(m.atBossEngage, 1);
+    EXPECT_EQ(m.betweenPullsReadyStrict, 0);
+    m.EnsureFresh(1000 + 200);      // a new tick -> all fields cleared to -1
+    EXPECT_EQ(m.atBossEngage, -1);
+    EXPECT_EQ(m.betweenPullsReadyStrict, -1);
+    EXPECT_EQ(m.betweenPullsReadyLoose, -1);
+}

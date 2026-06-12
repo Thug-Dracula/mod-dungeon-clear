@@ -47,6 +47,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -555,7 +556,8 @@ namespace
     // loot-yield block there.
     bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
     {
-        return DcPartyState::IsBetweenPullsReady(bot, context, /*requireNoLoot*/ false);
+        // Memoised within the tick (loose variant); see DcTickMemo.
+        return DcTickMemoAccess::BetweenPullsReady(bot, context, /*requireNoLoot*/ false);
     }
 
     // Commit a freshly-built path into the cache and reset the follower so we
@@ -2303,7 +2305,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // ramp — honoring it there stops the tank dead under the boss forever. Must
     // match the trigger ladder, which gates on the same predicate.
     bool const atBoss =
-        DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+        DcTickMemoAccess::AtBossEngage(bot, context, *next);
 
     // Back inside engage range: clear the dead-end escalation counter and the
     // direct-pursuit give-up latch so a boss that wanders back out can be

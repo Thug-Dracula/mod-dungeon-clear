@@ -17,6 +17,7 @@
 #include "Value.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
@@ -540,6 +541,25 @@ public:
 
 private:
     DcApproachState data;
+};
+
+// Within-tick predicate memo (DcTickMemo). Pure performance scratch: it dedups
+// IsAtBossEngage / IsBetweenPullsReady reads that several triggers + the advance
+// action make in one tick. Self-expiring on a 50ms window that cannot cross a
+// tick, so it never carries an answer between ticks; Reset() clears it alongside
+// the rest of the run state for tidiness, but correctness does not depend on it.
+class DungeonClearTickMemoValue : public ManualSetValue<DcTickMemo&>
+{
+public:
+    DungeonClearTickMemoValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcTickMemo&>(botAI, data, "dungeon clear tick memo")
+    {
+    }
+
+    void Reset() override { data = DcTickMemo{}; }
+
+private:
+    DcTickMemo data;
 };
 
 #endif

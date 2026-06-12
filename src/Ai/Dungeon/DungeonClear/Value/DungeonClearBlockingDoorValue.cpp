@@ -17,6 +17,8 @@
 #include "Player.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorIndex.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
@@ -188,9 +190,11 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     GameObject* bestGo = nullptr;
     float bestDistFromBotSq = std::numeric_limits<float>::max();
 
-    for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+    // Iterate the cached door list (DcDoorIndex) rather than the whole GO store;
+    // the shut-state check below is still read fresh per door.
+    for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
-        GameObject* go = kv.second;
+        GameObject* go = map->GetGameObject(guid);
         // Blocking door currently shut (the "block the corridor" state). The
         // helper folds the type / ignoredByPathing / startOpen-inverted GOState
         // checks; see DcEngageGeometry::IsDoorClosed.

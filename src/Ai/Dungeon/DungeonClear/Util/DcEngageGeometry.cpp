@@ -5,6 +5,7 @@
 
 #include "DcEngageGeometry.h"
 
+#include "DcDoorIndex.h"
 #include "DungeonClearUtil.h"   // DcTargeting::GetLiveBoss (until DcTargeting moves)
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -369,9 +370,11 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
 
     float const segLenSq = (tx - bx) * (tx - bx) + (ty - by) * (ty - by);
 
-    for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+    // Iterate the cached door list (DcDoorIndex) instead of the whole GO store;
+    // GOState is still read FRESH per door by IsDoorClosed below.
+    for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
-        GameObject* go = kv.second;
+        GameObject* go = map->GetGameObject(guid);
         if (!IsDoorClosed(go))
             continue;
 
@@ -422,9 +425,10 @@ bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float 
     float const loZ = z - DC_DOOR_Z_BAND;
     float const hiZ = z + DC_DOOR_Z_BAND;
 
-    for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+    // Cached door list; shut-state read fresh per door (see DcDoorIndex).
+    for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
-        GameObject* go = kv.second;
+        GameObject* go = map->GetGameObject(guid);
         if (!IsDoorClosed(go))
             continue;
 

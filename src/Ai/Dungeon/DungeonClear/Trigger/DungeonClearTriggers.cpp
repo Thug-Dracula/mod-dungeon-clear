@@ -22,6 +22,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -60,7 +61,9 @@ namespace
     // commit-timeout).
     bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
     {
-        return DcPartyState::IsBetweenPullsReady(bot, context, /*requireNoLoot*/ true);
+        // Memoised within the tick: this strict gate is read by five triggers in
+        // one tick and each does a full party walk. See DcTickMemo.
+        return DcTickMemoAccess::BetweenPullsReady(bot, context, /*requireNoLoot*/ true);
     }
 }
 
@@ -107,7 +110,7 @@ bool DungeonClearAtBossTrigger::IsActive()
 
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
-    if (!DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
     // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the
@@ -237,7 +240,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // pull — don't also scan for blocking trash. While merely passing under an
     // upper-floor boss this is false, so trash on the way to the ramp still gets
     // cleared. See IsAtBossEngage.
-    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
+    if (DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.
@@ -585,7 +588,7 @@ bool DungeonClearPullTrigger::IsActive()
     // it). The one exception is a room-wide-aggro boss with room trash still up:
     // there the pull pipeline is what clears that room (honouring advanced/dynamic
     // pull), so it must stay live at the boss until the room is clear.
-    if (DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE) &&
+    if (DcTickMemoAccess::AtBossEngage(bot, context, *next) &&
         !DcTargeting::IsRoomClearActive(bot, context))
         return false;
     if (!IsBetweenPullsReady(bot, context))
