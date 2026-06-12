@@ -2917,8 +2917,20 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
 
     if (!door)
     {
-        // Door vanished/opened between the value poll and now, or its grid
-        // isn't resident — fall back to the in-place stall so the reason is
+        if (doorGuid.IsEmpty())
+        {
+            // The blocking-door value went EMPTY — the corridor is clear: the
+            // door opened (e.g. a dungeon event freed the prisoner who unlocked
+            // the courtyard door) or there was never a real blocker. Do NOT
+            // auto-pause; drop any stall and stand down so Advance walks the now-
+            // open doorway next tick. Without this, the one-tick race between the
+            // door opening and the cached blocking-door value clearing paused the
+            // run "the way is blocked by a door" the instant the event succeeded.
+            ClearStall(context);
+            return true;
+        }
+        // A non-empty guid we couldn't resolve (the GO's grid isn't resident) —
+        // genuinely unknown; fall back to the in-place stall so the reason is
         // still reported.
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] door-blocked: door guid {} unresolved -> parking in place",
