@@ -459,3 +459,90 @@ TEST(DungeonClearRollInTest, ZeroOrNegativeDistanceRollsIn)
     EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, 0.0f, 20.0f, 8.0f));
     EXPECT_TRUE(ShouldRollInForLeeroy(1u, true, -1.0f, 20.0f, 8.0f));
 }
+
+// --- FindTrailRejoin (breadcrumb truncate-don't-clear) --------------------
+
+using DungeonClearMath::FindTrailRejoin;
+using DungeonClearMath::TrailRejoinNone;
+
+// Helper: build a straight-line trail of `n` crumbs spaced 4yd on +X at z=0.
+static std::vector<Position> MakeLine(std::size_t n)
+{
+    std::vector<Position> v;
+    for (std::size_t i = 0; i < n; ++i)
+        v.emplace_back(static_cast<float>(i) * 4.0f, 0.0f, 0.0f, 0.0f);
+    return v;
+}
+
+TEST(DungeonClearTrailRejoinTest, RejoinsAtExactCampCrumb)
+{
+    // 7 crumbs at x = 0,4,..,24. Bot stands on the LAST crumb (x=24): even though
+    // crumb 5 (x=20) is also within 6yd behind it, latest-wins returns crumb 6
+    // (the standing-at-camp -> rejoin-the-camp-crumb case).
+    std::vector<Position> trail = MakeLine(7);
+    Position const cur(24.0f, 0.0f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), 6u);
+}
+
+TEST(DungeonClearTrailRejoinTest, RejoinsAtNearestWithinRadius)
+{
+    // 2yd past the last crumb (x=24): within 6yd of crumbs 5 (x=20) and 6
+    // (x=24); latest-wins picks crumb 6.
+    std::vector<Position> trail = MakeLine(7);
+    Position const cur(26.0f, 0.0f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), 6u);
+}
+
+TEST(DungeonClearTrailRejoinTest, LatestWinsOnSelfLoop)
+{
+    // Trail loops back near its own start: an early crumb and a late crumb both
+    // sit at the origin. Rejoin must pick the LATEST (index 6), not index 0.
+    std::vector<Position> trail;
+    trail.emplace_back(0.0f, 0.0f, 0.0f, 0.0f);     // 0  (start)
+    trail.emplace_back(10.0f, 0.0f, 0.0f, 0.0f);    // 1
+    trail.emplace_back(20.0f, 0.0f, 0.0f, 0.0f);    // 2
+    trail.emplace_back(20.0f, 10.0f, 0.0f, 0.0f);   // 3
+    trail.emplace_back(10.0f, 10.0f, 0.0f, 0.0f);   // 4
+    trail.emplace_back(0.0f, 10.0f, 0.0f, 0.0f);    // 5
+    trail.emplace_back(1.0f, 1.0f, 0.0f, 0.0f);     // 6  (back near start)
+    Position const cur(0.5f, 0.5f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), 6u);
+}
+
+TEST(DungeonClearTrailRejoinTest, NoRejoinOnTrueTeleport)
+{
+    std::vector<Position> trail = MakeLine(10);     // all near the X axis
+    Position const cur(500.0f, 500.0f, 0.0f, 0.0f); // far away -> teleport
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), TrailRejoinNone);
+}
+
+TEST(DungeonClearTrailRejoinTest, RadiusBoundaryIsInclusive)
+{
+    std::vector<Position> trail = MakeLine(3);      // crumbs at x = 0,4,8
+    // Exactly 6yd from crumb 2 (x=8) -> at the boundary -> rejoins (<=).
+    Position const cur(14.0f, 0.0f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), 2u);
+    // Just past the boundary from any crumb -> no rejoin.
+    Position const past(14.01f, 0.0f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, past, 6.0f), TrailRejoinNone);
+}
+
+TEST(DungeonClearTrailRejoinTest, VerticalSeparationIsNotARejoin)
+{
+    // A crumb directly below the bot (same X/Y, 20yd down) must NOT count: the
+    // rejoin test is 3D so a different floor never rejoins.
+    std::vector<Position> trail;
+    trail.emplace_back(0.0f, 0.0f, 0.0f, 0.0f);
+    Position const cur(0.0f, 0.0f, 20.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(trail, cur, 6.0f), TrailRejoinNone);
+}
+
+TEST(DungeonClearTrailRejoinTest, EmptyTrailAndBadRadius)
+{
+    std::vector<Position> empty;
+    Position const cur(0.0f, 0.0f, 0.0f, 0.0f);
+    EXPECT_EQ(FindTrailRejoin(empty, cur, 6.0f), TrailRejoinNone);
+    // Non-positive radius never rejoins even on a coincident crumb.
+    std::vector<Position> one = MakeLine(1);
+    EXPECT_EQ(FindTrailRejoin(one, cur, 0.0f), TrailRejoinNone);
+}

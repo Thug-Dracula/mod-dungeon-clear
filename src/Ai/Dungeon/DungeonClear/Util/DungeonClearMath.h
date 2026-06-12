@@ -6,11 +6,17 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARMATH_H
 #define _PLAYERBOT_DUNGEONCLEARMATH_H
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
+#include "Position.h"
+
 namespace DungeonClearMath
 {
+    // Sentinel "no rejoin crumb" returned by FindTrailRejoin.
+    inline constexpr std::size_t TrailRejoinNone = static_cast<std::size_t>(-1);
+
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is
     // navmesh-reachable from the pull target with a clear line of sight and no
@@ -125,6 +131,17 @@ namespace DungeonClearMath
     bool SegmentIntersectsAABB2D(float ax, float ay, float bx, float by,
                                  float minX, float minY,
                                  float maxX, float maxY);
+
+    // Index of the LATEST crumb within `rejoinRadius` (3D) of `cur`, or
+    // TrailRejoinNone if none qualifies. Used by the breadcrumb recorder: on a
+    // >kJump discontinuity (a drag-back / drop-down), rather than wiping the
+    // whole trail, rejoin at the most recent crumb near where the bot now stands
+    // and truncate everything ahead of it. Latest-wins so a trail that loops near
+    // itself rejoins at the most recent pass, keeping the walked-distance
+    // semantics the camp walk-back relies on intact. 3D on purpose — a crumb
+    // directly above/below (different floor) must not count as a rejoin.
+    std::size_t FindTrailRejoin(std::vector<Position> const& crumbs,
+                                Position const& cur, float rejoinRadius);
 }
 
 #endif

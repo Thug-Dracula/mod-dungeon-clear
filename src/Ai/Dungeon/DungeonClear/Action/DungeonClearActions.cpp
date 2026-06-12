@@ -1095,7 +1095,24 @@ namespace
         // restarts the trail so consecutive crumbs are always a straight walk apart.
         if (crumbs.back().GetExactDist(&cur) > kJump)
         {
-            crumbs.clear();  // discontinuity — restart the contiguous trail
+            // Discontinuity (a drag-back in combat, a drop-down). Wiping the whole
+            // trail here starves the next pull's ComputeSafeCamp exactly when it
+            // matters most — and the information is almost always still valid: the
+            // camp itself sits on previously walked trail. So try to REJOIN: find
+            // the latest crumb near where the bot stands now and truncate forward
+            // of it, keeping the contiguous prefix. Only a true teleport (no crumb
+            // within kRejoinRadius) restarts the trail. kRejoinRadius (6yd) sits
+            // under kJump and above DC_PULL_CAMP_ARRIVE (5yd), so a tank standing
+            // at camp rejoins the crumb the camp was lifted from. Contiguity holds:
+            // the prefix was already pairwise-contiguous and cur is within
+            // kRejoinRadius < kJump of the rejoin crumb.
+            constexpr float kRejoinRadius = 6.0f;
+            std::size_t const j =
+                DungeonClearMath::FindTrailRejoin(crumbs, cur, kRejoinRadius);
+            if (j != DungeonClearMath::TrailRejoinNone)
+                crumbs.resize(j + 1);  // rejoin — drop everything ahead of crumb j
+            else
+                crumbs.clear();        // true teleport — restart the trail
             crumbs.push_back(cur);
             return;
         }

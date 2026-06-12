@@ -198,6 +198,23 @@ float DungeonClearMath::DistSqToSegment2D(float px, float py,
     return dx * dx + dy * dy;
 }
 
+std::size_t DungeonClearMath::FindTrailRejoin(std::vector<Position> const& crumbs,
+                                              Position const& cur, float rejoinRadius)
+{
+    if (rejoinRadius <= 0.0f)
+        return TrailRejoinNone;
+
+    float const r2 = rejoinRadius * rejoinRadius;
+    // Latest-wins: walk from the most recent crumb backward, return the first
+    // within the (3D, squared — no sqrt) radius.
+    for (std::size_t i = crumbs.size(); i-- > 0; )
+    {
+        if (crumbs[i].GetExactDistSq(&cur) <= r2)
+            return i;
+    }
+    return TrailRejoinNone;
+}
+
 bool DungeonClearMath::SegmentIntersectsAABB2D(float ax, float ay,
                                                float bx, float by,
                                                float minX, float minY,
