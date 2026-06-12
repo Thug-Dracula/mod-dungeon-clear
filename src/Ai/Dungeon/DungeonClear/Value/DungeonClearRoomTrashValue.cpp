@@ -113,6 +113,16 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         // at-boss path owns bosses, and scripted bosses misbehave when pulled.
         if (DcTargeting::IsDungeonBossEntry(context, u->GetEntry()))
             continue;
+        // ...nor a RoomAggroRegistry boss entry. Some encounter partners are
+        // swapped OUT of the boss roster (SM Cathedral's High Inquisitor Whitemane
+        // -> Mograine, inheriting the kill-bit) so IsDungeonBossEntry no longer
+        // flags them — but they are still bosses that share THIS room pull and
+        // stand WITH the live boss. Chasing one as "trash" drags the tank into the
+        // boss's aggro sphere (the live SM Cathedral failure: the tank orbited
+        // Mograine trying to reach Whitemane, who stands inside his aggro, and woke
+        // the room). The registry lists both partners, so skip any of them.
+        if (RoomAggroRegistry::Find(bot->GetMapId(), u->GetEntry()))
+            continue;
 
         float const distToBoss = liveBoss->GetExactDist(u);
         if (!RoomAggroRegistry::IsRoomTrash(*room, u->GetEntry(), distToBoss, bossSafe))
