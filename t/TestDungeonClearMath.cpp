@@ -678,3 +678,112 @@ TEST(DungeonClearReleaseTest, NoCombatStampReleases)
 {
     EXPECT_TRUE(ShouldReleaseFollower(false, 0u, 5100u, 1500u, 100.0f, 60.0f));
 }
+
+// --- Patrol-wait: EstimateAggroCount lone-patroller exclusion --------------
+
+// Helper: the reduced pass (lone patrollers excluded).
+static unsigned CountReduced(std::vector<DungeonClearMath::DynPullMob> const& m,
+                             std::size_t t)
+{
+    return DungeonClearMath::EstimateAggroCount(m, t, kSpread, kAssistR, kZTol,
+                                                /*excludeLonePatrollers*/ true);
+}
+
+// A lone patroller (packId 0) that tips a clean 2-mob Leeroy over the ceiling is
+// dropped in the reduced pass: full counts it, reduced does not.
+TEST(DungeonClearPatrolWaitTest, LonePatrollerDropsInReducedPass)
+{
+    // Target pair (count 2) + four more bodies in reach, one of them a lone
+    // patroller. Full = 6 (> ceiling 5 => Advanced); reduced without the patroller
+    // = 5 (<= ceiling => clean Leeroy) => patrol-contended.
+    std::vector<DungeonClearMath::DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach},               // 0 target
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach},               // 1 packmate
+        {6.0f, 0.0f, 0.0f, true,  0u, kReach},               // 2
+        {9.0f, 0.0f, 0.0f, true,  0u, kReach},               // 3
+        {12.0f, 0.0f, 0.0f, true, 0u, kReach},               // 4
+        {15.0f, 0.0f, 0.0f, true, 0u, kReach, /*patrol*/ true} // 5 lone patroller
+    };
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_EQ(CountReduced(mobs, 0), 5u);
+}
+
+// A patroller that shares an atomic pack (packId != 0) is NOT droppable — you
+// cannot wait out half a formation — so the reduced pass still counts it.
+TEST(DungeonClearPatrolWaitTest, FormationPatrollerStaysInReducedPass)
+{
+    // Mob 5 is a patroller but linked (packId 7) to mob 4; both come as a unit.
+    std::vector<DungeonClearMath::DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach},                 // 0 target
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach},                 // 1
+        {6.0f, 0.0f, 0.0f, true,  0u, kReach},                 // 2
+        {9.0f, 0.0f, 0.0f, true,  0u, kReach},                 // 3
+        {12.0f, 0.0f, 0.0f, true, 7u, kReach},                 // 4 formation
+        {15.0f, 0.0f, 0.0f, true, 7u, kReach, /*patrol*/ true} // 5 patroller, linked
+    };
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_EQ(CountReduced(mobs, 0), 6u);  // linked patroller survives
+}
+
+// --- ShouldWaitForPatrol (the patrol-wait latch gate) ---------------------
+
+using DungeonClearMath::ShouldWaitForPatrol;
+
+// Not contended (full at/under ceiling): never wait, latch cleared.
+TEST(DungeonClearPatrolGateTest, NotContendedProceeds)
+{
+    std::uint32_t since = 1234u;
+    // full 5 <= ceiling 5 -> not contended.
+    EXPECT_FALSE(ShouldWaitForPatrol(5u, 5u, 5u, since, 9000u, 8000u, since));
+    EXPECT_EQ(since, 0u);
+}
+
+// Reduced ALSO over the ceiling: the patrol isn't the sole cause -> proceed
+// (commit Advanced), don't wait.
+TEST(DungeonClearPatrolGateTest, ReducedStillOverIsNotPatrolContended)
+{
+    std::uint32_t since = 0u;
+    EXPECT_FALSE(ShouldWaitForPatrol(8u, 6u, 5u, since, 1000u, 8000u, since));
+    EXPECT_EQ(since, 0u);
+}
+
+// Contended (full over, reduced under): arm the latch and hold until the budget.
+TEST(DungeonClearPatrolGateTest, ContendedWaitsThenTimesOut)
+{
+    std::uint32_t since = 0u;
+    // First contended tick: arm at now=1000, hold.
+    EXPECT_TRUE(ShouldWaitForPatrol(6u, 5u, 5u, since, 1000u, 8000u, since));
+    EXPECT_EQ(since, 1000u);
+    // Still inside the 8s budget -> keep waiting.
+    EXPECT_TRUE(ShouldWaitForPatrol(6u, 5u, 5u, since, 5000u, 8000u, since));
+    EXPECT_EQ(since, 1000u);
+    // At/after the budget -> proceed (latch stays armed so it can't re-wait).
+    EXPECT_FALSE(ShouldWaitForPatrol(6u, 5u, 5u, since, 9000u, 8000u, since));
+    EXPECT_EQ(since, 1000u);
+}
+
+// The patrol leaving (reduced==full, both fine) clears an armed latch and proceeds.
+TEST(DungeonClearPatrolGateTest, PatrolLeavingClearsLatch)
+{
+    std::uint32_t since = 1000u;  // armed
+    EXPECT_FALSE(ShouldWaitForPatrol(4u, 4u, 5u, since, 3000u, 8000u, since));
+    EXPECT_EQ(since, 0u);
+}
+
+// Ceiling boundary: contended needs full strictly above and reduced at/under.
+TEST(DungeonClearPatrolGateTest, CeilingBoundary)
+{
+    std::uint32_t since = 0u;
+    // full 6 > 5 and reduced 5 <= 5 -> contended -> wait.
+    EXPECT_TRUE(ShouldWaitForPatrol(6u, 5u, 5u, since, 100u, 8000u, since));
+    // full == ceiling -> not contended.
+    since = 0u;
+    EXPECT_FALSE(ShouldWaitForPatrol(5u, 4u, 5u, since, 100u, 8000u, since));
+}
+
+// waitMs == 0 proceeds immediately even when contended.
+TEST(DungeonClearPatrolGateTest, ZeroBudgetProceeds)
+{
+    std::uint32_t since = 0u;
+    EXPECT_FALSE(ShouldWaitForPatrol(6u, 5u, 5u, since, 100u, 0u, since));
+}

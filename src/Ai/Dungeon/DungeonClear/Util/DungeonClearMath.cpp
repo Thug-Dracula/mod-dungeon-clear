@@ -13,11 +13,21 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
                                                    float combatSpread,
                                                    float assistRadius,
                                                    float zTolerance,
+                                                   bool excludeLonePatrollers,
                                                    std::vector<std::size_t>* countedOut)
 {
     std::size_t const n = mobs.size();
     if (n == 0 || targetIdx >= n)
         return 0;
+
+    // Patrol-wait reduced pass: a lone patroller (no atomic pack) is treated as if
+    // it had walked out of range — not eligible to seed, assist, or be assisted.
+    // Formation/linked patrollers (packId != 0) are unaffected.
+    auto eligible = [&](std::size_t i)
+    {
+        return mobs[i].chainEligible &&
+               !(excludeLonePatrollers && mobs[i].patroller && mobs[i].packId == 0);
+    };
 
     auto dist2d = [&](std::size_t a, std::size_t b)
     {
@@ -69,7 +79,7 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
             inSet[i] = 1;  // target + its atomic pack
             continue;
         }
-        if (mobs[i].chainEligible && sameLevel(i, targetIdx)
+        if (eligible(i) && sameLevel(i, targetIdx)
             && dist2d(i, targetIdx) <= mobs[i].aggroReach + combatSpread)
             inSet[i] = 1;
     }
@@ -81,7 +91,7 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
     std::vector<char> const seed = inSet;
     for (std::size_t j = 0; j < n; ++j)
     {
-        if (seed[j] || !mobs[j].chainEligible)
+        if (seed[j] || !eligible(j))
             continue;
         for (std::size_t i = 0; i < n; ++i)
         {
@@ -173,6 +183,33 @@ bool DungeonClearMath::ShouldRollInForLeeroy(std::uint32_t decision, bool target
     // The boundary is inclusive: at exactly commitRange + lead the tank is
     // committing, so the party starts rolling.
     return tankToTarget2d <= commitRange + lead;
+}
+
+bool DungeonClearMath::ShouldWaitForPatrol(std::uint32_t fullCount,
+                                           std::uint32_t reducedCount,
+                                           std::uint32_t ceiling,
+                                           std::uint32_t waitSince,
+                                           std::uint32_t now, std::uint32_t waitMs,
+                                           std::uint32_t& waitSinceOut)
+{
+    // Patrol-contended only when the lone patrollers are the ONLY reason the pull
+    // is over the ceiling: full over, reduced (without them) at/under.
+    bool const contended = fullCount > ceiling && reducedCount <= ceiling;
+    if (!contended)
+    {
+        waitSinceOut = 0;
+        return false;
+    }
+    // Arm the latch on the first contended tick. Never store 0 (it means "clear"),
+    // so a contention seen at the very first millisecond still latches.
+    std::uint32_t const start = waitSince != 0 ? waitSince : (now != 0 ? now : 1u);
+    waitSinceOut = start;
+    // Guard the unsigned subtraction (the now==0 corner can leave start ahead of
+    // now). Wait while inside the budget; once it elapses, proceed with the heavy
+    // verdict — the latch stays armed so the wait does not re-fire. waitMs == 0
+    // proceeds immediately.
+    std::uint32_t const elapsed = now >= start ? now - start : 0u;
+    return elapsed < waitMs;
 }
 
 bool DungeonClearMath::ShouldPlantEarly(std::vector<float> const& attackerDists,

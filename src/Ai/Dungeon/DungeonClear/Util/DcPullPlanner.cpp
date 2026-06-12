@@ -178,7 +178,8 @@ Position DcPullPlanner::ComputeHealApproach(Player* bot, Unit* healTarget,
     G3D::Vector3 const end = gen.GetActualEndPosition();
     return Position(end.x, end.y, end.z, camp.GetOrientation());
 }
-bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
+bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
+                                        DcPullClassification* out)
 {
     if (!botAI || !target)
         return false;
@@ -392,10 +393,16 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         // commit-range / boss handoff use (GetAggroRange + reach, level-diff
         // scaled). Players/totems keep 0 — they never form a pull pack.
         float aggroReach = 0.0f;
+        bool patroller = false;
         if (Creature* c = u->ToCreature())
+        {
             aggroReach = c->GetAggroRange(lowMember) + c->GetCombatReach();
+            // DB-authored waypoint mover: a predictable patrol a human waits out.
+            // RANDOM_MOTION wanderers are excluded — their return isn't predictable.
+            patroller = c->GetDefaultMovementType() == WAYPOINT_MOTION_TYPE;
+        }
         mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
-                        chainEligible, packIds[i], aggroReach});
+                        chainEligible, packIds[i], aggroReach, patroller});
     }
 
     // DC_Z_LEVEL_TOLERANCE: a mob more than this far above/below is on another
@@ -404,8 +411,33 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // corridor/boss-arrival floor guards use elsewhere in this file.
     std::vector<std::size_t> counted;
     uint32 const count = DungeonClearMath::EstimateAggroCount(
-        mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE, &counted);
+        mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
+        /*excludeLonePatrollers*/ false, &counted);
     bool const advanced = count > maxLeeroy;
+
+    // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
+    // actually present, so the second O(n^2) pass is skipped otherwise): re-run the
+    // estimate with lone patrollers excluded. If the full count is over the ceiling
+    // but the reduced is not, a patrol is the sole reason for the heavy verdict and
+    // the governor can hold for it. Pure math on data already gathered.
+    if (out)
+    {
+        bool lonePatroller = false;
+        for (DungeonClearMath::DynPullMob const& m : mobs)
+            if (m.patroller && m.packId == 0)
+            {
+                lonePatroller = true;
+                break;
+            }
+        uint32 const reduced = lonePatroller
+            ? DungeonClearMath::EstimateAggroCount(
+                  mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
+                  /*excludeLonePatrollers*/ true)
+            : count;
+        out->fullCount = count;
+        out->reducedCount = reduced;
+        out->ceiling = maxLeeroy;
+    }
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, "
                   "ceiling {}) -> {}",
@@ -537,33 +569,94 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     constexpr uint32 kRecheckMs = 400;
     bool const sameTarget = (pull.decisionTarget == target->GetGUID());
 
+    // Resolve a fresh classification into a verdict, layering the patrol-wait gate
+    // on top of the plain Leeroy/Advanced decision. Patrol-wait (Dynamic only):
+    // when the ONLY reason a pack reads ADVANCED is a lone patroller in chain range
+    // (full over ceiling, reduced under), a human holds at commit range and waits
+    // the patrol out rather than committing the heavier maneuver — but only once
+    // the tank has actually closed to commit range, so it approaches via the normal
+    // walk-in and holds at the decision point, not 35yd out. While still
+    // approaching such a pack it stays provisional LEEROY (never locking ADVANCED).
+    // The hold is decision == 3 (pull mode OFF-but-held): the pull trigger keeps the
+    // action live, whose Idle branch halts the tank at commit range, and the
+    // blocking/room-trash engages stand down on decision 3 so it doesn't tag. A
+    // PullPatrolWaitSec timeout proceeds with the real ADVANCED verdict so a
+    // stationary/slow patrol can't stall the run.
+    auto resolve = [&](bool advanced, DcPullClassification const& cls)
+    {
+        if (advanced && DcSettings::GetBool(bot, "PullPatrolWait"))
+        {
+            bool const contended =
+                cls.fullCount > cls.ceiling && cls.reducedCount <= cls.ceiling;
+            float const commitRange =
+                DcEngageGeometry::PullCommitRange(bot, target, DC_PULL_START_RANGE);
+            bool const atCommit = bot->GetExactDist2d(target) <= commitRange;
+            if (atCommit)
+            {
+                uint32 const waitMs =
+                    uint32(DcSettings::GetFloat(bot, "PullPatrolWaitSec") * 1000.0f);
+                if (DungeonClearMath::ShouldWaitForPatrol(
+                        cls.fullCount, cls.reducedCount, cls.ceiling,
+                        pull.patrolWaitSince, getMSTime(), waitMs,
+                        pull.patrolWaitSince))
+                {
+                    apply(false, 3u);  // hold at commit range; pull mode off, no tag
+                    DC_PULL_INFO("[DC:{}] dynamic: pack {} patrol-contended (full {} > "
+                                 "ceiling {}, reduced {}) -> WAITING for patrol",
+                                 bot->GetName(), target->GetGUID().ToString(),
+                                 cls.fullCount, cls.ceiling, cls.reducedCount);
+                    return;
+                }
+                // Not contended (patrol left), or the wait budget expired: the
+                // ShouldWaitForPatrol latch is now resolved; fall through to commit
+                // the real verdict below.
+            }
+            else if (contended)
+            {
+                // Still approaching a patrol-contended pack: stay provisional LEEROY
+                // and walk in. Don't run the wait clock until the decision point.
+                pull.patrolWaitSince = 0;
+                apply(false, 1u);
+                return;
+            }
+        }
+        apply(advanced, advanced ? 2u : 1u);
+    };
+
     if (sameTarget)
     {
-        // Already Advanced for this pack: locked, never reconsidered.
+        // Already committed ADVANCED for this pack: locked, never reconsidered.
+        // (decision == 3 is a HOLD, not a commit — curBool is still false there, so
+        // it falls through to the throttled re-check below and keeps re-evaluating
+        // the patrol contention until the patrol passes or the wait times out.)
         if (curBool)
             return;
-        // Standing Leeroy: re-check on a throttle, upgrade-only.
+        // Standing Leeroy or patrol-hold: re-check on a throttle. The verdict can
+        // UPGRADE to Advanced (room changed) or resolve a patrol hold either way.
         uint32 const now = getMSTime();
         if (pull.decisionSince != 0 && (now - pull.decisionSince) < kRecheckMs)
             return;
         pull.decisionSince = now;
-        if (ClassifyPullAdvanced(botAI, target))
-        {
-            apply(true, 2u);
-            DC_PULL_INFO("[DC:{}] dynamic verdict UPGRADED for pack {}: LEEROY -> "
-                         "ADVANCED (room changed — patrol/neighbour entered chain range)",
-                         bot->GetName(), target->GetGUID().ToString());
-        }
+        DcPullClassification cls;
+        bool const advanced = ClassifyPullAdvanced(botAI, target, &cls);
+        resolve(advanced, cls);
         return;
     }
 
     // New pack: size it up fresh and stamp the latch + re-check clock.
-    bool const advanced = ClassifyPullAdvanced(botAI, target);
+    pull.patrolWaitSince = 0;
+    DcPullClassification cls;
+    bool const advanced = ClassifyPullAdvanced(botAI, target, &cls);
     pull.decisionTarget = target->GetGUID();
     pull.decisionSince = getMSTime();
-    apply(advanced, advanced ? 2u : 1u);
+    resolve(advanced, cls);
+    // Report the verdict actually APPLIED (resolve can hold a patrol-contended pack
+    // as a provisional LEEROY while it walks in, or as a WAIT at commit range), not
+    // the raw classification.
     DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
-                 target->GetGUID().ToString(), advanced ? "ADVANCED" : "LEEROY");
+                 target->GetGUID().ToString(),
+                 pull.decision == 3u ? "WAITING (patrol)"
+                     : pull.decision == 2u ? "ADVANCED" : "LEEROY");
 }
 std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
                                                           float setback, float safeRadius,

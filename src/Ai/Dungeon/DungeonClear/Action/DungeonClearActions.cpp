@@ -3654,6 +3654,21 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                               bot->GetName());
                 return false;
             }
+
+            // Patrol-wait hold (decision == 3): the governor has the pull held at
+            // commit range to let a patrol clear before committing. Halt and own the
+            // tick — the blocking/room-trash engages already stood down for decision
+            // 3, so this just keeps the tank planted (no tag, no camp handshake)
+            // until the governor flips the verdict (patrol passed -> LEEROY/ADVANCED)
+            // or the wait times out. Followers trail normally (pull mode is off).
+            if (pull.decision == 3u)
+            {
+                if (bot->isMoving())
+                    bot->StopMoving();
+                DC_PULL_TRACE("[DC:{}] pull idle: holding for patrol ({:.1f}yd to pack)",
+                              bot->GetName(), bot->GetExactDist2d(trash));
+                return true;
+            }
             // Don't commit until the pack is within reach (the trigger gates on the
             // same range). While it's farther, yield to Advance to glide closer —
             // but PUBLISH a prospective camp NOW so the party walks up to it IN

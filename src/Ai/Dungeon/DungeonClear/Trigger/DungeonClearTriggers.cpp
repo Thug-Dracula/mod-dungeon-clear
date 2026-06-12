@@ -308,6 +308,16 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
     }
 
+    // Patrol-wait hold (dynamic pull decision == 3): the pull pipeline is holding
+    // the tank at commit range to let a patrol pass before committing the pull.
+    // Stand down unconditionally so the tank doesn't walk in and engage mid-wait.
+    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u)
+    {
+        DC_PULL_DEBUG("[DC:{}] blocking-trash: patrol-wait hold -> stand down",
+                      bot->GetName());
+        return false;
+    }
+
     // In advanced-pull mode the pull pipeline OWNS trash packs: it LOS-pulls them
     // to camp rather than engaging in place. Stand down so the tank glides in
     // under Advance until the pull-start range, instead of walking up and fighting
@@ -352,8 +362,11 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     // When pull-to-camp is in effect for this pack, the higher-priority pull
     // pipeline (relevance 35) owns the room clear so it honours the advanced/
     // dynamic pull type. This Leeroy room-clear is the Off / Dynamic-chose-Leeroy
-    // path; stand down whenever the behavioural pull bool is set.
-    if (AI_VALUE(bool, "dungeon clear pull mode current"))
+    // path; stand down whenever the behavioural pull bool is set. The patrol-wait
+    // hold (decision == 3) is pull-mode-off but likewise pull-pipeline-owned, so
+    // stand down there too rather than Leeroy a room mob mid-wait.
+    if (AI_VALUE(bool, "dungeon clear pull mode current") ||
+        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u)
         return false;
 
     // Same between-pulls gating the other engage triggers use (loot, party
@@ -565,7 +578,15 @@ bool DungeonClearPullTrigger::IsActive()
     // order-independent: every reader — the engage/blocking-trash triggers and the
     // camp gates — consults the same value, so whichever runs first updates it.
     // No-op for Off/On, where DcPullAction owns the bool.
-    if (!AI_VALUE(bool, "dungeon clear pull mode current"))
+    bool const pullModeCurrent = AI_VALUE(bool, "dungeon clear pull mode current");
+    // decision == 3 is the patrol-wait HOLD: pull mode is off-but-held, so the
+    // behavioural bool reads false, but the pull action must still run to halt the
+    // tank at commit range while it waits the patrol out. Keep the trigger live in
+    // that state too. (Reading pull mode current FIRST runs the governor that may
+    // set decision == 3 this tick.)
+    bool const patrolWaiting =
+        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u;
+    if (!pullModeCurrent && !patrolWaiting)
         return false;
 
     uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);

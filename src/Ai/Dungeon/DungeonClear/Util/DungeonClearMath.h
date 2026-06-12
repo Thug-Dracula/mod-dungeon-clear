@@ -38,6 +38,12 @@ namespace DungeonClearMath
     // creature_linked_respawn link. Mobs sharing a non-zero `packId` pull as one
     // atomic unit regardless of spacing or height (you cannot pull half a
     // formation), so a counted member drags its whole pack into the estimate.
+    // `patroller` marks a DB-authored waypoint mover (GetDefaultMovementType() ==
+    // WAYPOINT_MOTION_TYPE). A human tank waits a patrol out instead of committing
+    // the heavier pull for a pack that would be a clean small Leeroy moments later;
+    // the patrol-wait gate re-runs the estimate with lone patrollers excluded (see
+    // `excludeLonePatrollers` on EstimateAggroCount) to detect that case. Random
+    // wanderers are deliberately NOT patrollers — their return is unpredictable.
     struct DynPullMob
     {
         float         x;
@@ -46,6 +52,7 @@ namespace DungeonClearMath
         bool          chainEligible;
         std::uint32_t packId = 0;
         float         aggroReach = 0.0f;
+        bool          patroller = false;
     };
 
     // Pure Dynamic-pull estimate: how many mobs aggro if the party Leeroys on top
@@ -66,11 +73,17 @@ namespace DungeonClearMath
     // floor gaps exceed it, so a mob a ramp above/below never counts. Separated
     // from the game-state resolution in DcPullPlanner::ClassifyPullAdvanced so
     // the logic is unit-testable.
+    // `excludeLonePatrollers` (patrol-wait gate): when true, a mob marked
+    // `patroller` that is NOT part of an atomic pack (`packId == 0`) is treated as
+    // not `chainEligible` — it neither seeds proximity nor assists nor is assisted
+    // — modelling "if we let this patrol pass". Formation/linked patrollers
+    // (`packId != 0`) are unaffected: you cannot wait out half a formation.
     // `countedOut` (optional) receives the indices of every mob the estimate
     // counted, for diagnostic logging at the call site.
     std::uint32_t EstimateAggroCount(std::vector<DynPullMob> const& mobs,
                                      std::size_t targetIdx, float combatSpread,
                                      float assistRadius, float zTolerance,
+                                     bool excludeLonePatrollers = false,
                                      std::vector<std::size_t>* countedOut = nullptr);
 
     // Pull CC-assist grace gate (pure). Decides whether a CC-impaired drag-back
@@ -118,6 +131,26 @@ namespace DungeonClearMath
     // logic so it is unit-testable.
     bool ShouldRollInForLeeroy(std::uint32_t decision, bool targetAlive,
                                float tankToTarget2d, float commitRange, float lead);
+
+    // Patrol-wait gate (pure). A pull is "patrol-contended" when the ONLY thing
+    // pushing the aggro estimate over the Leeroy ceiling is one or more lone
+    // patrollers: `fullCount > ceiling` but `reducedCount <= ceiling` (the reduced
+    // pass excluded them — see EstimateAggroCount's excludeLonePatrollers). For
+    // such a pack a human waits the patrol out rather than committing the heavier
+    // Advanced maneuver. Returns true to KEEP WAITING (hold the pull), false to
+    // proceed (commit the standing verdict). Contended: arm/keep the `waitSince`
+    // latch and wait until `waitMs` has elapsed, then proceed with the heavy
+    // verdict (don't stall the run for a stationary/slow patrol) — the latch stays
+    // armed past the timeout so the wait does not re-fire on the same contention.
+    // Not contended (patrol left chain range, or never the cause): clear the latch
+    // and proceed at once. `waitMs` == 0 proceeds immediately. Mirrors
+    // ShouldAbortPullForCc's by-reference latch/clear contract. The game-state read
+    // (the two estimates, the live target/commit distance that decides WHEN to arm)
+    // stays in DcPullPlanner::UpdateDynamicPullMode.
+    bool ShouldWaitForPatrol(std::uint32_t fullCount, std::uint32_t reducedCount,
+                             std::uint32_t ceiling, std::uint32_t waitSince,
+                             std::uint32_t now, std::uint32_t waitMs,
+                             std::uint32_t& waitSinceOut);
 
     // Turn-and-plant gate (pure). A human tank dragging a pack back to camp turns
     // and fights the moment the pack is glued to it, rather than sprinting the

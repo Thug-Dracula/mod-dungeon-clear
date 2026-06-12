@@ -252,6 +252,18 @@ inline constexpr DcSettingDef kDcSettings[] =
     // rolls earlier alongside the tank. See DcLeaderSignal::IsLeaderDynamicScouting.
     { "PullDynamicRollInLead", DcType::Float,  8,   0,  30,  true  },
 
+    // Patrol-wait (Dynamic mode only). A human tank times pulls around patrols. When
+    // the ONLY thing pushing a pack's aggro estimate over the Leeroy ceiling is a
+    // lone DB-authored patroller in chain range (the estimate without it is a clean
+    // small Leeroy), the tank holds at commit range and waits the patrol out instead
+    // of committing the heavier Advanced maneuver, then Leeroys once it passes.
+    // PullPatrolWait is the master toggle. PullPatrolWaitSec is the max hold before
+    // it gives up and proceeds with the Advanced verdict (a stationary / very slow
+    // patrol mustn't stall the run). See DungeonClearMath::ShouldWaitForPatrol +
+    // DcPullPlanner::UpdateDynamicPullMode (pull decision == 3 = waiting-for-patrol).
+    { "PullPatrolWait",        DcType::Bool,   1,   0,   1,  true  },
+    { "PullPatrolWaitSec",     DcType::Float,  8,   1,  30,  true  },
+
     // Liquid avoidance. The route producers include water/magma polys so the
     // bot CAN swim/wade when there is no dry alternative, but with these per-area
     // Detour cost multipliers a crossing only wins when it is genuinely shorter:

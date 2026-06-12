@@ -108,6 +108,15 @@ struct DcPullContext
     uint32      decision       = 0;              // 0 none / 1 leeroy / 2 advanced
     ObjectGuid  decisionTarget;                  // pack the verdict applies to
     uint32      decisionSince  = 0;              // last re-classification timestamp
+    uint32      patrolWaitSince = 0;             // getMSTime() the current pull first
+                                                 // read patrol-contended (a lone
+                                                 // patroller is the only thing over
+                                                 // the Leeroy ceiling) while the tank
+                                                 // holds at commit range; 0 = not
+                                                 // waiting. Timeout latch for
+                                                 // DungeonClearMath::ShouldWaitForPatrol
+                                                 // (decision == 3 surfaces it). Reset
+                                                 // when the pack changes.
     uint32      targetLostSince = 0;             // getMSTime() the pull target first
                                                  // resolved null while a Dynamic
                                                  // verdict was standing; 0 = present.

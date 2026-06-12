@@ -6,6 +6,7 @@
 #ifndef _DC_PULL_PLANNER_H
 #define _DC_PULL_PLANNER_H
 
+#include <cstdint>
 #include <optional>
 #include "Position.h"
 
@@ -13,6 +14,17 @@ class Player;
 class Unit;
 class PlayerbotAI;
 class AiObjectContext;
+
+// Optional detail from ClassifyPullAdvanced for the patrol-wait gate: the full
+// aggro estimate, the same estimate with lone (non-formation) patrollers excluded,
+// and the Leeroy ceiling they were compared against. `full > ceiling &&
+// reduced <= ceiling` is the patrol-contended condition.
+struct DcPullClassification
+{
+    std::uint32_t fullCount    = 0;
+    std::uint32_t reducedCount = 0;
+    std::uint32_t ceiling      = 0;
+};
 
 class DcPullPlanner
 {
@@ -49,7 +61,10 @@ public:
     // PullDynamicMaxLeeroyMobs. Reach comes from the real creature aggro radius
     // (vs the lowest-level party member), so it self-tunes per zone/level. The pure
     // count is DungeonClearMath::EstimateAggroCount. See the Dynamic Pull plan doc.
-    static bool ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target);
+    // `out` (optional) receives the full/reduced/ceiling counts for the patrol-wait
+    // gate (DungeonClearMath::ShouldWaitForPatrol).
+    static bool ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
+                                     DcPullClassification* out = nullptr);
 
     // Per-tick governor for Dynamic mode (pull setting == 2). No-op for Off/On
     // (DcPullAction owns the bool there). Out of combat with no pull maneuver in

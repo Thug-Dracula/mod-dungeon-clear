@@ -179,7 +179,8 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     // drives the state/detail wording below; `pullSetting` is the user's tri-state
     // preference (Off/On/Dynamic) reported to the addon's control. They differ for
     // Dynamic, where the governor flips the bool per pack — `pullDecision` (0 none /
-    // 1 Leeroy / 2 Advanced) is the live verdict the addon shows under "Dynamic".
+    // 1 Leeroy / 2 Advanced / 3 waiting-for-patrol) is the live verdict the addon
+    // shows under "Dynamic".
     bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
     uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
     DcPullContext const& pull = AI_VALUE(DcPullContext&, "dungeon clear pull context");
@@ -338,8 +339,9 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
              // pattern as the BOSS wing field).
              << pullSetting << "\t"
              // Trailing field (index 9): live Dynamic verdict for the pack the tank
-             // is sizing up (0 none / 1 Leeroy / 2 Advanced). Only meaningful when
-             // pullSetting == 2; the addon shows it as the Dynamic sub-label.
+             // is sizing up (0 none / 1 Leeroy / 2 Advanced / 3 waiting-for-patrol).
+             // Only meaningful when pullSetting == 2; the addon shows it as the
+             // Dynamic sub-label.
              // Appended last so older addons ignore it.
              << pullDecision;
 

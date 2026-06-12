@@ -793,6 +793,35 @@ DungeonClear.PullDynamicPartyLag = 15.0
 DungeonClear.PullDynamicRollInLead = 8.0
 
 #
+#    DungeonClear.PullPatrolWait
+#        Dynamic mode only. A human tank times pulls around patrols. When the ONLY
+#        thing pushing a pack's aggro estimate over the Leeroy ceiling is a lone
+#        DB-authored patroller in chain range — the estimate WITHOUT it is a clean
+#        small Leeroy — the tank holds at its commit range and waits the patrol out
+#        instead of committing the heavier Advanced pull, then Leeroys the moment the
+#        patrol walks off. While holding, the addon shows "Waiting for patrol". Set
+#        to 0 to disable (commit the Advanced verdict immediately, the old behaviour).
+#        Formation/linked patrollers don't count — you cannot wait out half a pack.
+#
+#        Default: 1 (enabled)
+#
+
+DungeonClear.PullPatrolWait = 1
+
+#
+#    DungeonClear.PullPatrolWaitSec
+#        Dynamic mode only. The longest the tank holds for a patrol (PullPatrolWait)
+#        before giving up and committing the Advanced verdict anyway — so a patrol
+#        that is parked on a stationary waypoint, or pacing very slowly, can't stall
+#        the run indefinitely. The clock starts when the tank reaches commit range
+#        and the contention is confirmed.
+#
+#        Default: 8.0
+#
+
+DungeonClear.PullPatrolWaitSec = 8.0
+
+#
 #    DungeonClear.SpectateEnable
 #        Master gate for the spectator free-camera (`.dc spectate` or the addon's
 #        Spectate button). The camera detaches the player from their character —
