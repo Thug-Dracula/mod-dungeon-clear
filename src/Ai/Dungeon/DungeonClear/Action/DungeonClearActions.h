@@ -18,15 +18,38 @@ class Unit;
 class Creature;
 struct DungeonBossInfo;
 
+// Thin MovementAction subclass that every movement-issuing DC action derives
+// from (directly or transitively). It exists for one reason: to expose the
+// DcMovement point-move funnel. MovementAction::MoveTo is protected, so a free
+// function in DcMovement cannot reach it; DcMoveTo is a protected member that
+// can, and it runs the arbiter's paused gate + escort-conflict teardown before
+// delegating to the inherited MoveTo. Stop / SplinePath / pause-gate intents
+// that do not need the protected MoveTo stay as DcMovement free functions.
+class DcMovementAction : public MovementAction
+{
+public:
+    DcMovementAction(PlayerbotAI* botAI, std::string const name) : MovementAction(botAI, name) {}
+
+protected:
+    // Arbiter-funneled point move. Refuses while the run is paused (killing the
+    // queued-action race), cancels a stale escort glide that would otherwise
+    // coast under the new move, then delegates to MovementAction::MoveTo. Same
+    // own-the-tick semantics and argument list as the inherited MoveTo.
+    bool DcMoveTo(uint32 mapId, float x, float y, float z, bool idle = false, bool react = false,
+                  bool normal_only = false, bool exact_waypoint = false,
+                  MovementPriority priority = MovementPriority::MOVEMENT_NORMAL, bool lessDelay = false,
+                  bool backwards = false);
+};
+
 // Shared base for engage actions: walks into attack range and forces combat
 // via bot->Attack directly. We deliberately bypass the pull pipeline — its
 // reach/cast handshake has a dead zone where the bot is too far for the
 // pull-range check but too close for ReachCombatTo to move, leaving the tank
 // standing in sight of a mob just outside aggro range.
-class DungeonClearEngageActionBase : public MovementAction
+class DungeonClearEngageActionBase : public DcMovementAction
 {
 public:
-    DungeonClearEngageActionBase(PlayerbotAI* botAI, std::string const name) : MovementAction(botAI, name) {}
+    DungeonClearEngageActionBase(PlayerbotAI* botAI, std::string const name) : DcMovementAction(botAI, name) {}
 
 protected:
     // Returns true if the bot took action (moved or attacked). Caller passes
@@ -57,10 +80,10 @@ protected:
     bool MoveToSkirtingRoomAggro(Unit* target, MovementPriority prio);
 };
 
-class DungeonClearAdvanceAction : public MovementAction
+class DungeonClearAdvanceAction : public DcMovementAction
 {
 public:
-    DungeonClearAdvanceAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear advance") {}
+    DungeonClearAdvanceAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear advance") {}
     bool Execute(Event event) override;
 
 private:
@@ -157,10 +180,10 @@ public:
 // Run on non-tank party bots while their tank is in DC mode. Redirects follow
 // from the player master to the tank so the party stays with whoever is
 // leading the clear.
-class DungeonClearFollowTankAction : public MovementAction
+class DungeonClearFollowTankAction : public DcMovementAction
 {
 public:
-    DungeonClearFollowTankAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear follow tank") {}
+    DungeonClearFollowTankAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear follow tank") {}
     bool Execute(Event event) override;
 };
 
@@ -171,10 +194,10 @@ public:
 // so NextDungeonBossValue advances to the next target; on Running it holds the
 // tank at the anchor; on Blocked it stalls the run for the human. Never engages
 // combat — objectives are not creatures.
-class DcObjectiveArriveAction : public MovementAction
+class DcObjectiveArriveAction : public DcMovementAction
 {
 public:
-    DcObjectiveArriveAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear objective arrive") {}
+    DcObjectiveArriveAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear objective arrive") {}
     bool Execute(Event event) override;
 };
 
@@ -223,10 +246,10 @@ public:
 // door entered look-ahead — often far short of the door. Bot stays enabled so
 // the player can open the door and the next tick resumes; only the
 // position-stuck recovery or `dc off` cancels.
-class DungeonClearDoorBlockedAction : public MovementAction
+class DungeonClearDoorBlockedAction : public DcMovementAction
 {
 public:
-    DungeonClearDoorBlockedAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear door blocked") {}
+    DungeonClearDoorBlockedAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear door blocked") {}
     bool Execute(Event event) override;
 };
 
@@ -264,10 +287,10 @@ public:
 // owning the tick), then hands the fight to stock combat at camp (phase Engage),
 // which is also when ReapStrandedPassives releases the party. Gives up to fight
 // in place if the return leg wedges.
-class DungeonClearPullManeuverAction : public MovementAction
+class DungeonClearPullManeuverAction : public DcMovementAction
 {
 public:
-    DungeonClearPullManeuverAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear pull maneuver") {}
+    DungeonClearPullManeuverAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear pull maneuver") {}
     bool Execute(Event event) override;
 };
 
@@ -278,11 +301,11 @@ public:
 // follow-tank nor stock follow can drag the follower off camp. The two concrete
 // subclasses below register this same body under different names on different
 // engines.
-class DungeonClearCampHoldActionBase : public MovementAction
+class DungeonClearCampHoldActionBase : public DcMovementAction
 {
 public:
     DungeonClearCampHoldActionBase(PlayerbotAI* botAI, std::string const& name)
-        : MovementAction(botAI, name)
+        : DcMovementAction(botAI, name)
     {
     }
     bool Execute(Event event) override;
@@ -329,11 +352,11 @@ public:
 // now visible) and stock combat owns the fight. Gated by
 // DcLeaderSignal::IsLeaderFightAssistWanted; registered under two names on the
 // two engines (see the subclasses below).
-class DungeonClearAssistCampActionBase : public MovementAction
+class DungeonClearAssistCampActionBase : public DcMovementAction
 {
 public:
     DungeonClearAssistCampActionBase(PlayerbotAI* botAI, std::string const& name)
-        : MovementAction(botAI, name)
+        : DcMovementAction(botAI, name)
     {
     }
     bool Execute(Event event) override;
@@ -365,11 +388,11 @@ public:
 // leader tank during a fight. Closes back on the tank (stopping a few yards short)
 // so the party stays grouped and a stranded healer regains line of sight to its
 // heal target. Driven by DungeonClearRegroupCombatTrigger.
-class DungeonClearRegroupCombatAction : public MovementAction
+class DungeonClearRegroupCombatAction : public DcMovementAction
 {
 public:
     DungeonClearRegroupCombatAction(PlayerbotAI* botAI)
-        : MovementAction(botAI, "dungeon clear regroup combat")
+        : DcMovementAction(botAI, "dungeon clear regroup combat")
     {
     }
     bool Execute(Event event) override;

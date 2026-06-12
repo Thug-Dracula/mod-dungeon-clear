@@ -45,6 +45,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -820,56 +821,11 @@ namespace
         return false;
     }
 
-    // Halt an in-flight continuous-spline glide (see Advance's spline path)
-    // so that a forced rebuild/reset on the next tick starts from a
-    // standstill. Without this, a now-stale EscortMovementGenerator spline
-    // would keep driving the bot down the OLD route while the rebuilt path
-    // is ignored (Advance's splineRunning guard would treat the stale glide
-    // as healthy). Only touches our own escort glide; no-op otherwise.
-    void StopActiveSplineGlide(Player* bot)
-    {
-        if (!bot)
-            return;
-        MotionMaster* mm = bot->GetMotionMaster();
-        if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE)
-            bot->StopMoving();
-
-        // Clear the escort spline's LastMovement wait. When the spline was
-        // issued, LastMovement was Set with a delay sized to the window's full
-        // travel time (capped at maxWaitForMove, i.e. up to 5s). The Advance
-        // re-issue guard early-outs while IsWaitingForLastMove() is true, so
-        // after we halt the glide here the bot would otherwise idle for the
-        // remainder of that delay — up to ~5s — before re-issuing movement.
-        // Zeroing lastdelayTime makes IsWaitingForLastMove() false immediately,
-        // so the next Advance tick re-issues from the standstill without the
-        // dead pause.
-        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
-        {
-            if (AiObjectContext* ctx = botAI->GetAiObjectContext())
-                ctx->GetValue<LastMovement&>("last movement")->Get().lastdelayTime = 0.0f;
-        }
-    }
-
-    // Hard-stop for Advance's hold/yield rungs (engage-hold, loot-yield,
-    // between-pulls rest). Those rungs fire while an escort glide may be in
-    // flight, and a plain StopMoving does NOT cancel a launched escort spline
-    // (see the pull-commit halt / the door-blocked park): the tank kept coasting
-    // to the end of its spline window — up to MAX_SPLINE_WINDOW_POINTS — while
-    // "party not ready" logged impotently every tick, the reported scout-runaway
-    // gap. Escort-aware and idempotent: no-ops once the bot is standing, so the
-    // per-tick hold calls don't spam stop packets.
-    void HaltForHold(Player* bot)
-    {
-        if (!bot)
-            return;
-        MotionMaster* mm = bot->GetMotionMaster();
-        bool const escortGlide =
-            mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE;
-        if (!escortGlide && !bot->isMoving())
-            return;
-        StopActiveSplineGlide(bot);
-        bot->StopMovingOnCurrentPos();
-    }
+    // The escort-spline stop primitives (StopActiveSplineGlide / HaltForHold)
+    // now live in DcMovement, the single movement funnel. Call sites use
+    // DcMovement::StopBot(bot, Stop::Hold) (the old HaltForHold), the
+    // DcMoveTo funnel (which folds in the escort-conflict teardown), or
+    // DcMovement::ResolveEscortConflict (a bare glide-kill before a non-move).
 
     // Face `unit` if we're meaningfully off-axis. One facing packet when needed,
     // none when already facing (the HasInArc guard keeps it idempotent across a
@@ -930,7 +886,7 @@ namespace
         swim.lastProgressMs = getMSTime();
         swim.lastDistToPoint = (swim.points.front() - start).length();
 
-        StopActiveSplineGlide(bot);  // drop any stale navmesh glide before swimming
+        DcMovement::ResolveEscortConflict(bot);  // drop any stale navmesh glide before swimming
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] swim leg started: {} pts toward ({:.1f},{:.1f},{:.1f})",
                  bot->GetName(), swim.points.size(), bx, by, bz);
@@ -963,7 +919,7 @@ namespace
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] swim leg complete (within engage range)", bot->GetName());
             swim.Reset();
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             return false;
         }
 
@@ -982,7 +938,7 @@ namespace
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] swim leg consumed -> handing back to navmesh", bot->GetName());
             swim.Reset();
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             appr.longPathExpiresMs = 0;
             return false;
         }
@@ -996,7 +952,7 @@ namespace
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] swim leg abandoned: {:.0f}yd off the leg", bot->GetName(), distToPoint);
             swim.Reset();
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             appr.longPathExpiresMs = 0;
             return false;
         }
@@ -1015,7 +971,7 @@ namespace
                      "[DC:{}] swim leg wedged (no progress {}ms) -> abandoning",
                      bot->GetName(), getMSTimeDiff(swim.lastProgressMs, now));
             swim.Reset();
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             StallDungeonClear(botAI,
                 "Tried to swim across but got stuck underwater. Use 'dc skip' to move on.");
             return true;
@@ -1036,13 +992,6 @@ namespace
 
         if (!mm)
             return false;
-        if (bot->IsSitState())
-            bot->SetStandState(UNIT_STAND_STATE_STAND);
-        if (bot->IsNonMeleeSpellCast(true))
-        {
-            bot->CastStop();
-            botAI->InterruptSpell();
-        }
 
         // Build the spline window from the cursor: [live pos, remaining swim
         // points...] with SUBMERGED Z used verbatim (no UpdateAllowedPositionZ).
@@ -1053,13 +1002,13 @@ namespace
              ++i)
             points.push_back(swim.points[i]);
 
-        if (points.size() < 2)
+        // SplinePath handles stand-up / cast-interrupt / MoveSplinePath and the
+        // NORMAL-priority LastMovement record (and refuses a <2-point window).
+        if (!DcMovement::SplinePath(botAI, points))
         {
             swim.Reset();
             return false;
         }
-
-        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
         SetPhase(context, "swimming");
         ClearStall(context);
         return true;
@@ -1124,6 +1073,22 @@ namespace
     }
 }
 
+// Arbiter-funneled point move. The single seam through which DC actions issue a
+// MovementAction::MoveTo: refuse while the run is paused (killing the
+// queued-action race), drop a stale escort glide that would otherwise coast
+// under the new move, then delegate. Same own-the-tick semantics as the inherited
+// MoveTo. Lives here in Part 1; moves to DcActionShared with the file split.
+bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react,
+                                bool normal_only, bool exact_waypoint, MovementPriority priority,
+                                bool lessDelay, bool backwards)
+{
+    if (!DcMovement::DcMovementAllowed(botAI))
+        return false;
+    DcMovement::ResolveEscortConflict(bot);
+    return MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint, priority, lessDelay,
+                  backwards);
+}
+
 bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
 {
     if (!target || !target->IsInWorld() || !target->IsAlive())
@@ -1148,7 +1113,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
         // falls through to the straight approach rather than freezing the clear.
         if (std::optional<Position> wp = RoomAggroSkirtPoint(target))
         {
-            bool const moved = MoveTo(bot->GetMapId(), wp->GetPositionX(),
+            bool const moved = DcMoveTo(bot->GetMapId(), wp->GetPositionX(),
                                       wp->GetPositionY(), wp->GetPositionZ(),
                                       /*idle*/ false, /*react*/ false,
                                       /*normal_only*/ false, /*exact_waypoint*/ false,
@@ -1204,7 +1169,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
             (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
                 ? MovementPriority::MOVEMENT_COMBAT
                 : MovementPriority::MOVEMENT_NORMAL;
-        bool const moved = MoveTo(target->GetMapId(),
+        bool const moved = DcMoveTo(target->GetMapId(),
                                   target->GetPositionX(),
                                   target->GetPositionY(),
                                   target->GetPositionZ(),
@@ -1228,8 +1193,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
         return false;
     }
 
-    if (bot->isMoving())
-        bot->StopMoving();
+    DcMovement::StopBot(bot, DcMovement::Stop::Soft);
 
     bot->SetSelection(target->GetGUID());
     if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, target))
@@ -1310,7 +1274,7 @@ bool DungeonClearEngageActionBase::MoveToSkirtingRoomAggro(Unit* target,
         dz = wp->GetPositionZ();
     }
 
-    bool const moved = MoveTo(target->GetMapId(), dx, dy, dz,
+    bool const moved = DcMoveTo(target->GetMapId(), dx, dy, dz,
                               /*idle*/ false, /*react*/ false,
                               /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     // Own the tick while the move is in flight (a duplicate-move returns false but
@@ -1374,7 +1338,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                       IsBetweenPullsReady(bot, context) ? 1 : 0,
                       AI_VALUE(bool, "has available loot") ? 1 : 0,
                       AI_VALUE(bool, "can loot") ? 1 : 0);
-            HaltForHold(bot);
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             ClearStall(context);
             // Parked at the boss waiting for the at-boss pull — not navigating,
             // so clear the nav phase (status reads this as "idle / holding").
@@ -1449,7 +1413,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] advance yielding: loot in progress ({}ms)",
                       bot->GetName(), now - lootYieldStart);
-            HaltForHold(bot);
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             return Step::ReturnFalse;
         }
     }
@@ -1468,7 +1432,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     {
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
-        HaltForHold(bot);
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         return Step::ReturnFalse;
     }
     return Step::Continue;
@@ -1587,7 +1551,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(A
         // The bot was moving but not progressing — a continuous-spline glide
         // wedged against geometry. Halt it so the recovery below re-issues
         // movement from a standstill instead of fighting the stuck spline.
-        StopActiveSplineGlide(bot);
+        DcMovement::ResolveEscortConflict(bot);
 
         // First-line recovery: try a Resnap onto the existing polyline
         // (cheap; handles the "knocked sideways but path is still good"
@@ -1645,8 +1609,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(A
 // the wall-screened long-path below.
 // pursuitFailTicks doubles as a latch: while it sits at DC_PURSUIT_FAIL_LIMIT
 // we've given up on the direct-pursuit shortcut for this approach and let the
-// long-path drive uninterrupted (re-entering the pursuit branch would call
-// StopActiveSplineGlide every tick and kill the long-path's escort glide
+// long-path drive uninterrupted (re-entering the pursuit branch would re-kill
+// the long-path's escort glide every tick via DcMoveTo's conflict teardown
 // before it travels — a step/freeze thrash). The latch clears on boss change
 // and once we make it inside engage range (see the resets above).
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(AdvanceState& st)
@@ -1679,10 +1643,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(Adva
     pursueObs.pursuitFailTicks = pursuitFailTicks;
     if (DecideAndMaybeRecord(bot, pursueObs) == DungeonClearApproach::Verdict::Pursue)
     {
-        // Drop any stale long-path escort glide so it doesn't keep driving the
-        // bot toward the spawn anchor while we steer toward the live boss.
-        StopActiveSplineGlide(bot);
-        bool const chasing = MoveTo(next->mapId, bossX, bossY, bossZ,
+        // DcMoveTo drops any stale long-path escort glide (so it doesn't keep
+        // driving the bot toward the spawn anchor) before steering at the live boss.
+        bool const chasing = DcMoveTo(next->mapId, bossX, bossY, bossZ,
                                     /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                     /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
 
@@ -1756,8 +1719,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLongPathUnreachabl
         if (appr.pendingPathJob != 0)
         {
             SetPhase(context, "planning route");
-            if (bot->isMoving())
-                bot->StopMoving();
+            DcMovement::StopBot(bot, DcMovement::Stop::Soft);
             return Step::ReturnFalse;
         }
 
@@ -1825,7 +1787,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffPathResnap(Adva
                      "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild",
                      bot->GetName(), offTicks, DungeonPathFollower::RESNAP_RADIUS);
             SetPhase(context, "recovering");
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             appr.longPathExpiresMs = 0;
             follower = DungeonFollowerState{};
             return Step::ReturnFalse;
@@ -1917,8 +1879,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryHopDoneEscalation(
                  "-> final-approach MoveTo",
                  bot->GetName(), engageDist, next->name, engageRange,
                  doneNotEngagedTicks, DC_DONE_NOT_ENGAGED_LIMIT);
-        StopActiveSplineGlide(bot);
-        bool const pushing = MoveTo(next->mapId, bossX, bossY, bossZ,
+        bool const pushing = DcMoveTo(next->mapId, bossX, bossY, bossZ,
                                     /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                     /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
         SetPhase(context, "pursuing");
@@ -2024,12 +1985,11 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffLineRejoin(Adva
     float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
     if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
     {
-        // Cancel any stale straight spline so it can't shadow the pathed re-entry.
-        StopActiveSplineGlide(bot);
+        // DcMoveTo cancels any stale straight spline so it can't shadow the pathed re-entry.
         bool const rejoining =
-            MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
-                   /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                   /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+            DcMoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+                     /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                     /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] off-line {:.1f}yd -> rejoining route via generated path to "
                   "({:.1f},{:.1f},{:.1f}) (seg {} pt {}, moved={})",
@@ -2054,61 +2014,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffLineRejoin(Adva
 // spline, preserving the LOS-screened polyline's wall-safety without the stops.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TrySplineWindowIssue(AdvanceState& st)
 {
-    DungeonBossInfo const* next = st.next;
     DcApproachState& appr = *st.appr;
     ChunkedPathfinder::Result const& path = *st.path;
     DungeonFollowerState& follower = *st.follower;
-    MotionMaster* mm = bot->GetMotionMaster();
 
     // Build the spline window from the current cursor. It stops before any
     // jump leg (handled by the JumpTo branch above on a later tick) and at
     // MAX_SPLINE_WINDOW_POINTS. window[0] is the live position; [1..] are
-    // the polyline points to glide through.
+    // the polyline points to glide through. SplinePath handles the stand-up /
+    // cast-interrupt / MoveSplinePath ritual and the NORMAL-priority LastMovement
+    // record (sized to the window travel time, for priority arbitration only),
+    // and refuses a <2-point window.
     std::vector<G3D::Vector3> const window =
         DungeonPathFollower::BuildSplineWindow(bot, path, follower);
-    if (window.size() >= 2 && mm)
+    Movement::PointsArray points(window.begin(), window.end());
+    if (DcMovement::SplinePath(botAI, points))
     {
-        if (bot->IsSitState())
-            bot->SetStandState(UNIT_STAND_STATE_STAND);
-        if (bot->IsNonMeleeSpellCast(true))
-        {
-            bot->CastStop();
-            botAI->InterruptSpell();
-        }
-
-        Movement::PointsArray points(window.begin(), window.end());
-        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
-
-        // Record NORMAL-priority movement so AttackAction::Attack still clears
-        // the spline when a patrol aggros mid-glide (its interrupt gate is
-        // priority < MOVEMENT_COMBAT). The re-issue guard no longer keys off
-        // this delay (see splineRunning above), so its only remaining job is
-        // priority arbitration; sizing it to the window's travel time keeps it a
-        // faithful "this NORMAL move lasts ~this long" for the framework's other
-        // movement consumers without ever gating our own re-issue.
-        float windowLen = 0.0f;
-        for (size_t i = 1; i < window.size(); ++i)
-            windowLen += (window[i] - window[i - 1]).magnitude();
-        float const runSpeed = std::max(0.1f, bot->GetSpeed(MOVE_RUN));
-        float delay = 1000.0f * (windowLen / runSpeed);
-        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
-        delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
-
-        G3D::Vector3 const& dest = window.back();
-        AI_VALUE(LastMovement&, "last movement")
-            .Set(next->mapId, dest.x, dest.y, dest.z, bot->GetOrientation(), delay,
-                 MovementPriority::MOVEMENT_NORMAL);
-
-        // The cadence of these lines IS the step-pause signature: with the
-        // timestamp prefix, consecutive issues spaced ~= their own `delay`
-        // mean seamless chaining; a gap much larger than `delay` between a
-        // short window's issue and the next is the dead-pause to investigate.
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] spline issued: {} pts, {:.1f}yd, speed={:.1f}, delay={:.0f}ms "
-                  "(seg {} pt {})",
-                  bot->GetName(), window.size(), windowLen, runSpeed, delay,
-                  follower.segmentIdx, follower.pointIdx);
-
         appr.stuckCount = 0;
         ClearStall(context);
         SetPhase(context, "moving");
@@ -2136,7 +2057,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryMoveToFallback(Adv
               "({:.1f},{:.1f},{:.1f}) (seg {} pt {})",
               bot->GetName(), hop.point.x, hop.point.y, hop.point.z,
               follower.segmentIdx, follower.pointIdx);
-    bool const moved = MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+    bool const moved = DcMoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
                               /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                               /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
     if (!moved)
@@ -2714,9 +2635,9 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
-    // Hold at the anchor while the event/hook runs — HaltForHold cancels a
+    // Hold at the anchor while the event/hook runs — StopBot(Hold) cancels a
     // launched escort glide so the tank doesn't coast past the objective.
-    HaltForHold(bot);
+    DcMovement::StopBot(bot, DcMovement::Stop::Hold);
 
     // Prefer a declarative event (DungeonEventRegistry) when the anchor names
     // one; otherwise fall back to the legacy freeform hook (ObjectiveHookRegistry)
@@ -2802,7 +2723,7 @@ bool DcRunEventAction::Execute(Event /*event*/)
         Unit* trash = DcTargeting::NearestRoomTrash(bot, context);
         if (!trash)
             return false;  // room clear / nothing reachable — let the boss gate open
-        StopActiveSplineGlide(bot);
+        DcMovement::ResolveEscortConflict(bot);
         SetPhase(context, "room clear");
 
         // Engage the nearest room trash. EngageDirect's walk-in skirts the boss's
@@ -2814,11 +2735,11 @@ bool DcRunEventAction::Execute(Event /*event*/)
         return EngageDirect(trash);
     }
 
-    // Hold position while driving the event. StopActiveSplineGlide only cancels a
+    // Hold position while driving the event. ResolveEscortConflict only cancels a
     // launched escort glide (the coast-past from the advance ladder) — it leaves a
     // step's own intra-room MovePoint (HopTo) alone, so MoveTo/Gossip walk-ins
-    // still work, unlike HaltForHold.
-    StopActiveSplineGlide(bot);
+    // still work, unlike the StopMovingOnCurrentPos in StopBot(Hold).
+    DcMovement::ResolveEscortConflict(bot);
 
     auto& prog =
         context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
@@ -2932,8 +2853,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // a later re-close (autoclose doors) re-arms a fresh single attempt.
     auto parkAndStall = [&]()
     {
-        if (bot->isMoving())
-            bot->StopMoving();
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
 
         // Script-only event doors (e.g. SFK's Courtyard Door 18895) wear a
         // plainly-clickable empty-lock template but the client only opens them
@@ -3155,7 +3075,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     {
         if (!DungeonPathFollower::Resnap(bot, path, follower))
         {
-            StopActiveSplineGlide(bot);
+            DcMovement::ResolveEscortConflict(bot);
             appr.longPathExpiresMs = 0;
             follower = DungeonFollowerState{};
             return parkAndStall();
@@ -3203,10 +3123,9 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
     if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
     {
-        StopActiveSplineGlide(bot);
-        MoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
-               /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-               /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+                 /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                 /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] door walk-in off-line {:.1f}yd -> rejoining route via "
                   "generated path (seg {} pt {})",
@@ -3216,47 +3135,26 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     }
 
     // Continuous escort spline along the upcoming polyline run, identical to
-    // Advance's glide — linear spline, wall-safe, no per-point stops.
+    // Advance's glide — linear spline, wall-safe, no per-point stops. SplinePath
+    // owns the stand-up / cast-interrupt / MoveSplinePath ritual + LastMovement
+    // record and refuses a <2-point window.
     std::vector<G3D::Vector3> const window =
         DungeonPathFollower::BuildSplineWindow(bot, path, follower);
-    if (window.size() >= 2 && mm)
+    Movement::PointsArray points(window.begin(), window.end());
+    if (DcMovement::SplinePath(botAI, points))
     {
-        if (bot->IsSitState())
-            bot->SetStandState(UNIT_STAND_STATE_STAND);
-        if (bot->IsNonMeleeSpellCast(true))
-        {
-            bot->CastStop();
-            botAI->InterruptSpell();
-        }
-
-        Movement::PointsArray points(window.begin(), window.end());
-        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
-
-        float windowLen = 0.0f;
-        for (size_t i = 1; i < window.size(); ++i)
-            windowLen += (window[i] - window[i - 1]).magnitude();
-        float const runSpeed = std::max(0.1f, bot->GetSpeed(MOVE_RUN));
-        float delay = 1000.0f * (windowLen / runSpeed);
-        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
-        delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
-
-        G3D::Vector3 const& dest = window.back();
-        AI_VALUE(LastMovement&, "last movement")
-            .Set(mapId, dest.x, dest.y, dest.z, bot->GetOrientation(), delay,
-                 MovementPriority::MOVEMENT_NORMAL);
-
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door walk-in spline: {} pts, {:.1f}yd ({:.1f}yd to door, seg {} pt {})",
-                  bot->GetName(), window.size(), windowLen, distToDoor,
+                  "[DC:{}] door walk-in spline: {} pts ({:.1f}yd to door, seg {} pt {})",
+                  bot->GetName(), points.size(), distToDoor,
                   follower.segmentIdx, follower.pointIdx);
         ClearStall(context);
         return true;
     }
 
     // Window < 2 points (lone anchor tail): short single-hop fallback.
-    MoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
-           /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-           /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+             /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+             /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
     ClearStall(context);
     return true;
 }
@@ -3279,13 +3177,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // leader; normal bots fall back to following their master).
         if (!followedTank.IsEmpty())
         {
-            if (bot->GetMotionMaster() &&
-                bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
-            {
-                if (bot->isMoving())
-                    bot->StopMoving();
-                bot->GetMotionMaster()->Clear();
-            }
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] follow-tank: released (DC tank gone) -> cleared "
                      "follow generator (selfRealPlayer={})",
@@ -3399,13 +3291,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // Inside the lag bubble: hold position. Tear down any leftover
             // continuous MoveFollow so the bot actually stops instead of creeping
             // back to the tight followDistance.
-            if (bot->GetMotionMaster() &&
-                bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
-            {
-                if (bot->isMoving())
-                    bot->StopMoving();
-                bot->GetMotionMaster()->Clear();
-            }
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             DC_PULL_TRACE("[DC:{}] scout-lag: holding {:.1f}yd behind tank (lag {:.1f})",
                           bot->GetName(), toTank, lag);
             // Return FALSE, not true: the bot is already stopped, so yield the tick
@@ -3447,13 +3333,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             constexpr float kTrailArrival = 4.0f;
             if (bot->GetExactDist(&trailPoint) <= kTrailArrival)
             {
-                if (bot->GetMotionMaster() &&
-                    bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
-                {
-                    if (bot->isMoving())
-                        bot->StopMoving();
-                    bot->GetMotionMaster()->Clear();
-                }
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
                 DC_PULL_TRACE("[DC:{}] scout-lag: holding at trail point "
                               "({:.1f}yd behind tank, lag {:.1f})",
                               bot->GetName(), toTank, lag);
@@ -3462,7 +3342,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // normal_only: reject (don't straight-line to) a point that isn't
             // reachable over a real navmesh path. Crumbs are already gated for
             // reachability, but keep the guard as a belt-and-braces backstop.
-            if (MoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
+            if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
                        trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                        false, false, /*normal_only=*/true))
             {
@@ -3663,8 +3543,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // or the wait times out. Followers trail normally (pull mode is off).
             if (pull.decision == 3u)
             {
-                if (bot->isMoving())
-                    bot->StopMoving();
+                DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                 DC_PULL_TRACE("[DC:{}] pull idle: holding for patrol ({:.1f}yd to pack)",
                               bot->GetName(), bot->GetExactDist2d(trash));
                 return true;
@@ -3796,13 +3675,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             pull.pullTarget = trash->GetGUID();
 
             // Halt the escort glide for real before committing. A plain StopMoving
-            // does NOT cancel a launched escort spline (see StopActiveSplineGlide /
-            // the door-blocked park), so without this the tank keeps gliding
+            // does NOT cancel a launched escort spline (the door-blocked park is the
+            // other witness), so without StopBot(Hold) the tank keeps gliding
             // forward past the commit spot and the camp is stamped behind a
             // position it's already leaving — the old overshoot / wrong-target pull.
-            StopActiveSplineGlide(bot);
-            if (bot->isMoving())
-                bot->StopMoving();
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             // Square up on the pack for the dwell at the commit spot.
             DcFaceIfNeeded(bot, trash);
             DcSetPullPhase(context, DcPullPhase::Forming);
@@ -3825,8 +3702,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // The tank HOLDS where it committed (just outside aggro). The party
             // walks back to the camp and goes passive (hold-at-camp). Tag only once
             // the party is actually set, so the pull never drags into open ground.
-            if (bot->isMoving())
-                bot->StopMoving();
+            DcMovement::StopBot(bot, DcMovement::Stop::Soft);
             // Keep facing the pack across the multi-second dwell (idempotent —
             // re-faces only if the pack repositioned us off-axis).
             DcFaceIfNeeded(bot, DcTargeting::GetPullTarget(botAI));
@@ -3886,8 +3762,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         // Already tagged — hold and let aggro flip us to the
                         // combat-engine drag-back. The leg timeout above is the
                         // backstop if the tag somehow drew no aggro.
-                        if (bot->isMoving())
-                            bot->StopMoving();
+                        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                         DcFaceIfNeeded(bot, trash);
                         DC_PULL_TRACE("[DC:{}] pull advancing: tagged, holding for aggro "
                                       "({:.1f}yd to target)", bot->GetName(),
@@ -3904,8 +3779,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         if (botAI->CastSpell(pick->spellId, trash))
                         {
                             pull.tagTarget = trash->GetGUID();
-                            if (bot->isMoving())
-                                bot->StopMoving();
+                            DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                             DC_PULL_INFO("[DC:{}] advanced-pull: ranged tag spell {} at "
                                          "{:.1f}yd", bot->GetName(), pick->spellId, d);
                             return true;
@@ -3985,8 +3859,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 // Inside the aggro bubble — hold and let the pack close / flip the
                 // engine to the maneuver drag-back. The leg timeout above is the
                 // backstop if nothing aggros (resisted / non-hostile).
-                if (bot->isMoving())
-                    bot->StopMoving();
+                DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                 DcFaceIfNeeded(bot, trash);
                 DC_PULL_TRACE("[DC:{}] pull advancing: at aggro edge ({:.1f}yd, "
                               "hold for aggro)", bot->GetName(), toTag);
@@ -4006,7 +3879,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             }
             DC_PULL_TRACE("[DC:{}] pull advancing: closing to aggro edge ({:.1f}yd, "
                           "stop {:.1f})", bot->GetName(), toTag, tagStop);
-            bool const moved = MoveTo(trash->GetMapId(), tagX, tagY, tagZ,
+            bool const moved = DcMoveTo(trash->GetMapId(), tagX, tagY, tagZ,
                                       /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                       /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
             if (moved || bot->isMoving() || IsWaitingForLastMove(MovementPriority::MOVEMENT_COMBAT))
@@ -4216,11 +4089,10 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
             // (MOVEMENT_COMBAT) glide; a plain StopMoving can leave it queued
             // UNDER the active CC generator, so the instant the impairment
             // wears off the tank resumes sprinting to the (now abandoned) camp
-            // instead of fighting. StopActiveSplineGlide drops any escort
-            // spline + clears the LastMovement wait, and StopMovingOnCurrentPos
-            // pins the point-move on the spot.
-            StopActiveSplineGlide(bot);
-            bot->StopMovingOnCurrentPos();
+            // instead of fighting. StopBot(HardPin) drops any escort spline +
+            // clears the LastMovement wait and pins the point-move on the spot
+            // (unconditionally, since the bot may not be "moving" under CC).
+            DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
 
             DcSetPullPhase(context, DcPullPhase::Engage);
 
@@ -4271,8 +4143,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     {
         // Back at camp: stop and hand the fight to stock combat. Flipping to
         // Engage is also what makes ReapStrandedPassives release the party.
-        if (bot->isMoving())
-            bot->StopMoving();
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
         DcSetPullPhase(context, DcPullPhase::Engage);
         DC_PULL_INFO("[DC:{}] advanced-pull: at camp ({:.1f}yd) -> engaging, party "
                      "released", bot->GetName(), dist);
@@ -4312,8 +4183,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
             // Hard-cancel the run-home exactly as the CC-abort branch does: a plain
             // StopMoving can leave the launched MOVEMENT_COMBAT glide queued and the
             // tank resumes sprinting to the abandoned camp instead of fighting.
-            StopActiveSplineGlide(bot);
-            bot->StopMovingOnCurrentPos();
+            DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
 
             // The camp IS wherever the fight lands. Re-stamp it (fresh publish) so
             // the party converges on the plant point and the addon panel relocates.
@@ -4355,7 +4225,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // combat chase/attack can't grab the tank and fight at the pack instead.
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
                   bot->GetName(), dist, legElapsed);
-    MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
+    DcMoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
            /*idle*/ false, /*react*/ false, /*normal_only*/ false,
            /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
     return true;
@@ -4441,9 +4311,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     if (bot->GetMotionMaster() &&
         bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
     {
-        if (bot->isMoving())
-            bot->StopMoving();
-        bot->GetMotionMaster()->Clear();
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         context->GetValue<ObjectGuid>("dungeon clear followed tank")->Set(ObjectGuid::Empty);
         DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
     }
@@ -4469,8 +4337,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
             {
                 // In range + LOS: hold here and YIELD so the (movement-suppressed)
                 // cast-heal lands in place. "stay" guarantees no mover runs.
-                if (bot->isMoving())
-                    bot->StopMoving();
+                DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                 DC_PULL_TRACE("[DC:{}] healer: in range -> casting in place", bot->GetName());
                 return false;
             }
@@ -4482,7 +4349,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
                 DcPullPlanner::ComputeHealApproach(bot, healTarget, camp, healRange);
             if (bot->GetExactDist(&approach) > DC_PULL_SLOT_RADIUS)
             {
-                MoveTo(bot->GetMapId(), approach.GetPositionX(), approach.GetPositionY(),
+                DcMoveTo(bot->GetMapId(), approach.GetPositionX(), approach.GetPositionY(),
                        approach.GetPositionZ(), /*idle*/ false, /*react*/ false,
                        /*normal_only*/ false, /*exact_waypoint*/ false,
                        MovementPriority::MOVEMENT_COMBAT);
@@ -4491,8 +4358,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
             }
             // At the clamped point but still no LOS/range (corner): hold, yield for
             // a possible cast — never push past the clamp toward the pack.
-            if (bot->isMoving())
-                bot->StopMoving();
+            DcMovement::StopBot(bot, DcMovement::Stop::Soft);
             return false;
         }
         // Nobody needs healing — fall through to the normal camp-slot pin so the
@@ -4509,8 +4375,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     float const toCamp = bot->GetExactDist(&slot);
     if (toCamp <= DC_PULL_SLOT_RADIUS)
     {
-        if (bot->isMoving())
-            bot->StopMoving();
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
         // A waiting party watches their tank work: face the LEADER (not the
         // pack) once parked — never while still walking to camp.
         DcFaceIfNeeded(bot, DcLeaderSignal::FindLeaderTank(bot));
@@ -4539,7 +4404,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     MovementPriority const prio = passive ? MovementPriority::MOVEMENT_COMBAT
                                           : MovementPriority::MOVEMENT_NORMAL;
     bool const moved =
-        MoveTo(bot->GetMapId(), slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ(),
+        DcMoveTo(bot->GetMapId(), slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ(),
                /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                /*exact_waypoint*/ false, prio);
     DC_PULL_TRACE("[DC:{}] hold-at-camp: walking to camp ({:.1f}yd, passive={}, moved={})",
@@ -4631,7 +4496,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
                   target ? target->GetGUID().ToString() : "leader",
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    MoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
+    DcMoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
            moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
@@ -4680,7 +4545,7 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
                   bot->IsWithinLOSInMap(tank) ? 1 : 0,
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    MoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
+    DcMoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }
