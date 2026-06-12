@@ -81,6 +81,17 @@ public:
     static std::optional<Position> AggroSafeApproachPoint(
         Player* bot, float bx, float by, float bz, float safeRadius, Unit* target);
 
+    // The chooser behind AggroSafeApproachPoint, factored out as pure geometry so
+    // it can be unit-tested without a live map: true when the straight 2D line
+    // from (botX,botY) to (targetX,targetY) passes within `avoidRadius` of the
+    // boss centre (bossX,bossY) — i.e. a detour is needed. A bot already inside
+    // the padded sphere reads true (its endpoint is within the radius, so the
+    // recovery case still demands an exit waypoint). A degenerate radius
+    // (avoidRadius <= 0) reads false (nothing to skirt).
+    static bool NeedsRoomAggroSkirt(float botX, float botY,
+                                    float targetX, float targetY,
+                                    float bossX, float bossY, float avoidRadius);
+
     // True when the tank is close enough AND on a navigable level with the boss
     // to hand off from route-following to the decisive engage pull. The 3D
     // distance alone (BossEngageRange) treats a boss one floor up/down as

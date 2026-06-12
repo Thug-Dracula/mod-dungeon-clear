@@ -154,10 +154,8 @@ std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
     float const gy = target->GetPositionY();
 
     // Does the straight 2D approach bot->target already stay outside the boss's
-    // aggro sphere? Then no detour — engage directly. (Squared compare, no sqrt.)
-    float const clipSq =
-        DungeonClearMath::DistSqToSegment2D(bx, by, tx, ty, gx, gy);
-    if (clipSq >= safeRadius * safeRadius)
+    // aggro sphere? Then no detour — engage directly.
+    if (!NeedsRoomAggroSkirt(tx, ty, gx, gy, bx, by, safeRadius))
         return std::nullopt;
 
     // Orbit the sphere: step the bot's current bearing (measured from the boss)
@@ -184,6 +182,21 @@ std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
         return std::nullopt;  // no walkable detour — fall back to a direct approach
 
     return Position(snap.x, snap.y, snap.z, 0.0f);
+}
+
+bool DcEngageGeometry::NeedsRoomAggroSkirt(float botX, float botY,
+                                          float targetX, float targetY,
+                                          float bossX, float bossY,
+                                          float avoidRadius)
+{
+    if (avoidRadius <= 0.0f)
+        return false;
+
+    // Closest approach of the bot->target chord to the boss centre, squared
+    // (no sqrt). Inside the padded radius -> the line clips the sphere -> skirt.
+    float const clipSq = DungeonClearMath::DistSqToSegment2D(
+        bossX, bossY, botX, botY, targetX, targetY);
+    return clipSq < avoidRadius * avoidRadius;
 }
 bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                       DungeonBossInfo const& boss, float staticRange)
