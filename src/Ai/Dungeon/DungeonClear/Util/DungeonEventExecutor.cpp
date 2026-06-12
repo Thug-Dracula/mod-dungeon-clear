@@ -248,14 +248,39 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         prog.attempts = 0;
         prog.stepStartMs = now;
     }
+    // Resuming the SAME event after a gap (a prior session left this value with
+    // eventId already == ev.id, or the event was interrupted by combat/looting
+    // for a while): the step clock is stale, so refresh it — otherwise the very
+    // next Advance escalates the current step to a timeout against an ancient
+    // stepStartMs and (for an optional event) skips it on the first tick. Keep
+    // stepIndex so we don't redo a non-idempotent step (e.g. re-pull a lever and
+    // toggle the gate shut again); just give the current step a fresh budget.
+    else if (getMSTimeDiff(prog.lastDriveMs, now) > 1000)
+    {
+        prog.stepStartMs = now;
+        prog.attempts = 0;
+    }
+    prog.lastDriveMs = now;
 
     if (prog.stepIndex >= ev.steps.size())
         return EventDriveOutcome::Completed;
 
-    StepResult const result = RunStep(bot, context, ev.steps[prog.stepIndex], prog, now);
+    EventStep const& active = ev.steps[prog.stepIndex];
+    StepResult const result = RunStep(bot, context, active, prog, now);
 
     uint32 const defaultTimeoutMs =
         bot ? DcSettings::GetUInt(bot, "EventStepTimeout") * 1000u : 30000u;
+
+    if (bot)
+    {
+        uint32 const timeout = active.timeoutMs ? active.timeoutMs : defaultTimeoutMs;
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] event '{}' step {} kind {} result {} elapsed {}ms timeout {}ms",
+                  bot->GetName(), ev.name, prog.stepIndex,
+                  static_cast<uint32>(active.kind), static_cast<uint32>(result),
+                  static_cast<uint32>(now - prog.stepStartMs), timeout);
+    }
+
     return Advance(ev, prog, result, now, defaultTimeoutMs);
 }
 

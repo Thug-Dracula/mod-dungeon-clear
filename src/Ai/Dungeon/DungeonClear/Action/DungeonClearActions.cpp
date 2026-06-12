@@ -33,6 +33,7 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
@@ -2797,7 +2798,13 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         if (bot->isMoving())
             bot->StopMoving();
 
+        // Script-only event doors (e.g. SFK's Courtyard Door 18895) wear a
+        // plainly-clickable empty-lock template but the client only opens them
+        // via their event — a generic Use() here desyncs the client and skips
+        // the event. Never auto-open a listed door; fall through to the pause /
+        // (preferably) let the dungeon-event free the prisoner that opens it.
         bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
+                             !DcEventDoorRegistry::IsScriptOnly(door->GetEntry()) &&
                              BotCanOpenDoorLikePlayer(bot, door);
         bool timedOut = false;
 

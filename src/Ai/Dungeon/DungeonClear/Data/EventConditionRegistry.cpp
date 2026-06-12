@@ -14,6 +14,7 @@
 #include "Player.h"
 #include "SharedDefines.h"
 #include "Timer.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
 namespace
 {
@@ -30,6 +31,13 @@ namespace
     constexpr uint32 SFK_COURTYARD_DOOR = 18895;
     constexpr uint32 SFK_PRISONER_ASHCROMBE = 3850;  // Alliance
     constexpr uint32 SFK_PRISONER_ADAMANT = 3849;    // Horde
+    // Rethilgore (3914) is the first boss and stands AMONG the prison cells, so
+    // the courtyard event must wait until he is dead — otherwise the party would
+    // detour to the prison the instant DC is enabled at the zone entrance (the
+    // bug this gate fixes). His grid is co-loaded with the prisoners', so the
+    // prisoner-alive check below guarantees we are not reading a false "dead"
+    // from an unloaded grid.
+    constexpr uint32 SFK_FIRST_BOSS_RETHILGORE = 3914;
     // Door / prisoner sit near the entry; scan generously so the condition is
     // true from the moment the party is anywhere in the early keep.
     constexpr float SFK_SCAN = 200.0f;
@@ -41,22 +49,26 @@ namespace
 
         GameObject* door = bot->FindNearestGameObject(SFK_COURTYARD_DOOR, SFK_SCAN);
         Creature* prisoner = bot->FindNearestCreature(prisonerEntry, SFK_SCAN, /*alive*/ true);
+        bool const firstBossDead =
+            DcTargeting::FindLiveCreatureOnMap(bot, SFK_FIRST_BOSS_RETHILGORE) == nullptr;
 
         // Throttled diagnostic (single-threaded world tick): one line / 5s per
         // faction so a live run shows WHY the event is or isn't due (door
-        // missing/open, no prisoner). Lands in DungeonClear.log.
+        // missing/open, no prisoner, first boss still up). Lands in DungeonClear.log.
         static uint32 lastLog = 0;
         uint32 const now = getMSTime();
         if (getMSTimeDiff(lastLog, now) >= 5000)
         {
             lastLog = now;
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] SFK courtyard cond ({}): door={} state={} prisoner={}",
+                      "[DC:{}] SFK courtyard cond ({}): door={} state={} prisoner={} rethilgore={}",
                       bot->GetName(), who, door ? "found" : "MISSING",
                       door ? static_cast<int>(door->GetGoState()) : -1,
-                      prisoner ? "alive" : "no");
+                      prisoner ? "alive" : "no", firstBossDead ? "dead" : "ALIVE");
         }
 
+        if (!firstBossDead)
+            return false;  // wait until the first boss (Rethilgore) is down
         if (!door || door->GetGoState() != GO_STATE_READY)
             return false;  // no door found, or already open
         return prisoner != nullptr;
