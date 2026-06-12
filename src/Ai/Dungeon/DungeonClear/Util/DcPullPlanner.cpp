@@ -55,6 +55,7 @@
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -77,6 +78,27 @@ namespace
         PathGenerator gen(bot);
         gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
         return gen.GetPathType() == PATHFIND_NORMAL;
+    }
+
+    // A pull camp must never sit on the far side of — or inside — a door we have
+    // not opened yet. The navmesh (and so IsNavReachable / PathGenerator) is BLIND
+    // to script/event doors and to a door's runtime collision, so a candidate the
+    // route happens to wind toward through a still-shut door reads as "reachable"
+    // and the party walks up onto ground it has not legitimately reached (the
+    // Shadowfang courtyard-door symptom: the camp lands on the door while the tank
+    // is still down fighting toward the first boss). ClosedDoorBetween catches a
+    // door strictly BETWEEN the tank and the camp; ClosedDoorNear additionally
+    // catches a camp planted IN the doorway itself (which ClosedDoorBetween's
+    // interior-projection test skips). Both are computed fresh and cheaply.
+    bool CampBlockedByDoor(Player* bot, Position const& c)
+    {
+        if (!bot)
+            return false;
+        return DcEngageGeometry::ClosedDoorBetween(
+                   bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ()) ||
+               DcEngageGeometry::ClosedDoorNear(
+                   bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ(),
+                   DC_DOOR_BAND);
     }
 }
 
@@ -637,8 +659,11 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
         // Only ever return / fall back to a crumb the move can reach over a
         // complete generated path. A crumb within kJumpGuard but across a
         // navmesh seam would otherwise be committed and the move to it would
-        // straight-line under the map.
-        if (!IsNavReachable(bot, c))
+        // straight-line under the map. Likewise reject a crumb on the far side
+        // of (or inside) a still-shut door: walked-distance "back" along a
+        // doubling-back route can land spatially FORWARD, on ground gated by a
+        // door we have not opened — the navmesh is blind to it.
+        if (!IsNavReachable(bot, c) || CampBlockedByDoor(bot, c))
             continue;
         float const clear = clearanceAt(c);
         float const drag = tankPos.GetExactDist(&c);
@@ -691,10 +716,29 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     }
 
     // --- Fallback: cleared route behind is too short (e.g. first pull) ------
-    // Pull straight back, directly away from the target, snapped to the navmesh.
-    // Try the full setback first, shrinking until a walkable point is found.
-    float dx = tankPos.GetPositionX() - target->GetPositionX();
-    float dy = tankPos.GetPositionY() - target->GetPositionY();
+    // Back the party off the pack, snapped to the navmesh, trying the full
+    // setback first and shrinking until a walkable point is found.
+    //
+    // Direction matters and is the crux of the doubling-back bug: projecting
+    // "directly away from the pack" is only "back" on a straight approach. On a
+    // winding / switchback route the away-from-pack vector can point FORWARD onto
+    // ground we have not walked — e.g. straight at the still-shut courtyard door
+    // — and the door-blind navmesh snap accepts it. So when we have ANY trail at
+    // all, project back along it (tank -> farthest reachable crumb): the way the
+    // tank actually came in. Only with no usable trail (a genuine first pull on a
+    // straight approach) do we fall back to the away-from-pack vector.
+    float dx;
+    float dy;
+    if (bestAlong > kStep && best.GetExactDist2d(&tankPos) > 0.1f)
+    {
+        dx = best.GetPositionX() - tankPos.GetPositionX();
+        dy = best.GetPositionY() - tankPos.GetPositionY();
+    }
+    else
+    {
+        dx = tankPos.GetPositionX() - target->GetPositionX();
+        dy = tankPos.GetPositionY() - target->GetPositionY();
+    }
     float const len = std::sqrt(dx * dx + dy * dy);
     if (len > 0.1f)
     {
@@ -708,11 +752,11 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             if (!snap.ok)
                 continue;
             Position cand(snap.x, snap.y, snap.z);
-            // The straight-back projection ignores walls: the snapped point can
-            // land on-mesh but on the far side of a wall / on another level. Only
-            // keep it if a complete generated path reaches it, so the move never
-            // straight-lines through the geometry in between.
-            if (!IsNavReachable(bot, cand))
+            // The projection ignores walls: the snapped point can land on-mesh
+            // but on the far side of a wall / on another level. Only keep it if a
+            // complete generated path reaches it, so the move never straight-lines
+            // through the geometry in between — and never across/into a shut door.
+            if (!IsNavReachable(bot, cand) || CampBlockedByDoor(bot, cand))
                 continue;
             float const c = clearanceAt(cand);
             float const drag = tankPos.GetExactDist(&cand);
@@ -798,8 +842,10 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
         }
         // Only trail to a crumb the party can reach over a complete generated
         // path — a seam crumb would make the follower move straight-line under
-        // the map.
-        if (IsNavReachable(bot, c))
+        // the map. Also reject a crumb across/inside a still-shut door: on a
+        // doubling-back route walked-distance "back" can land spatially forward,
+        // on door-gated ground the party has not legitimately reached.
+        if (IsNavReachable(bot, c) && !CampBlockedByDoor(bot, c))
             return c;
         if (along >= maxDrag)
             break;  // searched past the cap without a reachable crumb — fall back
@@ -809,7 +855,7 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
     // trail the farthest reachable point we have (the party simply stacks closer
     // behind the tank until more trail accrues).
     for (auto it = preSetback.rbegin(); it != preSetback.rend(); ++it)
-        if (IsNavReachable(bot, it->second))
+        if (IsNavReachable(bot, it->second) && !CampBlockedByDoor(bot, it->second))
             return it->second;
     return tankPos;
 }
