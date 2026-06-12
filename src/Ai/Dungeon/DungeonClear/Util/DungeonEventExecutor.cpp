@@ -9,13 +9,16 @@
 
 #include "Creature.h"
 #include "GameObject.h"
-#include "GossipHelloAction.h"
+#include "GameObjectData.h"
+#include "GossipDef.h"
 #include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInitArgs.h"
 #include "Player.h"
 #include "Playerbots.h"
 #include "Timer.h"
+#include "WorldPacket.h"
+#include "WorldSession.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
@@ -74,6 +77,11 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             GameObject* go = bot->FindNearestGameObject(step.goEntry, search);
             if (!go)
                 return StepResult::Running;  // not in range yet / not spawned
+            // Idempotent: a lever/door already in a non-READY (activated) state
+            // has been used — toggling it again would undo it (re-close the cell
+            // gate). Treat as already done so a restart of the step chain is safe.
+            if (go->GetGoState() != GO_STATE_READY)
+                return StepResult::Done;
             if (!bot->IsWithinDistInMap(go, DC_EVENT_GO_USE_RANGE))
             {
                 HopTo(bot, go->GetPositionX(), go->GetPositionY(), go->GetPositionZ());
@@ -142,14 +150,14 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
 
         case EventStepKind::Gossip:
         {
-            // Talk to creatureEntry and pick gossipOption. The select must run
-            // against an already-open menu (GossipHelloAction populates the bot's
-            // PlayerTalkClass on the -1 "hello" call, then ProcessGossip reads
-            // that menu), so this is a two-touch step: attempt 0 opens the menu,
-            // the next attempt selects. The select's downstream effect (a gate
-            // opening, a spawn) is confirmed by a following WaitForGOState /
-            // WaitForSpawn step, not here — this step is Done once the option is
-            // sent. Reuses mod-playerbots' proven GossipHelloAction path.
+            // Talk to creatureEntry and pick gossipOption. We drive the gossip
+            // OPCODES directly rather than GossipHelloAction::Execute, because its
+            // select path (ProcessGossip) sends GetMaster()->GetTarget() as the
+            // packet guid — and the core's HandleGossipSelectOptionOpcode rejects
+            // the select unless that guid equals the open menu's sender GUID. For
+            // a real bot whose master isn't targeting this NPC, the select is a
+            // silent no-op (the prisoner never gets the GOSSIP_SELECT and never
+            // opens the door). Sending the NPC's own GUID makes it land.
             float const search = step.radius > 0.0f ? step.radius : DC_EVENT_GO_SEARCH;
             Creature* npc = bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true);
             if (!npc)
@@ -161,29 +169,29 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
-            if (!botAI)
-                return StepResult::Blocked;
+            // Open the menu — synchronously populates PlayerTalkClass with this
+            // NPC as the gossip-menu sender and its DB options.
+            bot->SetFacingToObject(npc);
+            WorldPacket hello;
+            hello << npc->GetGUID();
+            bot->GetSession()->HandleGossipHelloOpcode(hello);
 
-            GossipHelloAction gossip(botAI);
-            if (prog.attempts == 0)
-            {
-                // Open the menu; select on the next tick against the open menu.
-                gossip.Execute(npc->GetGUID(), -1, /*silent*/ true);
-                ++prog.attempts;
-                return StepResult::Running;
-            }
+            GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
+            if (menu.GetMenuItems().empty() ||
+                !menu.GetItem(static_cast<uint32>(step.gossipOption)))
+                return StepResult::Running;  // menu/option not ready yet — retry
 
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[dungeon-clear] {} event-step Gossip {} '{}' option {}",
+                      "[dungeon-clear] {} event-step Gossip {} '{}' menu {} option {}",
                       bot->GetName(), npc->GetGUID().ToString(), npc->GetName(),
-                      step.gossipOption);
-            if (gossip.Execute(npc->GetGUID(), step.gossipOption, /*silent*/ true))
-                return StepResult::Done;
-            // Select failed (menu went stale / option missing) — re-open and
-            // retry next tick. The Advance timeout escalates if it keeps failing.
-            prog.attempts = 0;
-            return StepResult::Running;
+                      menu.GetMenuId(), step.gossipOption);
+
+            WorldPacket select;
+            select << npc->GetGUID() << menu.GetMenuId()
+                   << static_cast<uint32>(step.gossipOption);
+            select << std::string();  // no coded box
+            bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+            return StepResult::Done;
         }
 
         case EventStepKind::CastSpell:
@@ -248,17 +256,19 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         prog.attempts = 0;
         prog.stepStartMs = now;
     }
-    // Resuming the SAME event after a gap (a prior session left this value with
-    // eventId already == ev.id, or the event was interrupted by combat/looting
-    // for a while): the step clock is stale, so refresh it — otherwise the very
-    // next Advance escalates the current step to a timeout against an ancient
-    // stepStartMs and (for an optional event) skips it on the first tick. Keep
-    // stepIndex so we don't redo a non-idempotent step (e.g. re-pull a lever and
-    // toggle the gate shut again); just give the current step a fresh budget.
+    // A gap since the last drive means this is a FRESH activation — a new run /
+    // re-enter, or the event lapsed (condition went false) and re-fired — NOT a
+    // tick-to-tick continuation. Restart from step 0 so the whole chain (e.g.
+    // lever -> gossip -> wait-for-door) runs again. Without this a stale value
+    // left mid-event by a prior run resumes on, say, the wait-for-door step and
+    // parks there forever because the lever/gossip that would open it never run.
+    // Safe because the steps are idempotent (UseGameObject skips an already-
+    // activated GO, MoveTo/Gossip/WaitFor* re-run harmlessly).
     else if (getMSTimeDiff(prog.lastDriveMs, now) > 1000)
     {
-        prog.stepStartMs = now;
+        prog.stepIndex = 0;
         prog.attempts = 0;
+        prog.stepStartMs = now;
     }
     prog.lastDriveMs = now;
 
