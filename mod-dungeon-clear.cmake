@@ -11,6 +11,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestApproachDecisions.cpp"
             "${MOD_PATH}/t/TestRoomAggro.cpp"
             "${MOD_PATH}/t/TestBossRoster.cpp"
+            "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/replay_decisions.cpp"
             "${CMAKE_SOURCE_DIR}/src/test/mocks/TestMap.cpp"
         )

@@ -111,6 +111,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     // (DungeonBossInfo::arriveRadius); 0 there falls back to this.
     { "ObjectiveArriveRadius", DcType::Float,  8,   3,   40,  true  },
 
+    // Per-step timeout (seconds) for the declarative dungeon-event executor
+    // (DungeonEventRegistry / DungeonEventExecutor): a single step that keeps
+    // returning Running for this long is treated as failed — a required event
+    // then stalls for the human, an optional one is skipped and the clear
+    // advances. Used when a step doesn't set its own timeout. Generous so a slow
+    // approach + a scripted sequence isn't cut short.
+    { "EventStepTimeout",      DcType::UInt,  30,   5,  300,  true  },
+
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },
     { "BossEngageRangeCap",    DcType::Float, 30,  10,  60,  true  },
     { "TrashWidthFloor",       DcType::Float,  8,   4,  30,  true  },

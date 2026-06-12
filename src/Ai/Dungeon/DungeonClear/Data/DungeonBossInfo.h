@@ -47,7 +47,15 @@ struct DungeonBossInfo
 
     // Objective only: id into ObjectiveHookRegistry for an on-arrival handler.
     // 0 => no hook; the objective simply completes and the clear advances.
+    // Superseded for new content by eventId (a declarative step list); the hook
+    // is kept as the executor's `Custom` step and for legacy objectives.
     uint32 onArriveHook{0};
+
+    // Objective only: id into DungeonEventRegistry for a declarative step-based
+    // event (move/use-GO/gossip/wait/kill) run on arrival. 0 => no event; the
+    // objective falls back to onArriveHook (or arrive-then-continue). When set it
+    // takes precedence over onArriveHook. See DungeonEventExecutor.
+    uint32 eventId{0};
 
     // Boss only (roster patch authoring aid): copy this base entry's
     // encounterIndex onto this added boss so it borrows that boss's kill-bit

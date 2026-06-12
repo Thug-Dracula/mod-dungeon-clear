@@ -41,7 +41,7 @@ namespace
     DungeonBossInfo MakeObjective(uint32 entry, uint32 encounterIndex, uint32 mapId,
                                   char const* name, float x, float y, float z,
                                   float arriveRadius = 0.0f, uint32 gateEntry = 0,
-                                  uint32 hook = 0)
+                                  uint32 hook = 0, uint32 eventId = 0)
     {
         DungeonBossInfo o;
         o.entry = entry;
@@ -55,6 +55,7 @@ namespace
         o.arriveRadius = arriveRadius;
         o.gateEntry = gateEntry;
         o.onArriveHook = hook;
+        o.eventId = eventId;
         return o;
     }
 
@@ -115,7 +116,8 @@ namespace
                     MakeObjective(OBJ(1), /*orderIndex*/ 7, 109,
                                   "Altar of Hakkar (Avatar event)",
                                   -420.8f, 94.7f, -174.2f,
-                                  /*arriveRadius*/ 15.0f, /*gateEntry*/ 8443),
+                                  /*arriveRadius*/ 15.0f, /*gateEntry*/ 8443,
+                                  /*hook*/ 0, /*eventId*/ 1),
                 };
                 t.push_back(std::move(p));
             }
@@ -138,7 +140,8 @@ namespace
                     MakeObjective(OBJ(1), /*orderIndex*/ 7, 209,
                                   "Temple Summit (Executioner event)",
                                   1886.8f, 1289.9f, 46.0f,
-                                  /*arriveRadius*/ 12.0f),
+                                  /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 1),
                 };
                 t.push_back(std::move(p));
             }

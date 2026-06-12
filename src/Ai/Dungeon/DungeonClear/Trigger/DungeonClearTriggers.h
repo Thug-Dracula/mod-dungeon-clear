@@ -37,6 +37,21 @@ public:
     bool IsActive() override;
 };
 
+// Leader-only, non-combat. Fires when an off-path CONDITIONAL event
+// (DungeonEventRegistry, EventActivation::Conditional) for this map is DUE — its
+// EventConditionRegistry predicate is true and it has not yet latched. Drives
+// DcRunEventAction, which runs the event's steps (walk to a lever/NPC, gossip,
+// wait for the gate to open). Relevance 31 — just above at-boss (30) — so a due
+// pre-boss gate (e.g. "free the prisoner to open the courtyard door") preempts
+// the boss pull and the door-blocked stall. Inert when no conditional event is
+// due. See DungeonEventExecutor::FindDueConditionalEvent.
+class DungeonClearEventDueTrigger : public Trigger
+{
+public:
+    DungeonClearEventDueTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear event due", 1) {}
+    bool IsActive() override;
+};
+
 class DungeonClearBlockingTrashTrigger : public Trigger
 {
 public:

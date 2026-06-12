@@ -33,13 +33,16 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2604,21 +2607,41 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
-    // Hold at the anchor while the (optional) hook runs — HaltForHold cancels a
+    // Hold at the anchor while the event/hook runs — HaltForHold cancels a
     // launched escort glide so the tank doesn't coast past the objective.
     HaltForHold(bot);
 
-    ObjectiveArriveResult const result =
-        ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next);
-
-    if (result == ObjectiveArriveResult::Running)
+    // Prefer a declarative event (DungeonEventRegistry) when the anchor names
+    // one; otherwise fall back to the legacy freeform hook (ObjectiveHookRegistry)
+    // so existing objectives are unchanged. Both reduce to one drive outcome.
+    EventDriveOutcome outcome = EventDriveOutcome::Completed;
+    DungeonEvent const* ev =
+        next->eventId ? DungeonEventRegistry::Find(next->mapId, next->eventId) : nullptr;
+    if (ev)
     {
-        // Hook still working — keep holding; it is called again next tick.
+        auto& prog =
+            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+        outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
+    }
+    else
+    {
+        switch (ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next))
+        {
+            case ObjectiveArriveResult::Running: outcome = EventDriveOutcome::Running; break;
+            case ObjectiveArriveResult::Blocked: outcome = EventDriveOutcome::Stalled; break;
+            case ObjectiveArriveResult::Done:
+            default:                             outcome = EventDriveOutcome::Completed; break;
+        }
+    }
+
+    if (outcome == EventDriveOutcome::Running)
+    {
+        // Event/hook still working — keep holding; it is driven again next tick.
         SetPhase(context, "objective");
         return true;
     }
 
-    if (result == ObjectiveArriveResult::Blocked)
+    if (outcome == EventDriveOutcome::Stalled)
     {
         // The event needs the human (something the bot can't drive). Stall so
         // the player can sort it; they can also `dc skip` past the objective.
@@ -2627,7 +2650,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         return true;
     }
 
-    // Done (or no hook): latch the objective complete so NextDungeonBossValue
+    // Completed or Skipped: latch the objective complete so NextDungeonBossValue
     // advances and never re-targets it (objectives have no kill-bit to read).
     auto& cleared =
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
@@ -2638,6 +2661,66 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         LOG_DEBUG("playerbots.dungeonclear",
                   "[dungeon-clear] {} reached objective '{}' (entry {}) — marked cleared",
                   bot->GetName(), next->name, next->entry);
+    }
+    SetPhase(context, "");
+    return true;
+}
+
+bool DcRunEventAction::Execute(Event /*event*/)
+{
+    Map* map = bot ? bot->GetMap() : nullptr;
+    if (!map)
+        return false;
+
+    DungeonEvent const* ev =
+        DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId());
+    if (!ev)
+        return false;  // condition went false between trigger and action — stand down
+
+    // Hold position while driving the event. StopActiveSplineGlide only cancels a
+    // launched escort glide (the coast-past from the advance ladder) — it leaves a
+    // step's own intra-room MovePoint (HopTo) alone, so MoveTo/Gossip walk-ins
+    // still work, unlike HaltForHold.
+    StopActiveSplineGlide(bot);
+
+    auto& prog =
+        context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
+    EventDriveOutcome const outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
+
+    char const* outcomeStr =
+        outcome == EventDriveOutcome::Running   ? "running"
+        : outcome == EventDriveOutcome::Completed ? "completed"
+        : outcome == EventDriveOutcome::Stalled ? "stalled"
+                                                : "skipped";
+    LOG_DEBUG("playerbots.dungeonclear",
+              "[DC:{}] run-event '{}' step {}/{} -> {}",
+              bot->GetName(), ev->name, prog.stepIndex,
+              static_cast<uint32>(ev->steps.size()), outcomeStr);
+
+    if (outcome == EventDriveOutcome::Running)
+    {
+        SetPhase(context, "event");
+        return true;
+    }
+
+    if (outcome == EventDriveOutcome::Stalled)
+    {
+        StallDungeonClear(botAI, "I can't progress the event '" + ev->name +
+                                     "' on my own. Sort it and I'll continue, or `dc skip`.");
+        return true;
+    }
+
+    // Completed or Skipped: latch the event under its synthetic key so the
+    // trigger stops re-firing it and the clear proceeds.
+    auto& cleared =
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    if (cleared.insert(DungeonEventExecutor::ConditionalLatchKey(ev->id)).second)
+    {
+        ClearStall(context);
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tEvent '" + ev->name + "' done \xe2\x80\x94 continuing.");
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[dungeon-clear] {} completed conditional event '{}' (id {}) — latched",
+                  bot->GetName(), ev->name, ev->id);
     }
     SetPhase(context, "");
     return true;
@@ -2715,7 +2798,13 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         if (bot->isMoving())
             bot->StopMoving();
 
+        // Script-only event doors (e.g. SFK's Courtyard Door 18895) wear a
+        // plainly-clickable empty-lock template but the client only opens them
+        // via their event — a generic Use() here desyncs the client and skips
+        // the event. Never auto-open a listed door; fall through to the pause /
+        // (preferably) let the dungeon-event free the prisoner that opens it.
         bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
+                             !DcEventDoorRegistry::IsScriptOnly(door->GetEntry()) &&
                              BotCanOpenDoorLikePlayer(bot, door);
         bool timedOut = false;
 
@@ -2828,8 +2917,20 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
 
     if (!door)
     {
-        // Door vanished/opened between the value poll and now, or its grid
-        // isn't resident — fall back to the in-place stall so the reason is
+        if (doorGuid.IsEmpty())
+        {
+            // The blocking-door value went EMPTY — the corridor is clear: the
+            // door opened (e.g. a dungeon event freed the prisoner who unlocked
+            // the courtyard door) or there was never a real blocker. Do NOT
+            // auto-pause; drop any stall and stand down so Advance walks the now-
+            // open doorway next tick. Without this, the one-tick race between the
+            // door opening and the cached blocking-door value clearing paused the
+            // run "the way is blocked by a door" the instant the event succeeded.
+            ClearStall(context);
+            return true;
+        }
+        // A non-empty guid we couldn't resolve (the GO's grid isn't resident) —
+        // genuinely unknown; fall back to the in-place stall so the reason is
         // still reported.
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] door-blocked: door guid {} unresolved -> parking in place",
@@ -4047,10 +4148,13 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     if (!DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
         return false;
 
-    // Healers hold at camp like everyone else but are never made passive
-    // (ApplyFollowerPassive skips them) so they can heal the tank through the
-    // drag-back. The position pin below still applies — we only stop OWNING the
-    // tick once they're parked, so the combat engine is free to run their heals.
+    // Healers hold at camp like everyone else but are pinned with the "stay"
+    // strategy instead of "+passive" (ApplyFollowerPassive) so they can heal the
+    // tank through the drag-back without RUNNING FORWARD to close heal range —
+    // "stay" suppresses playerbots' reach-to-heal movement while leaving the
+    // cast-heal action free. The position pin below still applies — we only stop
+    // OWNING the tick once they're parked AND someone needs a heal, so the combat
+    // engine can run the in-place heal cast.
     bool const isHealer = PlayerbotAI::IsHeal(bot);
 
     // Go passive (attack nothing) ONLY while the tank is actually tagging (a
@@ -4124,6 +4228,57 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
     }
 
+    // Held ranged healer: clamp its movement so it can APPROACH the tank to reach
+    // heal range but NEVER cross to the threat side of it. The healer carries the
+    // "stay" pin (ApplyFollowerPassive) which disables every stock mover — so on
+    // the yield below the cast-heal fires but nothing can walk the bot, killing
+    // the overshoot where a pure ranged healer ran past the tank to a heal/follow
+    // point that sits behind the tank (and behind = toward the pack when the tank
+    // faces camp on the drag-back). DC supplies the approach itself, clamped to
+    // the camp side of the heal target, so "approach yes, never past the tank".
+    if (passive && isHealer)
+    {
+        Unit* const healTarget = AI_VALUE(Unit*, "party member to heal");
+        uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
+        if (healTarget && lowestPct < sPlayerbotAIConfig.almostFullHealth)
+        {
+            float const healRange = botAI->GetRange("heal");
+            bool const canCast = bot->GetExactDist(healTarget) <= healRange &&
+                                 bot->IsWithinLOSInMap(healTarget);
+            if (canCast)
+            {
+                // In range + LOS: hold here and YIELD so the (movement-suppressed)
+                // cast-heal lands in place. "stay" guarantees no mover runs.
+                if (bot->isMoving())
+                    bot->StopMoving();
+                DC_PULL_TRACE("[DC:{}] healer: in range -> casting in place", bot->GetName());
+                return false;
+            }
+            // Out of range/LOS: drive a clamped approach toward a point at ~85%
+            // heal range on the CAMP side of the target. Own the tick (don't let
+            // the camp slot yank it straight back) and use MOVEMENT_COMBAT so it
+            // wins over any stale combat mover.
+            Position const approach =
+                DcPullPlanner::ComputeHealApproach(bot, healTarget, camp, healRange);
+            if (bot->GetExactDist(&approach) > DC_PULL_SLOT_RADIUS)
+            {
+                MoveTo(bot->GetMapId(), approach.GetPositionX(), approach.GetPositionY(),
+                       approach.GetPositionZ(), /*idle*/ false, /*react*/ false,
+                       /*normal_only*/ false, /*exact_waypoint*/ false,
+                       MovementPriority::MOVEMENT_COMBAT);
+                DC_PULL_TRACE("[DC:{}] healer: clamped approach to heal target", bot->GetName());
+                return true;
+            }
+            // At the clamped point but still no LOS/range (corner): hold, yield for
+            // a possible cast — never push past the clamp toward the pack.
+            if (bot->isMoving())
+                bot->StopMoving();
+            return false;
+        }
+        // Nobody needs healing — fall through to the normal camp-slot pin so the
+        // healer holds at / returns to camp like any other held follower.
+    }
+
     // Park at the leader's camp. Each follower aims for its own fuzzed slot — a
     // deterministic 1-2yd offset off the shared anchor, snapped to the navmesh —
     // so the party fans out instead of stacking on one identical point. Settle on
@@ -4145,21 +4300,10 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         // break the hold while the pull is live. While merely camped between pulls
         // (scout phase, passive==false) YIELD so the party can rest / loot at camp
         // — the multiplier suppresses wander / follow / self-pull for a camp-held
-        // follower, so yielding here can't let it drift off toward the tank.
-        //
-        // A healer (never made passive) needs to heal the tank through the pull.
-        // The combat engine runs its heals, but stay-at-camp owning the tick at
-        // relevance 60 would block them. So while holding, a healer YIELDS the
-        // tick ONLY when a party member actually needs a heal (its heal action
-        // then wins the tick); with nobody to heal it OWNS the tick like any held
-        // follower, so the stock combat follow can't trail it out to the tank's
-        // pull spot. The pin above re-centers it on camp between heals.
-        if (passive && isHealer)
-        {
-            uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
-            if (lowestPct < sPlayerbotAIConfig.almostFullHealth)
-                return false;
-        }
+        // follower, so yielding here can't let it drift off toward the tank. A
+        // healer's in-place / clamped-approach healing is handled in the dedicated
+        // block above and returns before reaching here; once nobody needs a heal it
+        // falls through to this camp pin like any other held follower.
         return passive;
     }
     // Priority matters the moment the party is already IN COMBAT when a pull

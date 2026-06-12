@@ -21,9 +21,11 @@
 #include "Player.h"
 #include "InstanceScript.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
@@ -371,6 +373,28 @@ bool DcSkipAction::Execute(Event event)
         return false;
     }
 
+    // A due off-path CONDITIONAL event preempts the boss pull (trigger rel 31),
+    // so a `dc skip` while one is active should retire THAT event — latch its
+    // synthetic key cleared+skipped so it stops firing — rather than skipping the
+    // boss behind it. Required events that the bot can't drive are unstuck here.
+    if (Map* map = bot->GetMap())
+    {
+        if (DungeonEvent const* ev =
+                DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()))
+        {
+            uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
+            auto& cleared =
+                context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+            cleared.insert(latchKey);
+            context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().insert(latchKey);
+            context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
+            context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tSkipped event '" + ev->name + "'.");
+            botAI->DoSpecificAction("dc status", event, true);
+            return true;
+        }
+    }
+
     std::optional<DungeonBossInfo> current = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!current.has_value())
     {
@@ -588,6 +612,29 @@ bool DcBossesAction::Execute(Event event)
 
             DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + line.str());
         }
+    }
+
+    // Off-path CONDITIONAL events (DungeonEventRegistry) are not in the boss list
+    // — surface them too so the player can see a pending gate (e.g. "free the
+    // prisoner") and `dc skip` past it if a bot can't drive it. Listed as a
+    // BOSS line with a synthetic entry (the latch key) and encounterIndex 99 so
+    // they sort last; status is the latch state.
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+    {
+        uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
+        std::string const evStatus =
+            cleared.count(latchKey) ? "dead"
+            : skipped.count(latchKey) ? "skipped"
+                                      : "alive";
+        std::string const evName = "Event: " + ev->name;
+
+        std::ostringstream evMsg;
+        evMsg << "BOSS\t" << latchKey << "\t99\t" << evName << "\t" << evStatus
+              << "\t0\t0\t0\t";
+        DcStatusPublisher::SendAddonMessage(botAI, evMsg.str());
+
+        if (!silent)
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + evName + " [" + evStatus + "]");
     }
 
     DcStatusPublisher::SendAddonMessage(botAI, "BOSS_END");

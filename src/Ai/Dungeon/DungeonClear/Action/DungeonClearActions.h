@@ -154,6 +154,21 @@ public:
     bool Execute(Event event) override;
 };
 
+// Drives an off-path CONDITIONAL event (DungeonEventRegistry, activation
+// Conditional) selected by DungeonClearEventDueTrigger. Cancels any escort glide
+// so the tank holds, runs the event's steps via DungeonEventExecutor against the
+// shared conditional-progress value, and on completion latches the event's
+// synthetic key into "dungeon clear cleared anchors" so it never re-fires this
+// run. Running holds; a required step that Blocks/times out stalls for the human;
+// an optional one Skips (latches) and the clear proceeds. Sits at relevance 31,
+// above the at-boss pull, so a due pre-boss gate is handled first.
+class DcRunEventAction : public MovementAction
+{
+public:
+    DcRunEventAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear run event") {}
+    bool Execute(Event event) override;
+};
+
 class DungeonClearDisableOnDeathAction : public Action
 {
 public:

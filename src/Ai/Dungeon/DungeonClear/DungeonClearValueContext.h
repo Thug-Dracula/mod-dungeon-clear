@@ -60,6 +60,8 @@ public:
         creators["dungeon clear pull setting"] = &DungeonClearValueContext::dungeon_clear_pull_setting;
         creators["dungeon clear pull context"] = &DungeonClearValueContext::dungeon_clear_pull_context;
         creators["dungeon clear approach state"] = &DungeonClearValueContext::dungeon_clear_approach_state;
+        creators["dungeon clear event progress"] = &DungeonClearValueContext::dungeon_clear_event_progress;
+        creators["dungeon clear conditional event progress"] = &DungeonClearValueContext::dungeon_clear_conditional_event_progress;
     }
 
 private:
@@ -98,6 +100,8 @@ private:
     static UntypedValue* dungeon_clear_pull_setting(PlayerbotAI* ai) { return new DungeonClearPullSettingValue(ai); }
     static UntypedValue* dungeon_clear_pull_context(PlayerbotAI* ai) { return new DungeonClearPullContextValue(ai); }
     static UntypedValue* dungeon_clear_approach_state(PlayerbotAI* ai) { return new DungeonClearApproachStateValue(ai); }
+    static UntypedValue* dungeon_clear_event_progress(PlayerbotAI* ai) { return new DungeonEventProgressValue(ai); }
+    static UntypedValue* dungeon_clear_conditional_event_progress(PlayerbotAI* ai) { return new DungeonConditionalEventProgressValue(ai); }
 };
 
 #endif

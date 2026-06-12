@@ -110,6 +110,17 @@ public:
     static bool ClosedDoorBetween(WorldObject* from, float tx, float ty, float tz,
                                   float corridorWidth = 8.0f);
 
+    // True if a closed `GAMEOBJECT_TYPE_DOOR` sits within `radius` (2D) of the
+    // point (x,y,z) and on its floor (Z band). Companion to ClosedDoorBetween:
+    // that one tests a door BETWEEN two points and deliberately ignores a door
+    // projecting to a chord ENDPOINT, so a point sitting squarely IN a doorway
+    // slips past it. This catches that — a pull camp must never be planted in a
+    // still-shut doorway (the navmesh is blind to script/event doors, so the
+    // party would "stand in"/clip through a door it has not opened yet). `ref`
+    // supplies the map to scan; its own position is not used.
+    static bool ClosedDoorNear(WorldObject* ref, float x, float y, float z,
+                               float radius = 8.0f);
+
     // Distance TRAVELLED ALONG the long-path (from the bot) to where the route
     // first comes within the door band of the door at (doorX,doorY), or FLT_MAX
     // if it never does within `maxLookAhead`. The door-blocked handler parks the

@@ -18,9 +18,11 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
@@ -198,6 +200,26 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
         }
     }
     return false;
+}
+
+bool DungeonClearEventDueTrigger::IsActive()
+{
+    if (!IsEnabled(context, bot))
+        return false;
+    if (!bot || bot->IsInCombat() || bot->isDead())
+        return false;
+    // Leader drives events; followers stay on follow-tank.
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+    if (!DungeonEventRegistry::HasEvents(map->GetId()))
+        return false;
+
+    // Hand the trigger and the action the SAME "which event is due" answer so
+    // they can never disagree about whether to fire / what to drive.
+    return DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()) != nullptr;
 }
 
 bool DungeonClearBlockingTrashTrigger::IsActive()

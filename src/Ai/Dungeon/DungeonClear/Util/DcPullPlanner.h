@@ -28,6 +28,17 @@ public:
     // and the follower settles on one spot instead of jittering.
     static Position ComputeCampSlot(Player* bot, Position const& camp);
 
+    // Clamped heal-approach point for a held ranged healer during an advanced
+    // pull. Returns a navmesh-snapped point at ~85% of healRange from healTarget
+    // along the target->camp direction, i.e. on the CAMP side of the heal target.
+    // This lets the healer close the gap to reach heal range while guaranteeing it
+    // never crosses to the threat side of the tank (the pack sits opposite the
+    // camp on a drag-back), so it can't overshoot past the tank into the mobs.
+    // Falls back to the camp position when the camp is already within heal range
+    // of the target, when inputs are degenerate, or on a bad navmesh probe.
+    static Position ComputeHealApproach(Player* bot, Unit* healTarget,
+                                        Position const& camp, float healRange);
+
     // --- Dynamic pull (auto Leeroy vs Advanced) -----------------------------
     // Classifies the pull on `target`: true => use the careful Advanced pull-to-
     // camp; false => Leeroy it. Estimates how many mobs would aggro if the party

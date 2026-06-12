@@ -122,6 +122,37 @@ namespace
             return nullptr;
         return leader;
     }
+
+    // True if ANY living, same-map member of `bot`'s group (the bot itself
+    // included) is currently in combat. Used to release the dynamic scout-lag
+    // trail and arm the leader-fight assist off "someone in the party is
+    // fighting" rather than the elected leader's own combat flag alone: when the
+    // tank takes a pack before a verdict commits (dynamic Idle + surprise aggro,
+    // the "in combat with no pull state" case), the leader's IsInCombat() read
+    // can flicker as it tags/leashes — or a groupmate registers combat a tick
+    // first — and keying the whole "drop the trail and help" decision on the
+    // leader alone left the suppressed party parked at lag range watching the
+    // tank die. Any party member in combat is sufficient to collapse the party.
+    bool AnyGroupMemberInCombat(Player* bot)
+    {
+        if (!bot)
+            return false;
+        Group* group = bot->GetGroup();
+        if (!group)
+            return bot->IsInCombat();  // solo: only our own combat counts
+
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || !member->IsAlive())
+                continue;
+            if (member->GetMapId() != bot->GetMapId())
+                continue;
+            if (member->IsInCombat())
+                return true;
+        }
+        return false;
+    }
 }
 
 Player* DcLeaderSignal::FindLeaderTank(Player* reference)
@@ -372,7 +403,23 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
         ctx->GetValue<bool>("dungeon clear paused")->Get())
         return false;
 
-    return leader->IsInCombat();
+    // Assist off ANY party member's combat, not just the elected leader's own
+    // flag: when the tank takes a pack before a verdict commits (dynamic Idle +
+    // surprise aggro — "in combat, no pull state"), the leader's IsInCombat()
+    // read flickers as it tags/leashes, and on a tight spiral that left the
+    // suppressed party parked at lag range watching the tank die. If anyone in
+    // the group is fighting, drive the out-of-combat members in.
+    bool const leaderInCombat = leader->IsInCombat();
+    bool const groupInCombat = AnyGroupMemberInCombat(leader);
+    // Diagnostic for the spiral death: fires only in the exact divergence we
+    // are fixing — a party fight is live but the elected leader's own flag reads
+    // out of combat. With the old leader-only gate this returned false here and
+    // the party stayed passive; this line proves the new path now engages.
+    if (groupInCombat && !leaderInCombat)
+        DC_PULL_DEBUG("[DC:{}] assist: groupmate in combat while leader reads "
+                      "out-of-combat -> assisting (was the no-pull-state stall)",
+                      bot->GetName());
+    return groupInCombat;
 }
 bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
 {
@@ -401,8 +448,13 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     // Still scouting: the verdict for the upcoming pack hasn't been committed. Once
     // the tank tags the pack it enters combat, and an Advanced verdict marks a camp
     // (handing the party to hold-at-camp) — either way the phase leaves Idle and the
-    // party stops lagging and engages.
-    if (leader->IsInCombat())
+    // party stops lagging and engages. Release off ANY party member's combat, not
+    // just the leader's own flag: a surprise pull before a verdict commits ("in
+    // combat, no pull state") flickers the leader's IsInCombat() as it tags/leashes,
+    // and keying the trail on the leader alone left the party lagging at a
+    // LOS-blocked range on the spiral while the tank fought and died. If anyone in
+    // the party is fighting, drop the trail so the assist/regroup can collapse it.
+    if (AnyGroupMemberInCombat(leader))
         return false;
     DcPullContext const& pull =
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();

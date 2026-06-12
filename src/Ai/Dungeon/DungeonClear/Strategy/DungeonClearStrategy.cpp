@@ -30,6 +30,16 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear pull",
         { NextAction("dungeon clear pull", 35.0f) }));
 
+    // Off-path CONDITIONAL event due (DungeonEventRegistry): a pre-boss gate the
+    // party must perform — pull a lever, talk to a prisoner to open the gate, etc.
+    // Relevance 31, just above the at-boss pull (30), so a due gate preempts the
+    // boss engage AND the door-blocked stall (22). Inert unless a conditional
+    // event's condition is currently true and un-latched. See
+    // DungeonClearEventDueTrigger / DcRunEventAction.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear event due",
+        { NextAction("dungeon clear run event", 31.0f) }));
+
     // Within engage range of next boss.
     triggers.push_back(new TriggerNode(
         "dungeon clear at boss",

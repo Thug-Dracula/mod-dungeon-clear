@@ -352,6 +352,36 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
     }
     return false;
 }
+bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float z,
+                                      float radius)
+{
+    if (!ref)
+        return false;
+    Map* map = ref->GetMap();
+    if (!map)
+        return false;
+
+    float const radiusSq = radius * radius;
+    float const loZ = z - DC_DOOR_Z_BAND;
+    float const hiZ = z + DC_DOOR_Z_BAND;
+
+    for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+    {
+        GameObject* go = kv.second;
+        if (!IsDoorClosed(go))
+            continue;
+
+        float const gz = go->GetPositionZ();
+        if (gz < loZ || gz > hiZ)
+            continue;  // door on another floor — near in plan-view only
+
+        float const dx = go->GetPositionX() - x;
+        float const dy = go->GetPositionY() - y;
+        if (dx * dx + dy * dy <= radiusSq)
+            return true;
+    }
+    return false;
+}
 float DcEngageGeometry::DistAlongPathToClosedDoor(
     Player* bot, ChunkedPathfinder::Result const& path,
     float doorX, float doorY, float doorZ, float maxLookAhead)

@@ -67,4 +67,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    engage; the tank clears the room before the pull — ClearRoomBeforeBoss)
 # Value/DungeonClearRoomTrashValue.{h,cpp}
 #   ("dungeon clear room trash remaining" set + the no-progress give-up valve)
+# Data/DungeonEventRegistry.{h,cpp} + Util/DungeonEventExecutor.{h,cpp}
+#   (declarative dungeon-events framework: typed step list + state-machine
+#    executor; milestone 1 anchored events, milestone 2 Gossip + conditional)
+# Data/EventConditionRegistry.{h,cpp}
+#   (milestone 2: conditionId predicate table for off-path Conditional events —
+#    e.g. SFK "courtyard door shut & prisoner alive"; mirrors ObjectiveHookRegistry)
 # (this comment bumps mtime to force CMake re-glob on next build)
