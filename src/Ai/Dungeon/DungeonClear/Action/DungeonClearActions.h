@@ -6,7 +6,10 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARACTIONS_H
 #define _PLAYERBOT_DUNGEONCLEARACTIONS_H
 
+#include <optional>
+
 #include "MovementActions.h"
+#include "Position.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
@@ -29,8 +32,29 @@ protected:
     // Returns true if the bot took action (moved or attacked). Caller passes
     // the target it picked; this routine handles the movement-then-attack
     // sequence regardless of whether the target is a boss, blocking trash,
-    // or a stalled-fallback obstacle.
+    // or a stalled-fallback obstacle. Its walk-in branch automatically detours
+    // around an active room-aggro boss's aggro sphere (RoomAggroSkirtPoint), so
+    // every EngageDirect consumer (room clear, run-event, stalled fallback)
+    // inherits the skirt without its own copy.
     bool EngageDirect(Unit* target);
+
+    // Detour waypoint to approach `target` while skirting an ACTIVE room-aggro
+    // boss's aggro sphere, or nullopt when no detour is needed: the direct line
+    // is already clear, no room clear is active (DcTargeting::IsRoomClearActive),
+    // the boss isn't loaded, or no walkable detour snaps. Resolves the flagged
+    // boss via the "next dungeon boss" value + RoomAggroRegistry and consults
+    // DcEngageGeometry::AggroSafeApproachPoint with RoomAggroPathPadding honoured.
+    // The single home of the skirt geometry, shared by EngageDirect's walk-in and
+    // MoveToSkirtingRoomAggro so all three room-clear drivers orbit identically.
+    std::optional<Position> RoomAggroSkirtPoint(Unit* target);
+
+    // Walk toward `target`, detouring around an active room-aggro boss sphere
+    // when one lies between (RoomAggroSkirtPoint) — else straight at `target`.
+    // Issues the MoveTo at `prio` and returns own-the-tick semantics (true while
+    // a move was issued / is in flight). For drivers that only WALK with no
+    // engage handshake (the pull-idle room-clear branch); EngageDirect consumers
+    // get the skirt for free via EngageDirect itself.
+    bool MoveToSkirtingRoomAggro(Unit* target, MovementPriority prio);
 };
 
 class DungeonClearAdvanceAction : public MovementAction

@@ -1118,6 +1118,28 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
 
     if (distance > attackRange)
     {
+        // Room-aggro skirt: if a flagged boss's aggro sphere sits between us and
+        // the target, detour AROUND it first instead of bee-lining through it and
+        // waking the whole room mid-clear (the SM Cathedral / Mograine failure).
+        // RoomAggroSkirtPoint is a no-op (nullopt) outside an active room clear, so
+        // ordinary corridor engages keep their straight line. The detour leg is
+        // NORMAL priority (combat may interrupt — we're not committed to a pull
+        // yet) and is consumed each tick; the orbit emerges from per-tick re-aiming
+        // and ends the moment the direct line clears. A detour that can't be pathed
+        // falls through to the straight approach rather than freezing the clear.
+        if (std::optional<Position> wp = RoomAggroSkirtPoint(target))
+        {
+            bool const moved = MoveTo(bot->GetMapId(), wp->GetPositionX(),
+                                      wp->GetPositionY(), wp->GetPositionZ(),
+                                      /*idle*/ false, /*react*/ false,
+                                      /*normal_only*/ false, /*exact_waypoint*/ false,
+                                      MovementPriority::MOVEMENT_NORMAL);
+            if (moved || bot->isMoving() ||
+                IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+                return true;
+            // else: detour unwalkable — fall through to the direct approach.
+        }
+
         // Optional: try a single class pull-spell opener before walking in.
         // Fire-and-forget — if the cast fails (out of range, on cooldown,
         // silenced) we just fall through to the walk; ResolvePullSpell already
@@ -1210,6 +1232,71 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
     botAI->ChangeEngine(BOT_STATE_COMBAT);
     botAI->SetNextCheckDelay(sPlayerbotAIConfig.reactDelay);
     return true;
+}
+
+std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* target)
+{
+    if (!target)
+        return std::nullopt;
+
+    // Only skirt while a room-aggro clear is genuinely active (flagged boss, room
+    // trash remaining, tank at the boss room). Outside that, ordinary corridor
+    // engages keep their direct line. The chord/sphere test below would also
+    // no-op far from the boss, but the gate keeps the live-boss lookup off the
+    // hot path for every normal walk-in.
+    if (!DcTargeting::IsRoomClearActive(bot, context))
+        return std::nullopt;
+
+    std::optional<DungeonBossInfo> next =
+        AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    if (!next.has_value())
+        return std::nullopt;
+
+    Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
+    if (!boss)
+        return std::nullopt;
+
+    // Same sphere sizing as the room-trash value's exclusion: the boss's real
+    // aggro range + both reaches + the aggro margin + the extra path padding.
+    float const safeRadius = boss->GetAggroRange(bot) +
+                             bot->GetCombatReach() + boss->GetCombatReach() +
+                             DcSettings::GetFloat(bot, "AggroRangeMargin") +
+                             DcSettings::GetFloat(bot, "RoomAggroPathPadding");
+
+    std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
+        bot, boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ(),
+        safeRadius, target);
+    if (wp)
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] room-clear: skirting {}'s aggro sphere (r={:.1f}) -> "
+                  "detour ({:.1f}, {:.1f}) before approaching {}",
+                  bot->GetName(), boss->GetName(), safeRadius,
+                  wp->GetPositionX(), wp->GetPositionY(), target->GetName());
+    return wp;
+}
+
+bool DungeonClearEngageActionBase::MoveToSkirtingRoomAggro(Unit* target,
+                                                           MovementPriority prio)
+{
+    if (!target)
+        return false;
+
+    float dx = target->GetPositionX();
+    float dy = target->GetPositionY();
+    float dz = target->GetPositionZ();
+    if (std::optional<Position> wp = RoomAggroSkirtPoint(target))
+    {
+        dx = wp->GetPositionX();
+        dy = wp->GetPositionY();
+        dz = wp->GetPositionZ();
+    }
+
+    bool const moved = MoveTo(target->GetMapId(), dx, dy, dz,
+                              /*idle*/ false, /*react*/ false,
+                              /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    // Own the tick while the move is in flight (a duplicate-move returns false but
+    // the bot is still gliding) — mirrors EngageDirect's walk-branch semantics.
+    return moved || bot->isMoving() || IsWaitingForLastMove(prio);
 }
 
 // At the boss (close, on its floor) AND no anchored intermediate hops remain
@@ -2699,48 +2786,12 @@ bool DcRunEventAction::Execute(Event /*event*/)
         StopActiveSplineGlide(bot);
         SetPhase(context, "room clear");
 
-        // Skirt the boss's aggro sphere. A straight approach to a pack on the far
-        // side of a centre-of-room boss (Mograine) cuts through his aggro range
-        // and wakes the whole room mid-clear. The room-trash value excludes mobs
-        // INSIDE the sphere, but not the PATH across it — so before engaging,
-        // detour AROUND the sphere if the direct line to the target clips it.
-        // Walk to the detour waypoint and consume the tick; engage directly once
-        // the line is clear (AggroSafeApproachPoint returns nullopt). The boss is
-        // the next dungeon boss (the room-aggro condition only fires for one).
-        std::optional<DungeonBossInfo> next =
-            AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
-        if (next.has_value())
-        {
-            if (Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry))
-            {
-                float const safeRadius = boss->GetAggroRange(bot) +
-                                         bot->GetCombatReach() + boss->GetCombatReach() +
-                                         DcSettings::GetFloat(bot, "AggroRangeMargin") +
-                                         DcSettings::GetFloat(bot, "RoomAggroPathPadding");
-                if (std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
-                        bot, boss->GetPositionX(), boss->GetPositionY(),
-                        boss->GetPositionZ(), safeRadius, trash))
-                {
-                    LOG_DEBUG("playerbots.dungeonclear",
-                              "[DC:{}] room-clear: skirting {}'s aggro sphere "
-                              "(r={:.1f}) -> detour ({:.1f}, {:.1f}) before pulling {}",
-                              bot->GetName(), boss->GetName(), safeRadius,
-                              wp->GetPositionX(), wp->GetPositionY(), trash->GetName());
-                    bool const moved = MoveTo(bot->GetMapId(), wp->GetPositionX(),
-                                              wp->GetPositionY(), wp->GetPositionZ(),
-                                              /*idle*/ false, /*react*/ false,
-                                              /*normal_only*/ false, /*exact_waypoint*/ false,
-                                              MovementPriority::MOVEMENT_NORMAL);
-                    // Consume the tick while the detour glide is in flight (a
-                    // duplicate-move returns false but the bot is still moving). Only
-                    // a genuine "couldn't path the detour AND not moving" falls
-                    // through to the direct engage as a last resort.
-                    if (moved || bot->isMoving())
-                        return true;
-                }
-            }
-        }
-
+        // Engage the nearest room trash. EngageDirect's walk-in skirts the boss's
+        // aggro sphere on its own (RoomAggroSkirtPoint) — a straight approach to a
+        // pack on the far side of a centre-of-room boss (Mograine) would cut
+        // through his aggro range and wake the whole room mid-clear. The room-trash
+        // value excludes mobs INSIDE the sphere; the skirt handles the PATH across
+        // it. Combat then takes over and the assist-camp rungs bring the followers.
         return EngageDirect(trash);
     }
 
@@ -3630,11 +3681,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                                          camp.GetExactDist2d(trash))
                             camp = *ahead;
                     }
-                    MoveTo(trash->GetMapId(), trash->GetPositionX(),
-                           trash->GetPositionY(), trash->GetPositionZ(),
-                           /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                           /*exact_waypoint*/ false,
-                           MovementPriority::MOVEMENT_NORMAL);
+                    // Walk to the room trash, skirting the boss's aggro sphere if
+                    // the direct line clips it (RoomAggroSkirtPoint) — the same
+                    // detour EngageDirect applies, so the pull-idle approach can't
+                    // wake the boss either.
+                    MoveToSkirtingRoomAggro(trash, MovementPriority::MOVEMENT_NORMAL);
                     DC_PULL_TRACE("[DC:{}] pull idle (room-clear): closing on room "
                                   "trash {} at {:.1f}yd (commit {:.1f})",
                                   bot->GetName(), trash->GetGUID().ToString(),

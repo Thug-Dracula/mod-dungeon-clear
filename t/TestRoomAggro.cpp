@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 
 // --- Find -----------------------------------------------------------------
 
@@ -76,4 +77,60 @@ TEST(RoomAggroRegistryTest, RoomTrashNonMemberExcluded)
     RoomAggroBoss boss{557, 18341, 70.0f, {18309}};
     // In range and outside the sphere, but not on the whitelist.
     EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(boss, 99999, 30.0f, 12.0f));
+}
+
+// --- NeedsRoomAggroSkirt (the skirt chooser) ------------------------------
+//
+// Boss centred at the origin, aggro sphere radius 10. The bot approaches a
+// target and we ask whether the straight 2D chord clips the sphere.
+
+TEST(RoomAggroSkirtTest, ChordCrossingSphereNeedsSkirt)
+{
+    // Bot at (-30, 5), target at (30, 5): the chord runs left-to-right just 5yd
+    // above the boss at the origin — well inside the 10yd sphere.
+    EXPECT_TRUE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        -30.0f, 5.0f, 30.0f, 5.0f, 0.0f, 0.0f, 10.0f));
+}
+
+TEST(RoomAggroSkirtTest, ChordClearOfSphereGoesDirect)
+{
+    // Same span but 20yd above the boss: the chord never enters the 10yd sphere.
+    EXPECT_FALSE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        -30.0f, 20.0f, 30.0f, 20.0f, 0.0f, 0.0f, 10.0f));
+}
+
+TEST(RoomAggroSkirtTest, TargetOnNearSideGoesDirect)
+{
+    // Bot and target both well to one side of the boss; the segment's closest
+    // approach to the origin is the target endpoint at 25yd, outside the sphere.
+    EXPECT_FALSE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        -40.0f, 0.0f, -25.0f, 0.0f, 0.0f, 0.0f, 10.0f));
+}
+
+TEST(RoomAggroSkirtTest, BotInsidePaddedSphereStillSkirts)
+{
+    // Recovery case: the bot is standing 4yd from the boss centre, inside the
+    // 10yd sphere. The chord's closest point (the bot endpoint) is within the
+    // radius, so a skirt/exit waypoint is still demanded — never "go direct".
+    EXPECT_TRUE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        4.0f, 0.0f, 30.0f, 0.0f, 0.0f, 0.0f, 10.0f));
+}
+
+TEST(RoomAggroSkirtTest, DegenerateZeroLengthChord)
+{
+    // Bot and target coincide far from the boss -> the (point) chord is 50yd out,
+    // outside the sphere -> no skirt. (Exercises the A==B segment path.)
+    EXPECT_FALSE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        50.0f, 0.0f, 50.0f, 0.0f, 0.0f, 0.0f, 10.0f));
+    // And the same coincident point sitting ON the boss -> inside -> skirt.
+    EXPECT_TRUE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 10.0f));
+}
+
+TEST(RoomAggroSkirtTest, NonPositiveRadiusNeverSkirts)
+{
+    EXPECT_FALSE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        -30.0f, 0.0f, 30.0f, 0.0f, 0.0f, 0.0f, 0.0f));
+    EXPECT_FALSE(DcEngageGeometry::NeedsRoomAggroSkirt(
+        -30.0f, 0.0f, 30.0f, 0.0f, 0.0f, 0.0f, -5.0f));
 }
