@@ -3367,6 +3367,53 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // gets permanently stranded.
     }
 
+    // Room-aggro skirt for followers. While the leader clears a room before a boss
+    // whose engage drags the WHOLE room into combat, the tank routes its OWN
+    // approach AROUND the boss's aggro sphere (RoomAggroSkirtPoint). A follower
+    // close-following the tank, though, makes a STRAIGHT line to it — and if the
+    // tank is on the far side of the sphere (or just walked around it), that line
+    // cuts through the aggro range and wakes the boss even though the tank dodged
+    // it: the reported failure. So when the direct line to the tank clips the
+    // sphere, walk the follower around it on the same short-arc detour the tank
+    // uses (AggroSafeApproachPoint with the TANK as the move target), and revert to
+    // the normal follow the instant a straight shot at the tank is clear. Skipped
+    // entirely outside an active room clear (the lookup is a cheap no-op). The
+    // dynamic scout-lag branch above already keeps the party on the tank's safe
+    // breadcrumb trail in pull mode, so this only governs the tight close-follow.
+    {
+        Position bossCenter;
+        float safeRadius = 0.0f;
+        if (DcLeaderSignal::GetLeaderRoomAggroSphere(bot, bossCenter, safeRadius) &&
+            DcEngageGeometry::NeedsRoomAggroSkirt(
+                bot->GetPositionX(), bot->GetPositionY(),
+                tank->GetPositionX(), tank->GetPositionY(),
+                bossCenter.GetPositionX(), bossCenter.GetPositionY(), safeRadius))
+        {
+            if (std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
+                    bot, bossCenter.GetPositionX(), bossCenter.GetPositionY(),
+                    bossCenter.GetPositionZ(), safeRadius, tank))
+            {
+                // Keep the teardown/orphan-reaper bookkeeping live so a leftover
+                // continuous MoveFollow is still cancelled when the DC tank goes
+                // away; the point-move below supersedes the follow generator (same
+                // as the scout-lag trail branch above — no explicit Stop needed).
+                followedTank = tank->GetGUID();
+                DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+                bool const moved = DcMoveTo(bot->GetMapId(), wp->GetPositionX(),
+                                          wp->GetPositionY(), wp->GetPositionZ(),
+                                          false, false, /*normal_only=*/false);
+                if (moved || bot->isMoving())
+                {
+                    DC_PULL_DEBUG("[DC:{}] follow-tank: skirting room-aggro sphere "
+                                  "(r={:.1f}) -> detour ({:.1f}, {:.1f})",
+                                  bot->GetName(), safeRadius,
+                                  wp->GetPositionX(), wp->GetPositionY());
+                    return true;
+                }
+            }
+        }
+    }
+
     // Tighter cluster than default. Keeps followers in healer LOS and out
     // of mob aggro-radius arcs during the advance. Default followDistance
     // (~10yd) had them strung out by the time the tank engaged.
