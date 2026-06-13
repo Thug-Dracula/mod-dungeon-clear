@@ -12,6 +12,16 @@ env:
   CORE_REF: Playerbot
   PLAYERBOTS_REPO: mod-playerbots/mod-playerbots
   PLAYERBOTS_REF: master
+  # ccache is the whole game: a warm cache turns the ~1h cold build into mostly
+  # cache hits. Pin CCACHE_DIR so it matches the cache action's path exactly
+  # (ccache 4.x on ubuntu-22.04 otherwise defaults to ~/.cache/ccache, which is
+  # why the previous run cached nothing). BASEDIR rewrites absolute paths for
+  # content hashing so hits survive a fresh checkout; content compilercheck keeps
+  # hits stable across runner image bumps.
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: "2G"
+  CCACHE_COMPILERCHECK: content
 
 on:
   push:
@@ -56,16 +66,21 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get -y install ccache clang cmake make build-essential \
+          sudo apt-get -y install ccache mold clang cmake make build-essential \
             libmysqlclient-dev libssl-dev libbz2-dev libreadline-dev \
             libncurses-dev libboost-all-dev google-perftools
 
+      # Unique key per run so the cache ALWAYS saves (actions/cache skips the save
+      # on an exact-key hit); restore-keys fall back to the most recent cache for
+      # this branch, then any branch. This is what keeps the cache fresh as code
+      # changes instead of freezing after the first save.
       - name: ccache
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: dc-tests-ccache:${{ env.CORE_REF }}:${{ github.ref_name }}
+          path: ${{ github.workspace }}/.ccache
+          key: dc-tests-ccache:${{ env.CORE_REF }}:${{ github.ref_name }}:${{ github.run_id }}
           restore-keys: |
+            dc-tests-ccache:${{ env.CORE_REF }}:${{ github.ref_name }}:
             dc-tests-ccache:${{ env.CORE_REF }}:
             dc-tests-ccache:
 
@@ -90,10 +105,18 @@ jobs:
             -DSCRIPTS=static -DMODULES=static \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=mold" \
             -DNOPCH=1
 
       - name: Build dungeon_clear_tests
-        run: cmake --build build --target dungeon_clear_tests -j"$(nproc)"
+        run: |
+          ccache --zero-stats
+          cmake --build build --target dungeon_clear_tests -j"$(nproc)"
+          echo "::group::ccache stats (high hit ratio == warm cache)"
+          ccache --show-stats
+          echo "::endgroup::"
 
       - name: Run suite
         working-directory: build
