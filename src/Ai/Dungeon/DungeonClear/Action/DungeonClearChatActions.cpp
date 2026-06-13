@@ -646,6 +646,15 @@ bool DcBossesAction::Execute(Event event)
     // off-path event uses index 99 so it sorts last.
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
     {
+        // A room-aggro pre-clear gates one specific boss and is meaningful only
+        // in that boss's wing. On a split map (Scarlet Monastery) the boss list
+        // above is wing-filtered, so haveRoomAggroIndex is true only when the
+        // current wing actually holds a room-aggro boss. If it doesn't, this
+        // event belongs to another wing — hide it, or "Clear the Cathedral"
+        // would surface in the Armory, Library and Graveyard too.
+        if (DungeonEventRegistry::IsRoomAggroPreClear(*ev) && !haveRoomAggroIndex)
+            continue;
+
         uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
         std::string const evStatus =
             cleared.count(latchKey) ? "dead"
