@@ -172,6 +172,19 @@ inline constexpr DcSettingDef kDcSettings[] =
     // 0 disables the bypass (always honour the full lead). Healers always bypass.
     { "PullThreatLeadPanicHp",  DcType::Float, 60,   0, 100,  true  },
 
+    // Hysteresis (seconds) on the cross-bot "is the party fighting?" gate that
+    // drives BOTH the dynamic scout-lag suppression and the fight-assist arm. A
+    // bare leader->IsInCombat() read is a point-in-time check, and combat starts
+    // OR drops on ticks we do not control (a wandering mob aggros the tank between
+    // pulls; a pulled pack leashes out of LOS for a tick; the tank tags-and-
+    // repositions) — a TOCTOU race. Without hysteresis a single false reading
+    // snaps the whole party from "collapse and help" back to the far scout-lag
+    // ring and out of the fight, then back, while the tank fights at low HP. Once
+    // any party member is SEEN in combat the engaged verdict is held for this many
+    // seconds, so a lone stale/false reading can never drop the party out of help
+    // mode. 0 disables the latch (bare instantaneous check — not recommended).
+    { "PartyCombatLatch",       DcType::Float, 3,    0,  15,  true  },
+
     // Seconds a follower's pet stays passive AFTER its owner is released (on top
     // of PullPlayerReleaseDelay). Releasing pet and owner in lockstep lets the
     // pet charge in and pull aggro off the tank before he's settled, botching the

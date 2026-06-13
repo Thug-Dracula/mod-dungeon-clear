@@ -214,6 +214,59 @@ namespace
         }
         return false;
     }
+
+    // Hysteresis latch over AnyGroupMemberInCombat, keyed by leader GUID. See the
+    // PartyCombatLatch registry note: a bare in-combat read is a TOCTOU gate —
+    // combat begins/drops on ticks we don't control, and a single stale/false
+    // reading must not flip the party out of "help" mode. Once ANY member is seen
+    // in combat we stamp the leader's GUID and report engaged for graceMs after
+    // the last positive observation, so a lone false reading (or a one-tick combat
+    // gap from a leashing/repositioning pack) is absorbed instead of snapping the
+    // party back to the far scout-lag ring. The latch is fed every tick the gate
+    // is consulted: every follower evaluates the scout-lag / assist triggers each
+    // tick, so as long as one is alive the leader's combat is observed promptly.
+    std::map<ObjectGuid, uint32> g_partyEngagedLatch;
+    std::mutex g_partyEngagedMutex;
+
+    bool IsPartyEngagedLatched(Player* leader, uint32 graceMs)
+    {
+        if (!leader)
+            return false;
+        // graceMs == 0 -> latch disabled, fall back to the bare instantaneous read.
+        bool const live = AnyGroupMemberInCombat(leader);
+        if (graceMs == 0)
+            return live;
+
+        ObjectGuid const guid = leader->GetGUID();
+        uint32 const now = getMSTime();
+        std::lock_guard<std::mutex> lock(g_partyEngagedMutex);
+        if (live)
+        {
+            g_partyEngagedLatch[guid] = now != 0 ? now : 1u;
+            return true;
+        }
+        auto it = g_partyEngagedLatch.find(guid);
+        if (it == g_partyEngagedLatch.end())
+            return false;
+        // Sweep the (bounded) table the same lazy way g_leaderCombatSince does.
+        if (g_partyEngagedLatch.size() > LEADER_COMBAT_SWEEP_SIZE)
+        {
+            for (auto i = g_partyEngagedLatch.begin(); i != g_partyEngagedLatch.end();)
+            {
+                if (getMSTimeDiff(i->second, now) >= graceMs)
+                    i = g_partyEngagedLatch.erase(i);
+                else
+                    ++i;
+            }
+            it = g_partyEngagedLatch.find(guid);
+            if (it == g_partyEngagedLatch.end())
+                return false;
+        }
+        if (getMSTimeDiff(it->second, now) < graceMs)
+            return true;
+        g_partyEngagedLatch.erase(it);
+        return false;
+    }
 }
 
 Player* DcLeaderSignal::FindLeaderTank(Player* reference)
@@ -485,7 +538,14 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
         // suppressed party parked at lag range watching the tank die. If anyone in
         // the group is fighting, drive the out-of-combat members in.
         bool const leaderInCombat = leader->IsInCombat();
-        bool const groupInCombat = AnyGroupMemberInCombat(leader);
+        // Latched: a bare AnyGroupMemberInCombat read is a TOCTOU gate (combat
+        // starts/drops on ticks we don't control). The hysteresis keeps the assist
+        // ARMED for PartyCombatLatch seconds after the last positive combat read so
+        // a one-tick gap (leash / reposition / stale cross-bot read) can't drop the
+        // party back to passive mid-fight. See IsPartyEngagedLatched.
+        uint32 const latchMs =
+            uint32(DcSettings::GetFloat(leader, "PartyCombatLatch") * 1000.0f);
+        bool const groupInCombat = IsPartyEngagedLatched(leader, latchMs);
         // Diagnostic for the spiral death: fires only in the exact divergence we
         // are fixing — a party fight is live but the elected leader's own flag reads
         // out of combat. With the old leader-only gate this returned false here and
@@ -516,6 +576,53 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
     return DungeonClearMath::ShouldReleaseFollower(
         PlayerbotAI::IsHeal(bot), combatSince, getMSTime(), leadMs,
         leader->GetHealthPct(), panicHp);
+}
+bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
+{
+    // The leader-side mirror of IsLeaderFightAssistWanted. The followers' gate
+    // bails for the leader (leader == bot), so when a follower aggros a pack the
+    // tank never saw — around a sharp corner, or after the tank called the pull
+    // done and walked off toward the next objective — the tank has no behavior to
+    // rejoin: it just freezes on the Advance rest gate while the party fights. This
+    // drives it back onto the fight to take threat.
+    if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+
+    // Leader only. A follower's assist is owned by IsLeaderFightAssistWanted.
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader != bot)
+        return false;
+
+    PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+    if (!botAI)
+        return false;
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        return false;
+
+    // A pull maneuver that is actively holding the party at camp / dragging owns
+    // the tank's positioning — don't divert it mid-drag. (At phase Idle/Engage the
+    // tank is free to rejoin a stray fight, exactly as the followers' gate allows.)
+    DcPullContext const& pull =
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
+        return false;
+
+    // The tank already sees something it can engage — let its own engage-trash /
+    // engage-boss scan (higher relevance) take it; this path is only for the fight
+    // the tank CAN'T see. "attackers" is the stock LOS-filtered list, so it is
+    // empty exactly while the pack is out of sight and non-empty the moment the
+    // tank rounds the corner, at which point this stands down.
+    if (!ctx->GetValue<GuidVector>("attackers")->Get().empty())
+        return false;
+
+    // A groupmate is fighting but the tank is not. Latched (PartyCombatLatch) on
+    // the SAME hysteresis the followers' assist and the scout-lag gate use, so a
+    // one-tick combat gap can't bounce the tank between assisting and advancing.
+    uint32 const latchMs =
+        uint32(DcSettings::GetFloat(leader, "PartyCombatLatch") * 1000.0f);
+    return IsPartyEngagedLatched(leader, latchMs);
 }
 bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
 {
@@ -550,7 +657,17 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     // and keying the trail on the leader alone left the party lagging at a
     // LOS-blocked range on the spiral while the tank fought and died. If anyone in
     // the party is fighting, drop the trail so the assist/regroup can collapse it.
-    if (AnyGroupMemberInCombat(leader))
+    //
+    // Latched (PartyCombatLatch): the bare in-combat read here and the assist's
+    // gate are the SAME TOCTOU race seen from opposite sides — combat starts on a
+    // tick we don't control, and a single false reading would resume the far lag
+    // mid-fight, fighting the assist that wants to collapse the party. Holding the
+    // engaged verdict for the grace window keeps both decisions consistent: the
+    // party will not run BACK out to the scout-lag ring until the leader has been
+    // continuously out of combat for the whole window. See IsPartyEngagedLatched.
+    uint32 const latchMs =
+        uint32(DcSettings::GetFloat(leader, "PartyCombatLatch") * 1000.0f);
+    if (IsPartyEngagedLatched(leader, latchMs))
         return false;
     DcPullContext const& pull =
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();

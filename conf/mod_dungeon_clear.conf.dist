@@ -624,6 +624,25 @@ DungeonClear.PullPetReleaseDelay = 2.5
 DungeonClear.PullThreatLeadPanicHp = 60
 
 #
+#    DungeonClear.PartyCombatLatch
+#        Hysteresis (seconds) on the cross-bot "is the party fighting?" gate that
+#        drives BOTH the dynamic scout-lag suppression and the fight-assist arm. A
+#        bare leader-in-combat read is a point-in-time check, and combat begins or
+#        drops on ticks outside our control (a wandering mob aggros the tank between
+#        pulls; a pulled pack leashes out of LOS for a tick; the tank tags and
+#        repositions) — a TOCTOU race. Without hysteresis a single false reading
+#        snaps the whole party from "collapse and help" back to the far scout-lag
+#        ring and out of the fight, then back, while the tank fights at low HP. Once
+#        any party member is SEEN in combat the engaged verdict is held for this many
+#        seconds, so a lone stale reading cannot drop the party out of help mode.
+#        Set to 0 to disable the latch (bare instantaneous check — not recommended).
+#
+#        Default: 3
+#
+
+DungeonClear.PartyCombatLatch = 3
+
+#
 #    DungeonClear.PullPlantEnable
 #        Turn-and-plant on the drag-back. A human tank dragging a pulled pack to camp
 #        doesn't sprint the WHOLE leg back-turned: once the pack is glued to it and
