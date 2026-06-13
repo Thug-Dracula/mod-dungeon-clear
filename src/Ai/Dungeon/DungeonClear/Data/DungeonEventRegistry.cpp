@@ -7,6 +7,8 @@
 
 #include <utility>
 
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+
 // --- EventBuilder ---------------------------------------------------------
 
 EventBuilder::EventBuilder(uint32 mapId, uint32 id, std::string name)
@@ -131,8 +133,14 @@ EventBuilder& EventBuilder::Custom(uint32 hookId)
 }
 
 // --- The event table ------------------------------------------------------
-// One block per dungeon. Event ids are per-map and are referenced from the
-// matching travel-objective anchor's DungeonBossInfo::eventId (BossRosterRegistry).
+// The rows themselves live one-file-per-dungeon under Data/Events/, each
+// exposing a Register<Dungeon>Events appender (declared in DungeonEventTables.h).
+// This aggregator calls every appender to assemble the table — the explicit
+// calls are what keep each per-dungeon TU linked into the module static lib (a
+// self-registering static initializer would be dropped). Add a dungeon by
+// creating its file + appender and adding one call below. Event ids are per-map
+// and are referenced from the matching travel-objective anchor's
+// DungeonBossInfo::eventId (BossRosterRegistry).
 
 namespace
 {
@@ -141,145 +149,13 @@ namespace
         static std::vector<DungeonEvent> const kEvents = []
         {
             std::vector<DungeonEvent> t;
-
-            // --- Sunken Temple (map 109), event 1 --------------------------
-            // The Altar of Hakkar objective: the tank leads the party to the
-            // central altar (the anchor handles travel), then this event holds
-            // there waiting for the Avatar of Hakkar (8443) to manifest from the
-            // Atal'ai sacrifice. Optional: whether the summon triggers off the
-            // trash the bots kill is unverified, so on timeout the event SKIPS
-            // (the clear advances) rather than stalling forever — matching the
-            // roster note that you may have to `dc skip` it. 45s tolerates a slow
-            // approach + the scripted sequence.
-            t.push_back(EventBuilder(109, 1, "Altar of Hakkar (Avatar event)")
-                            .Anchored(7)
-                            .WaitForSpawn(8443, /*wantAlive*/ true, /*timeout*/ 45000)
-                            .Optional()
-                            .Build());
-
-            // --- ZulFarrak (map 209), event 1 ------------------------------
-            // Temple-summit (Sandfury prisoner) event: reaching the summit fires
-            // the scripted event that opens Chief Ukorz's door. The anchor's
-            // travel + arrival already drives that today; this event row migrates
-            // the objective onto the framework with NO extra steps, so behaviour
-            // is unchanged (arrive => complete). TODO(milestone 2): once the
-            // prisoner-release lever / gossip is verified, add UseGO/Gossip +
-            // WaitForGOState here so the door open is explicit rather than
-            // incidental.
-            t.push_back(EventBuilder(209, 1, "Temple Summit (Executioner event)")
-                            .Anchored(7)
-                            .Build());
-
-            // --- Shadowfang Keep (map 33) — CONDITIONAL, FACTION-SPECIFIC ---
-            // The Courtyard Door (GO 18895) gates the keep past the entry rooms
-            // and is opened only by a freed prisoner, not by the party. The real
-            // mechanic (verified from the SFK SmartAI, 2026-06-11) is faction-
-            // specific — each side has its OWN lever + prisoner:
-            //   Alliance: pull lever 18901 (opens cell gate 18936) -> gossip
-            //             Sorcerer Ashcrombe (3850, menu 21213) option 0.
-            //   Horde:    pull lever 18900 (opens cell gate 18934) -> gossip
-            //             Deathstalker Adamant (3849, menu 21214) option 0.
-            // Picking the option fires the prisoner's GOSSIP_SELECT SmartAI: he
-            // walks to the courtyard door and, ~35s later (5s + 30s waypoint
-            // pauses), opens it. Two events, one per faction, each gated by a
-            // team-aware condition (1 = Alliance, 2 = Horde) so the right lever +
-            // prisoner drive; only one is ever due for a given party. The step
-            // list is lever -> gossip -> wait-for-door (the earlier version
-            // skipped the lever, so the bot could never reach the caged prisoner
-            // and the gossip was a no-op). Relevance 31 (DungeonClearEventDue)
-            // preempts the boss pull / door-blocked stall. Optional so a
-            // non-firing script degrades to the normal door-blocked stall.
-            // TODO(live-verify): per faction, lever opens the cell, gossip sends
-            // the prisoner, courtyard door opens within the 60s budget.
-            // After freeing the prisoner, walk up to the courtyard door and wait
-            // THERE (not in the cell) for it to open — the closed door stops the
-            // approach a few yards short, so the tank is parked ready to walk
-            // through the instant the prisoner opens it.
-            t.push_back(EventBuilder(33, 1, "Free Ashcrombe (Courtyard Door, Alliance)")
-                            .Conditional(1)
-                            .MoveTo(-248.0f, 2122.0f, 81.3f, /*radius*/ 6.0f)
-                            .UseGO(/*lever*/ 18901, /*searchRadius*/ 14.0f)
-                            .Gossip(/*Sorcerer Ashcrombe*/ 3850, /*option*/ 0, /*searchRadius*/ 16.0f)
-                            .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
-                            .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
-                                            /*timeout*/ 60000)
-                            .Optional()
-                            .Build());
-
-            t.push_back(EventBuilder(33, 2, "Free Adamant (Courtyard Door, Horde)")
-                            .Conditional(2)
-                            .MoveTo(-251.0f, 2115.0f, 81.3f, /*radius*/ 6.0f)
-                            .UseGO(/*lever*/ 18900, /*searchRadius*/ 14.0f)
-                            .Gossip(/*Deathstalker Adamant*/ 3849, /*option*/ 0, /*searchRadius*/ 16.0f)
-                            .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
-                            .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
-                                            /*timeout*/ 60000)
-                            .Optional()
-                            .Build());
-
-            // --- Scarlet Monastery Cathedral (map 189) — ROOM-AGGRO PRE-CLEAR -
-            // Highlord Mograine's engage fires a grid AttackStart that drags the
-            // WHOLE cathedral into combat (CATHEDRAL_PULL_RANGE 80); pulling him
-            // before the room is clear wipes the party. Milestone 3 re-expresses
-            // that pre-clear (formerly the standalone RoomAggroRegistry path) as a
-            // CONDITIONAL room-aggro event: condition 3 reads DUE while the
-            // room-trash value (the RoomAggroRegistry geometry around the LIVE
-            // boss, minus the boss aggro sphere / unreachable / door-blocked, with
-            // the RoomClearTimeout give-up valve) still has anything to clear, and
-            // the lone KillCreature(0 = room-trash mode) step gates the boss pull
-            // until it is empty. DcRunEventAction drives the actual engage
-            // (nearest room trash first); the spatial logic stays in
-            // DungeonClearRoomTrashValue. Required (hold the pull until clear or
-            // the value gives up) and NEVER latched — the same row re-fires for
-            // each room-aggro boss on the map (Mograine, then Whitemane). This is
-            // the SM Cathedral test bed; other RoomAggroRegistry maps migrate by
-            // adding one more row each (and keep the legacy path until they do).
-            t.push_back(EventBuilder(189, 1, "Clear the Cathedral (room-aggro pre-clear)")
-                            .Conditional(3)
-                            .KillCreature(/*room trash*/ 0)
-                            .Build());
-
-            // --- Razorfen Downs (map 129) — the GONG, CONDITIONAL+REPEATABLE --
-            // The first thing a party does in RFD: ring the gong (GO 148917) by
-            // the entrance to summon Tuten'kash. The encounter is staged — each
-            // ring summons a wave (Tomb Fiends, then Tomb Reavers) and after the
-            // THIRD ring Tuten'kash himself spawns. The gong's SmartAI disables
-            // it (GO_FLAG_NOT_SELECTABLE) the instant it is rung and re-enables it
-            // only once the wave's deaths tick its kill-counter — so the gong is
-            // self-pacing: a bot just rings it whenever it is selectable again,
-            // and the server decides when the next wave (or the boss) appears.
-            //
-            // Navigation is done by Tuten'kash's BOSS anchor, which sits ON the
-            // gong (BossRosterRegistry): the tank travels to the gong exactly as it
-            // would to any boss — the long-range pathfinder, the dynamic-pull
-            // camps and the combat handling all drive it, which a bespoke event
-            // move cannot (an event-driven long haul fights the pull camp and never
-            // resets it — the live failure that sank the earlier LongMoveTo). The
-            // event therefore needs NO movement of its own; it only rings.
-            //
-            // The gong is rung in place. Condition 4 gates the ring on the tank
-            // being AT the gong (within range), the gong being selectable, and
-            // Tuten'kash absent — so it fires only once boss-nav has delivered the
-            // tank, preempting the boss-not-present stall (relevance 31 > 20). The
-            // anchor and the ring target are the SAME point (the gong), so there is
-            // no tug-of-war between boss-nav and the event.
-            //
-            // REPEATABLE so it re-fires for each of the three rings instead of
-            // latching after the first; the gong's own selectable flag (condition
-            // 4) paces the rings and Tuten'kash going live ends the loop. When he
-            // spawns (at his summon spot ~80yd off) the condition goes false and
-            // the normal boss flow engages him via live-boss tracking. Rendered
-            // first in the panel (PanelBeforeBoss 7355) since it precedes boss #0.
-            t.push_back(EventBuilder(129, 1, "Ring the Gong")
-                            .Conditional(4)
-                            .Repeatable()
-                            .PanelBeforeBoss(/*Tuten'kash*/ 7355)
-                            // searchRadius must cover condition 4's ring range
-                            // (30yd) so a tank parked at the far edge still finds
-                            // the gong and HopTos the last yards to Use() it.
-                            .UseGO(/*gong*/ 148917, /*searchRadius*/ 35.0f)
-                            .Build());
-
+            // Order here is table-scan order only; lookups key on mapId + id, so
+            // it never affects behaviour.
+            RegisterShadowfangKeepEvents(t);
+            RegisterScarletMonasteryEvents(t);
+            RegisterRazorfenDownsEvents(t);
+            RegisterSunkenTempleEvents(t);
+            RegisterZulFarrakEvents(t);
             return t;
         }();
         return kEvents;

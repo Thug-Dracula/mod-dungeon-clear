@@ -5,165 +5,28 @@
 
 #include "EventConditionRegistry.h"
 
-#include <unordered_map>
-
-#include "Creature.h"
-#include "GameObject.h"
-#include "GameObjectData.h"
-#include "InstanceScript.h"
-#include "Log.h"
-#include "Player.h"
-#include "Playerbots.h"
-#include "SharedDefines.h"
-#include "Timer.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
 namespace
 {
-    // --- Shadowfang Keep: courtyard door (conditions 1 = Alliance, 2 = Horde) -
-    // The Courtyard Door (GO 18895) blocks progression past the entry rooms and
-    // is opened not by the party but by a freed prisoner. The mechanic is
-    // FACTION-SPECIFIC: Alliance pulls the lever by Sorcerer Ashcrombe's cell
-    // (3850) and gossips him; Horde pulls a different lever by Deathstalker
-    // Adamant's cell (3849) and gossips him. Both NPCs spawn in AC, but each
-    // party uses its own — so the condition is gated on team so the right event
-    // (right lever + right prisoner) drives. DUE while the door is still shut
-    // (GO_STATE_READY) AND the faction's prisoner is alive to free; once the
-    // door opens this reads false and the event latches done.
-    constexpr uint32 SFK_COURTYARD_DOOR = 18895;
-    constexpr uint32 SFK_PRISONER_ASHCROMBE = 3850;  // Alliance
-    constexpr uint32 SFK_PRISONER_ADAMANT = 3849;    // Horde
-    // Rethilgore (3914) is the first boss and stands AMONG the prison cells, so
-    // the courtyard event must wait until he is dead — otherwise the party would
-    // detour to the prison the instant DC is enabled at the zone entrance (the
-    // bug this gate fixes). His grid is co-loaded with the prisoners', so the
-    // prisoner-alive check below guarantees we are not reading a false "dead"
-    // from an unloaded grid.
-    constexpr uint32 SFK_FIRST_BOSS_RETHILGORE = 3914;
-    // Door / prisoner sit near the entry; scan generously so the condition is
-    // true from the moment the party is anywhere in the early keep.
-    constexpr float SFK_SCAN = 200.0f;
-
-    bool SfkCourtyard(Player* bot, TeamId team, uint32 prisonerEntry, char const* who)
+    // conditionId -> predicate. The predicates themselves live alongside the
+    // events they gate, one file per dungeon under Data/Events/ (with shared,
+    // cross-dungeon conditions in SharedConditions.cpp). Each file exposes a
+    // Register<Dungeon>Conditions appender; this aggregator calls every one to
+    // assemble the map. The explicit calls keep each per-dungeon TU linked into
+    // the module static lib (a self-registering static initializer would be
+    // dropped). The id space is documented in DungeonEventTables.h — keep it
+    // collision-free.
+    EventConditionMap const& Conditions()
     {
-        if (bot->GetTeamId() != team)
-            return false;
-
-        GameObject* door = bot->FindNearestGameObject(SFK_COURTYARD_DOOR, SFK_SCAN);
-        Creature* prisoner = bot->FindNearestCreature(prisonerEntry, SFK_SCAN, /*alive*/ true);
-        bool const firstBossDead =
-            DcTargeting::FindLiveCreatureOnMap(bot, SFK_FIRST_BOSS_RETHILGORE) == nullptr;
-
-        // Throttled diagnostic (single-threaded world tick): one line / 5s per
-        // faction so a live run shows WHY the event is or isn't due (door
-        // missing/open, no prisoner, first boss still up). Lands in DungeonClear.log.
-        static uint32 lastLog = 0;
-        uint32 const now = getMSTime();
-        if (getMSTimeDiff(lastLog, now) >= 5000)
+        static EventConditionMap const kConditions = []
         {
-            lastLog = now;
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] SFK courtyard cond ({}): door={} state={} prisoner={} rethilgore={}",
-                      bot->GetName(), who, door ? "found" : "MISSING",
-                      door ? static_cast<int>(door->GetGoState()) : -1,
-                      prisoner ? "alive" : "no", firstBossDead ? "dead" : "ALIVE");
-        }
-
-        if (!firstBossDead)
-            return false;  // wait until the first boss (Rethilgore) is down
-        if (!door || door->GetGoState() != GO_STATE_READY)
-            return false;  // no door found, or already open
-        return prisoner != nullptr;
-    }
-
-    bool SfkCourtyardAlliance(Player* bot, AiObjectContext* /*context*/)
-    {
-        return SfkCourtyard(bot, TEAM_ALLIANCE, SFK_PRISONER_ASHCROMBE, "A");
-    }
-
-    bool SfkCourtyardHorde(Player* bot, AiObjectContext* /*context*/)
-    {
-        return SfkCourtyard(bot, TEAM_HORDE, SFK_PRISONER_ADAMANT, "H");
-    }
-
-    // --- Room-aggro pre-clear (condition 3, milestone 3) ------------------
-    // Generic across EVERY RoomAggroRegistry boss: DUE while the room-trash value
-    // still has anything to clear. That value already encodes all the spatial
-    // logic — next boss is a room-aggro boss, the room radius around the LIVE
-    // boss, the boss-aggro-sphere / unreachable / door-blocked exclusions, and the
-    // RoomClearTimeout give-up valve — so the condition is a thin "is the room
-    // not yet clear?" read and the event only orchestrates "clear before the
-    // pull". Reads false (event not due, boss pull proceeds) the moment the room
-    // is clear or the value gives up. See DungeonClearRoomTrashValue.
-    bool RoomAggroPreClear(Player* /*bot*/, AiObjectContext* context)
-    {
-        if (!context)
-            return false;
-        return !context->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty();
-    }
-
-    // --- Razorfen Downs: the gong (condition 4, repeatable) ----------------
-    // The gong (GO 148917) summons Tuten'kash in three rings, a wave of trash
-    // between each. The gong's SmartAI flips it NOT_SELECTABLE the instant it is
-    // rung and re-enables it only once that wave's deaths tick its kill-counter,
-    // so it paces itself. This condition is the gate for the REPEATABLE "Ring the
-    // Gong" event: DUE while the party should ring again.
-    //
-    // Travel to the gong is NOT the event's job — Tuten'kash's boss anchor sits on
-    // the gong, so the boss navigation (pathfinder + dynamic-pull camps + combat)
-    // delivers the tank there exactly as to any boss. This gate therefore also
-    // requires the tank to already be AT the gong: that way the event fires only
-    // after boss-nav has arrived (preempting the boss-not-present stall to ring),
-    // and never hijacks the long approach with an event-driven move.
-    constexpr uint32 RFD_GONG = 148917;
-    constexpr uint32 RFD_TUTENKASH = 7355;
-    // Tuten'kash is DungeonEncounter bit 0 (the map's first encounter), so his
-    // kill flips bit 0 of the completed-encounter mask — the authoritative "the
-    // gong event is finished" signal even after his corpse despawns.
-    constexpr uint32 RFD_TUTENKASH_BIT = 0;
-    // How close the tank must be to the gong for the ring to fire. Comfortably
-    // larger than the boss engage range so the event takes over the instant
-    // boss-nav has parked the tank at the gong, before the stall escalates.
-    constexpr float RFD_GONG_RING_RANGE = 30.0f;
-
-    bool RfdGong(Player* bot, AiObjectContext* /*context*/)
-    {
-        // Done for good once Tuten'kash is up (the 3rd ring summoned him — let the
-        // boss flow take him) or already killed (his encounter bit is set).
-        if (DcTargeting::FindLiveCreatureOnMap(bot, RFD_TUTENKASH))
-            return false;
-        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
-        if (inst && (inst->GetCompletedEncounterMask() & (1u << RFD_TUTENKASH_BIT)))
-            return false;
-
-        // The gong must exist, be selectable (the previous wave is dead and its
-        // SmartAI re-armed it) and shut. A NOT_SELECTABLE / already-activated gong
-        // means a wave is still up — let combat finish before the next ring.
-        GameObject* gong = bot->FindNearestGameObject(RFD_GONG, 200.0f);
-        if (!gong)
-            return false;
-        if (gong->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE) ||
-            gong->GetGoState() != GO_STATE_READY)
-            return false;
-
-        // Only ring once boss-nav has parked the tank at the gong — otherwise the
-        // event would preempt the boss travel partway and try to drive it itself.
-        if (!bot->IsWithinDist(gong, RFD_GONG_RING_RANGE))
-            return false;
-
-        return true;
-    }
-
-    // conditionId -> predicate. Add a row and reference its id from a Conditional
-    // event's .Conditional(id) in DungeonEventRegistry.
-    std::unordered_map<uint32, EventConditionRegistry::Condition> const& Conditions()
-    {
-        static std::unordered_map<uint32, EventConditionRegistry::Condition> const kConditions = {
-            { 1, &SfkCourtyardAlliance },
-            { 2, &SfkCourtyardHorde },
-            { 3, &RoomAggroPreClear },
-            { 4, &RfdGong },
-        };
+            EventConditionMap m;
+            RegisterSharedEventConditions(m);
+            RegisterShadowfangKeepConditions(m);
+            RegisterRazorfenDownsConditions(m);
+            return m;
+        }();
         return kConditions;
     }
 }
