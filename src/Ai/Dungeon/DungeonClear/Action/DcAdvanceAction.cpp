@@ -696,6 +696,14 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStal
     if (next->kind != DungeonAnchorKind::Boss)
         return Step::Continue;
 
+    // A boss a pending event must SUMMON (e.g. RFD's Tuten'kash via the gong) is
+    // legitimately absent until the event runs — "not in the creature store" is
+    // its normal pre-summon state, so don't paint "Blocked"/stall on it. The gong
+    // event (relevance 31) handles the hold + rings; once the third ring summons
+    // him this returns false and the normal not-present guard applies again.
+    if (DcTargeting::HasPendingSummonEvent(bot, context, next->entry))
+        return Step::Continue;
+
     if (!DcTargeting::IsCreaturePresentOnMap(bot, next->entry))
     {
         // "Not present" only means "not spawned" once we're close enough that

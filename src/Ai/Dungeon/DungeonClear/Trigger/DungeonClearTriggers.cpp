@@ -605,6 +605,14 @@ bool DungeonClearPullTrigger::IsActive()
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
         return false;
+    // Parked at a pending-summon boss (e.g. RFD's gong -> Tuten'kash): do NOT
+    // start a pull. The tank must hold at the anchor to run the event (ring,
+    // fight the wave, ring again); a dynamic pull here latches a distant trash
+    // pack and tows the tank out of the room, and it never returns to finish the
+    // rings. The at-boss stand-down below only covers ~engage range, which the
+    // wave fight pushes the tank past — this holds the wider event radius.
+    if (DcTargeting::IsHoldingForSummonEvent(bot, context, *next))
+        return false;
     // Normally the pull pipeline stands down at the boss (the at-boss engage owns
     // it). The one exception is a room-wide-aggro boss with room trash still up:
     // there the pull pipeline is what clears that room (honouring advanced/dynamic

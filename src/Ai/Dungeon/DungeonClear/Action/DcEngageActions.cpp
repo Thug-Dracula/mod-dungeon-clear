@@ -41,6 +41,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -425,17 +426,31 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
     if (!target)
         return std::nullopt;
 
-    // Only skirt while a room-aggro clear is genuinely active (flagged boss, room
-    // trash remaining, tank at the boss room). Outside that, ordinary corridor
-    // engages keep their direct line. The chord/sphere test below would also
-    // no-op far from the boss, but the gate keeps the live-boss lookup off the
-    // hot path for every normal walk-in.
-    if (!DcTargeting::IsRoomClearActive(bot, context))
-        return std::nullopt;
-
+    // Skirt whenever a room-aggro pre-clear is in progress for the NEXT boss —
+    // independent of whether the tank has reached boss-engage range yet.
+    //
+    // The old gate (IsRoomClearActive) ALSO required IsAtBossEngage, i.e. the
+    // skirt only armed once the tank was already AT the boss's aggro edge. But
+    // the room-aggro pre-clear event engages the nearest trash from far out (its
+    // condition has no distance gate — see EventConditionRegistry::RoomAggroPreClear),
+    // so during the approach EngageDirect ran with the skirt OFF and bee-lined a
+    // straight line that could cut clean through the boss's aggro sphere before
+    // the skirt ever armed. That is the live SM Cathedral failure: the tank walks
+    // into Commander Mograine's aggro range on its way to far-side Scarlet trash.
+    // Gating the skirt on at-boss-engage disabled it during the very approach it
+    // exists to protect.
+    //
+    // Gate instead on "next boss is a room-aggro boss with trash still up". The
+    // chord/sphere test (NeedsRoomAggroSkirt) below no-ops when the straight
+    // approach already clears the sphere, so ordinary far-out corridor walks pay
+    // only a cheap registry + cached-value read and keep their direct line.
     std::optional<DungeonBossInfo> next =
         AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     if (!next.has_value())
+        return std::nullopt;
+    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
+        return std::nullopt;
+    if (AI_VALUE(GuidVector, "dungeon clear room trash remaining").empty())
         return std::nullopt;
 
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
@@ -623,6 +638,12 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     if (!boss)
     {
+        // A boss a pending event must SUMMON (RFD's gong -> Tuten'kash) isn't on
+        // the map until the rings bring him up. Don't stall/"Blocked" — yield and
+        // let the gong event (relevance 31) hold + ring; once summoned this is
+        // non-null and we engage normally.
+        if (DcTargeting::HasPendingSummonEvent(bot, context, next->entry))
+            return false;
         StallDungeonClear(botAI,
             "Can't reach " + next->name + ": not spawned on this map. Use 'dc skip' to move to the next boss.");
         return false;

@@ -54,7 +54,9 @@
 #include "Timer.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -705,6 +707,59 @@ bool DcTargeting::IsCreaturePresentOnMap(Player* bot, uint32 entry)
     }
     return false;
 }
+bool DcTargeting::HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint32 bossEntry)
+{
+    if (!bot || !ctx || !bossEntry)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    auto const& cleared =
+        ctx->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(map->GetId()))
+    {
+        if (ev->panelGatesBossEntry != bossEntry)
+            continue;
+        // Retired (skipped via `dc skip` inserts the latch key into cleared). A
+        // Repeatable summon event is otherwise never latched, so it stays
+        // "pending" for the whole encounter until the boss it gates is live/dead.
+        if (cleared.count(DungeonEventExecutor::ConditionalLatchKey(ev->id)))
+            continue;
+        return true;
+    }
+    return false;
+}
+
+bool DcTargeting::IsHoldingForSummonEvent(Player* bot, AiObjectContext* ctx,
+                                         DungeonBossInfo const& next)
+{
+    // How close to the anchor / boss counts as "committed to the event". Must
+    // comfortably contain the wave-fight spread (RFD's gong summons reach ~55yd)
+    // AND bridge the anchor-to-spawn gap (the gong is ~83yd from Tuten'kash's
+    // summon spot) so the hold stays continuous as the tank closes on him.
+    constexpr float DC_EVENT_BOSS_HOLD_RADIUS = 80.0f;
+
+    if (!bot || !ctx || next.kind != DungeonAnchorKind::Boss)
+        return false;
+    if (!HasPendingSummonEvent(bot, ctx, next.entry))
+        return false;
+
+    // Hold (suppress the dynamic pull) while parked at the gong to ring AND,
+    // crucially, AFTER the boss is summoned while the tank closes to engage it.
+    // Releasing the moment it spawned let the pull grab leftover room trash and
+    // tow the tank away before it reached the (passive) boss — the "sometimes
+    // doesn't aggro" bug. The union of the anchor (gong) and the live-boss radii
+    // covers the whole gong->summon-spot corridor, so the pull never re-arms
+    // mid-encounter. Released once the boss dies: its credit bit flips and
+    // NextDungeonBossValue advances `next` past it (this returns false then).
+    if (bot->GetDistance(next.x, next.y, next.z) <= DC_EVENT_BOSS_HOLD_RADIUS)
+        return true;
+    Creature* live = GetLiveBoss(bot, ctx, next.entry);
+    return live && bot->GetDistance(live->GetPositionX(), live->GetPositionY(),
+                                    live->GetPositionZ()) <= DC_EVENT_BOSS_HOLD_RADIUS;
+}
+
 InstanceScript* DcTargeting::GetInstanceScript(Player* bot)
 {
     if (!bot)

@@ -115,6 +115,25 @@ public:
     // on the bot's map (alive or dead). Distinguishes "missing" from "killed".
     static bool IsCreaturePresentOnMap(Player* bot, uint32 entry);
 
+    // --- Event-summoned bosses (e.g. RFD's gong -> Tuten'kash) ------------
+
+    // True when `bossEntry` is the credit boss of an un-retired CONDITIONAL event
+    // on the bot's map (DungeonEventRegistry, matched via panelGatesBossEntry) —
+    // i.e. a boss that an event must SUMMON before it exists. Such a boss is
+    // legitimately absent from the creature store until the event runs, so the
+    // approach must not "not-spawned" stall on it.
+    static bool HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint32 bossEntry);
+
+    // True when the leader is parked at a pending-summon boss's anchor: the boss
+    // is the next target, has a pending summon event, is not yet live, and the
+    // tank is within the event hold radius of the anchor. While this holds, the
+    // dynamic-pull pipeline stands down so the tank stays put to run the event
+    // (ring the gong, fight the wave, ring again) instead of wandering off to
+    // pull distant trash and never returning. Reads false the instant the boss
+    // goes live (normal engage takes over) or the tank leaves the hold radius.
+    static bool IsHoldingForSummonEvent(Player* bot, AiObjectContext* ctx,
+                                        DungeonBossInfo const& next);
+
     // Returns the InstanceScript driving the bot's current map, or nullptr
     // if the map is not an instance map or has no script. Used by the
     // next-boss probe to consult authoritative encounter state before
