@@ -14,6 +14,7 @@
 #include "GameObject.h"
 #include "Log.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "Player.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -222,10 +223,22 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
             continue;
         }
 
-        // Flag ONLY when a route leg actually transits the doorway footprint.
-        // A door the corridor merely runs past (its model off to the side of
-        // every leg) is left alone, so the tank keeps moving toward the boss /
-        // event that opens it instead of parking beside a door it never enters.
+        // Flag ONLY when a route leg actually transits the doorway. A door the
+        // corridor merely runs past is left alone, so the tank keeps moving
+        // toward the boss / event that opens it instead of parking beside a door
+        // it never enters.
+        //
+        // Two detectors, OR'd. (1) The GeoBox footprint (oriented AABB) — fast,
+        // and the long-standing test. (2) GameObject-only LOS against the door's
+        // REAL M2 collision — the footprint's modeled box can be rotated/offset
+        // from where the navmesh actually threads the opening (SM Cathedral's
+        // Chapel Door: the bot walked clean through because the footprint never
+        // matched), but the real mesh blocks a route leg that crosses the shut
+        // door. The navmesh is door-blind, so a leg that clears the static VMAP
+        // yet is GameObject-LOS-blocked near THIS door is transiting its shut
+        // collision. Needs CheckGameObjectLoS=1; an OPEN door has no collision so
+        // it never flags. Proximity-gated to this door so a stray solid GO can't
+        // attribute a block here.
         bool crosses = false;
         for (auto const& seg : segments)
         {
@@ -234,6 +247,25 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
             {
                 crosses = true;
                 break;
+            }
+        }
+        if (!crosses)
+        {
+            constexpr float NEAR_SQ = 12.0f * 12.0f;
+            for (auto const& seg : segments)
+            {
+                if (DungeonClearMath::DistSqToSegment2D(gx, gy, seg.ax, seg.ay,
+                                                        seg.bx, seg.by) > NEAR_SQ)
+                    continue;
+                if (!map->isInLineOfSight(seg.ax, seg.ay, seg.az + 1.5f,
+                                          seg.bx, seg.by, seg.bz + 1.5f,
+                                          bot->GetPhaseMask(),
+                                          LINEOFSIGHT_CHECK_GOBJECT_ALL,
+                                          VMAP::ModelIgnoreFlags::Nothing))
+                {
+                    crosses = true;
+                    break;
+                }
             }
         }
         if (!crosses)

@@ -509,12 +509,16 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
         return nullptr;
     }
 
-    // Never pull a pack on the far side of a closed door (mirrors the trigger's
-    // veto): some doors are navmesh-passable, so the tank would otherwise run
-    // through and drag the pack back through the doorway.
-    if (DcEngageGeometry::ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY(), trash->GetPositionZ()))
+    // Never pull a pack on the far side of a closed door: doors are navmesh-
+    // passable (the mesh is baked without them), so the tank would otherwise run
+    // through and drag the pack back through the doorway. ClosedDoorBetween is a
+    // GameObject-LOS test against the door's real mesh — accurate for wide doors
+    // (SM Cathedral's Chapel Door) and never fires on a route merely running PAST
+    // a door (SFK's courtyard gate).
+    if (DcEngageGeometry::ClosedDoorBetween(
+            bot, trash->GetPositionX(), trash->GetPositionY(), trash->GetPositionZ()))
     {
-        DC_PULL_TRACE("[DC:{}] pull target {} vetoed — closed door between us and it",
+        DC_PULL_DEBUG("[DC:{}] pull target {} vetoed — closed door (GO-LOS) between us and it",
                       bot->GetName(), trash->GetGUID().ToString());
         return nullptr;
     }
@@ -590,7 +594,10 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
         return false;
     if (!DcEngageGeometry::IsLevelReachable(bot, u))
         return false;
-    // Mirrors the fresh scan's veto: a door shutting on the pack releases it.
+    // Mirrors the fresh scan's veto: a closed door coming between us and the
+    // latched pack releases it. GameObject-LOS against the door's real mesh —
+    // stable (a shut door doesn't flicker, so this never flaps the latch the way
+    // a distance/corner re-probe would) yet correct for wide/offset doors.
     if (DcEngageGeometry::ClosedDoorBetween(bot, u->GetPositionX(),
                                             u->GetPositionY(), u->GetPositionZ()))
         return false;

@@ -350,7 +350,7 @@ bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
     return go->GetGoState() == GO_STATE_READY;
 }
 bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
-                                         float tz, float corridorWidth)
+                                         float tz, float /*corridorWidth*/)
 {
     if (!from)
         return false;
@@ -358,59 +358,36 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
     if (!map)
         return false;
 
-    float const bx = from->GetPositionX();
-    float const by = from->GetPositionY();
-    float const bz = from->GetPositionZ();
-    float const widthSq = corridorWidth * corridorWidth;
-    // Floor span of the bot->target line (plus tolerance). A door outside it
-    // sits on another level and isn't actually in the way (stacked decks /
-    // ramps), even though its 2D origin lands near this straight chord.
-    float const loZ = std::min(bz, tz) - DC_DOOR_Z_BAND;
-    float const hiZ = std::max(bz, tz) + DC_DOOR_Z_BAND;
-
-    float const segLenSq = (tx - bx) * (tx - bx) + (ty - by) * (ty - by);
-
-    // Iterate the cached door list (DcDoorIndex) instead of the whole GO store;
-    // GOState is still read FRESH per door by IsDoorClosed below.
-    for (ObjectGuid const guid : DcDoorIndex::Get(map))
-    {
-        GameObject* go = map->GetGameObject(guid);
-        if (!IsDoorClosed(go))
-            continue;
-
-        float const gx = go->GetPositionX();
-        float const gy = go->GetPositionY();
-        float const gz = go->GetPositionZ();
-
-        // Different floor — near in plan-view but not on the way.
-        if (gz < loZ || gz > hiZ)
-            continue;
-
-        // Within corridorWidth of the bot->target segment?
-        float const d2 =
-            DungeonClearMath::DistSqToSegment2D(gx, gy, bx, by, tx, ty);
-        if (d2 > widthSq)
-            continue;
-
-        // Require the door to project to the INTERIOR of the chord, not be
-        // clamped to an endpoint. A door beside the bot or beside the target
-        // (a parallel corridor the straight chord grazes near an end) is not
-        // "between" us and the target — only a door the chord passes THROUGH
-        // is. Without this the up-to-35yd trash chord, which cuts across walls
-        // on a winding route, vetoed valid near-side packs. A door genuinely in
-        // the doorway still lands interior. (Degenerate zero-length chord: any
-        // door within band counts, as before.)
-        if (segLenSq > 0.01f)
-        {
-            float const t =
-                ((gx - bx) * (tx - bx) + (gy - by) * (ty - by)) / segLenSq;
-            if (t <= 0.05f || t >= 0.95f)
-                continue;
-        }
-
-        return true;
-    }
-    return false;
+    // GameObject-only line of sight. A door / gate is an M2 (or WMO) GameObject
+    // whose collision is inserted into the map's DYNAMIC collision tree ONLY
+    // while it is shut — GameObject toggles EnableCollision(state ==
+    // GO_STATE_READY), so the instant a door opens its model leaves the tree.
+    // Therefore a BLOCKED GameObject-LOS ray means a CLOSED door sits squarely
+    // on the line between the two points, judged against the door's real
+    // oriented collision mesh.
+    //
+    // This replaces the old GeoBox-AABB-band test, which was the root of the
+    // door whack-a-mole: the AABB can sit several yards off where the navmesh
+    // actually threads a doorway (SM Cathedral's Chapel Door) and can't tell a
+    // route THROUGH a wide doorway from one running PAST it (SFK's courtyard
+    // gate). A real LOS ray has neither failure mode and needs no per-door
+    // tuning.
+    //
+    // VMAP (static walls/floor) is deliberately EXCLUDED: we only want "a closed
+    // door is in the way", never "the target is around a static corner" — the
+    // navmesh already routes around static geometry, so a static block is never
+    // the dungeon-clear blocker, and excluding it stops a target behind a wall
+    // beside an OPEN passage from being mistaken for door-blocked.
+    //
+    // Requires the realm's CheckGameObjectLoS=1 (set here); with it off the call
+    // returns clear and the bot falls back to the navmesh's door-blind default.
+    // Rays run ~2yd above each endpoint so they cross the door PANEL instead of
+    // grazing the floor seam. corridorWidth is kept for ABI but unused — an LOS
+    // ray needs no width band.
+    return !map->isInLineOfSight(
+        from->GetPositionX(), from->GetPositionY(), from->GetPositionZ() + 2.0f,
+        tx, ty, tz + 2.0f, from->GetPhaseMask(),
+        LINEOFSIGHT_CHECK_GOBJECT_ALL, VMAP::ModelIgnoreFlags::Nothing);
 }
 bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float z,
                                       float radius)
