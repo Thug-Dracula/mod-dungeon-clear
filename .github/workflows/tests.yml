@@ -1,0 +1,111 @@
+# mod-dungeon-clear headless-sim test suite (Tier 1 + gated Tier 2).
+#
+# Lives in THIS module repo so module PRs/pushes trigger it. mod-dungeon-clear is
+# a playerbots extension and the dungeon_clear_tests target links the full core
+# `game` lib, so CI must assemble a complete tree: clone the playerbots core fork,
+# drop in mod-playerbots, drop in this module, then build just the test target.
+#
+# >>> CONFIRM THESE before first run <<< set them to whatever YOU build against.
+# The defaults are the standard playerbots core + module.
+env:
+  CORE_REPO: mod-playerbots/azerothcore-wotlk   # playerbots core fork
+  CORE_REF: Playerbot
+  PLAYERBOTS_REPO: mod-playerbots/mod-playerbots
+  PLAYERBOTS_REF: master
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:   # allow manual runs
+
+concurrency:
+  group: dc-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dc-fast:
+    runs-on: ubuntu-22.04
+    name: dc-fast (gtest)
+    steps:
+      # 1. Assemble the tree: core at the workspace root, modules underneath.
+      - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CORE_REPO }}
+          ref: ${{ env.CORE_REF }}
+          path: .
+
+      - name: Checkout mod-playerbots
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PLAYERBOTS_REPO }}
+          ref: ${{ env.PLAYERBOTS_REF }}
+          path: modules/mod-playerbots
+
+      - name: Checkout this module (PR ref)
+        uses: actions/checkout@v4
+        with:
+          path: modules/mod-dungeon-clear
+
+      # 2. Cheap, build-free gate first.
+      - name: Determinism lint
+        run: bash modules/mod-dungeon-clear/tools/check_determinism.sh
+
+      # 3. Build the core deps + the test target. ccache makes repeat runs cheap.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install ccache clang cmake make build-essential \
+            libmysqlclient-dev libssl-dev libbz2-dev libreadline-dev \
+            libncurses-dev libboost-all-dev google-perftools
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: dc-tests-ccache:${{ env.CORE_REF }}:${{ github.ref_name }}
+          restore-keys: |
+            dc-tests-ccache:${{ env.CORE_REF }}:
+            dc-tests-ccache:
+
+      # Optional: a private, never-committed navmesh slice so the Tier-2 nav suite
+      # runs instead of skipping. Populate this cache key from your own data; absent
+      # it, the nav suite GTEST_SKIPs and Tier 1 still runs.
+      - name: Restore map-data slice (optional)
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: modules/mod-dungeon-clear/t/fixtures/mapdata
+          key: dc-mapdata:v1
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_TESTING=ON \
+            -DSCRIPTS=static -DMODULES=static \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DNOPCH=1
+
+      - name: Build dungeon_clear_tests
+        run: cmake --build build --target dungeon_clear_tests -j"$(nproc)"
+
+      - name: Run suite
+        working-directory: build
+        run: |
+          ./dungeon_clear_tests \
+            --gtest_filter='*DungeonClear*:Dc*:RoomAggro*:BossRoster*:DungeonEvent*:EventBuilder*' \
+            --gtest_output=xml:dc_tests.xml
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc-tests-results
+          path: build/dc_tests.xml
+          if-no-files-found: ignore

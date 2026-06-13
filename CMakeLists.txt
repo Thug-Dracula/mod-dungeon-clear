@@ -82,4 +82,15 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    anon-namespace helpers + tuning constants promoted into namespace
 #    DcActionShared (DcActionShared.{h,cpp}). DungeonClearActions.cpp is REMOVED;
 #    DungeonClearActions.h stays as the umbrella class-declaration header.)
+# Util/DcDecisionJson.h
+#   (headless-sim Tier 1: shared flat-JSONL writer/parser primitives for the
+#    decision capture/replay IO — header-only, used by the pull-decision IO)
+# Util/DcPullDecision.{h,cpp} + Util/DcPullDecisionIo.{h,cpp}
+#   (headless-sim Tier 1: pure Dynamic-pull governor decision core
+#    DecidePull(PullObservation) -> PullVerdict, extracted from
+#    DcPullPlanner::UpdateDynamicPullMode + its JSONL capture/replay IO, gated by
+#    DcSettings RecordDecisions. Replayed offline by t/replay_pull against
+#    t/fixtures/pull/*.jsonl; edge-pinned by t/TestPullDecisions; driven through
+#    a scripted pull by t/TestScenarioDriver. Tier 2 nav harness (t/NavHarness,
+#    t/TestNavGeometry, tools/slice_mapdata.py) is test-only, not GLOBed here.)
 # (this comment bumps mtime to force CMake re-glob on next build)

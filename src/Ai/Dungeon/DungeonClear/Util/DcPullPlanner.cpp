@@ -56,6 +56,8 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPullDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPullDecisionIo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -519,36 +521,50 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
         }
     };
 
+    // Capture hook: when RecordDecisions is on (off by default, addon-toggleable
+    // per run) append this (observation -> verdict) to the pull-decision capture
+    // file so a governor freeze reproduced with capture on becomes a JSONL fixture
+    // t/replay_pull.cpp pins forever. The verdict is unchanged whether recording
+    // is on or off — capture is a pure side effect.
+    auto record = [&](DcPullDecision::PullObservation const& obs,
+                      DcPullDecision::PullVerdict v)
+    {
+        if (DcSettings::GetBool(bot, "RecordDecisions"))
+            DcPullDecisionIo::Record(bot->GetGUID().GetRawValue(), getMSTime(), obs, v);
+    };
+
     Unit* target = DcTargeting::GetPullTarget(botAI);
     if (!target)
     {
-        // No verdict standing: nothing to protect, keep the Leeroy ladder down.
-        if (pull.decisionTarget.IsEmpty())
-        {
-            pull.targetLostSince = 0;
-            apply(false, 0u);
-            return;
-        }
-        // A standing verdict survives a TRANSIENT no-target read (door-veto
-        // flicker, long-path cache mid-rebuild, far-targets poll boundary):
-        // dropping it instantly would flip the pull-mode bool, releasing the
-        // camp hold and stripping daze immunity for one bad tick, then re-derive
-        // everything — the party lurch. Only a target lost CONTINUOUSLY past the
-        // grace genuinely went away (died, despawned, walked off).
+        // No target this tick. Resolve the latch math (a standing verdict survives
+        // a TRANSIENT no-target read — door-veto flicker, long-path mid-rebuild,
+        // far-targets poll boundary — until ShouldDropPullVerdict says the loss is
+        // continuous past the grace), then let the pure governor decide.
         constexpr uint32 kVerdictGraceMs = 1500;
-        if (DungeonClearMath::ShouldDropPullVerdict(false, pull.targetLostSince,
-                                                    getMSTime(), kVerdictGraceMs,
-                                                    pull.targetLostSince))
+        DcPullDecision::PullObservation obs;
+        obs.hasTarget = false;
+        obs.hasStandingVerdict = !pull.decisionTarget.IsEmpty();
+        if (!obs.hasStandingVerdict)
+            pull.targetLostSince = 0;
+        else
+            obs.verdictGraceExpired = DungeonClearMath::ShouldDropPullVerdict(
+                false, pull.targetLostSince, getMSTime(), kVerdictGraceMs,
+                pull.targetLostSince);
+
+        DcPullDecision::PullVerdict const v = DcPullDecision::DecidePull(obs);
+        record(obs, v);
+        if (v == DcPullDecision::PullVerdict::DropToLeeroy)
         {
-            DC_PULL_DEBUG("[DC:{}] dynamic: pull target {} stayed lost past the "
-                          "{}ms grace -> dropping the standing verdict",
-                          bot->GetName(), pull.decisionTarget.ToString(),
-                          kVerdictGraceMs);
+            if (obs.hasStandingVerdict)
+                DC_PULL_DEBUG("[DC:{}] dynamic: pull target {} stayed lost past the "
+                              "{}ms grace -> dropping the standing verdict",
+                              bot->GetName(), pull.decisionTarget.ToString(),
+                              kVerdictGraceMs);
             pull.decisionTarget = ObjectGuid::Empty;
             pull.targetLostSince = 0;
             apply(false, 0u);
         }
-        // Within grace: keep verdict, camp hold and daze immunity as-is.
+        // HoldNoTarget: within grace — keep verdict, camp hold and daze immunity.
         return;
     }
     pull.targetLostSince = 0;
@@ -584,43 +600,66 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // stationary/slow patrol can't stall the run.
     auto resolve = [&](bool advanced, DcPullClassification const& cls)
     {
-        if (advanced && DcSettings::GetBool(bot, "PullPatrolWait"))
+        // Build the pure observation, run the latch math where the live gate did,
+        // then let DecidePull arbitrate. Routing every commit through the pure
+        // function is what keeps the captured fixtures honest: live and replay
+        // can never drift, because live IS the pure function here.
+        bool const patrolWaitEnabled = DcSettings::GetBool(bot, "PullPatrolWait");
+        DcPullDecision::PullObservation obs;
+        obs.hasTarget = true;            // resolve is only reached with a target
+        obs.inCombat = false;            // gated above
+        obs.phaseIdle = true;            // gated above
+        obs.sameTarget = sameTarget;
+        obs.currentlyAdvanced = false;   // a committed-Advanced same-target returns before resolve
+        obs.recheckElapsed = true;       // the throttle already passed before resolve
+        obs.advanced = advanced;
+        obs.patrolWaitEnabled = patrolWaitEnabled;
+        obs.patrolContended =
+            cls.fullCount > cls.ceiling && cls.reducedCount <= cls.ceiling;
+
+        // Only AT commit range do we run (and latch) the patrol-wait clock, exactly
+        // as the live gate did. patrolWaitExpired = ShouldWaitForPatrol said proceed.
+        if (advanced && patrolWaitEnabled)
         {
-            bool const contended =
-                cls.fullCount > cls.ceiling && cls.reducedCount <= cls.ceiling;
             float const commitRange =
                 DcEngageGeometry::PullCommitRange(bot, target, DC_PULL_START_RANGE);
-            bool const atCommit = bot->GetExactDist2d(target) <= commitRange;
-            if (atCommit)
+            obs.atCommitRange = bot->GetExactDist2d(target) <= commitRange;
+            if (obs.atCommitRange)
             {
                 uint32 const waitMs =
                     uint32(DcSettings::GetFloat(bot, "PullPatrolWaitSec") * 1000.0f);
-                if (DungeonClearMath::ShouldWaitForPatrol(
-                        cls.fullCount, cls.reducedCount, cls.ceiling,
-                        pull.patrolWaitSince, getMSTime(), waitMs,
-                        pull.patrolWaitSince))
-                {
-                    apply(false, 3u);  // hold at commit range; pull mode off, no tag
-                    DC_PULL_INFO("[DC:{}] dynamic: pack {} patrol-contended (full {} > "
-                                 "ceiling {}, reduced {}) -> WAITING for patrol",
-                                 bot->GetName(), target->GetGUID().ToString(),
-                                 cls.fullCount, cls.ceiling, cls.reducedCount);
-                    return;
-                }
-                // Not contended (patrol left), or the wait budget expired: the
-                // ShouldWaitForPatrol latch is now resolved; fall through to commit
-                // the real verdict below.
+                bool const keepWaiting = DungeonClearMath::ShouldWaitForPatrol(
+                    cls.fullCount, cls.reducedCount, cls.ceiling,
+                    pull.patrolWaitSince, getMSTime(), waitMs, pull.patrolWaitSince);
+                obs.patrolWaitExpired = !keepWaiting;
             }
-            else if (contended)
-            {
+        }
+
+        DcPullDecision::PullVerdict const v = DcPullDecision::DecidePull(obs);
+        record(obs, v);
+        switch (v)
+        {
+            case DcPullDecision::PullVerdict::PatrolWaitHold:
+                apply(false, 3u);  // hold at commit range; pull mode off, no tag
+                DC_PULL_INFO("[DC:{}] dynamic: pack {} patrol-contended (full {} > "
+                             "ceiling {}, reduced {}) -> WAITING for patrol",
+                             bot->GetName(), target->GetGUID().ToString(),
+                             cls.fullCount, cls.ceiling, cls.reducedCount);
+                break;
+            case DcPullDecision::PullVerdict::ApproachAsLeeroy:
                 // Still approaching a patrol-contended pack: stay provisional LEEROY
                 // and walk in. Don't run the wait clock until the decision point.
                 pull.patrolWaitSince = 0;
                 apply(false, 1u);
-                return;
-            }
+                break;
+            case DcPullDecision::PullVerdict::Advanced:
+                apply(true, 2u);
+                break;
+            case DcPullDecision::PullVerdict::Leeroy:
+            default:
+                apply(false, 1u);
+                break;
         }
-        apply(advanced, advanced ? 2u : 1u);
     };
 
     if (sameTarget)

@@ -9,17 +9,28 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"
             "${MOD_PATH}/t/TestApproachDecisions.cpp"
+            "${MOD_PATH}/t/TestPullDecisions.cpp"
+            "${MOD_PATH}/t/TestScenarioDriver.cpp"
             "${MOD_PATH}/t/TestRoomAggro.cpp"
             "${MOD_PATH}/t/TestBossRoster.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
+            "${MOD_PATH}/t/TestNavGeometry.cpp"
+            "${MOD_PATH}/t/NavHarness.cpp"
             "${MOD_PATH}/t/replay_decisions.cpp"
+            "${MOD_PATH}/t/replay_pull.cpp"
             "${CMAKE_SOURCE_DIR}/src/test/mocks/TestMap.cpp"
         )
 
         # The replay runner reads the captured-decision fixtures from the source
         # tree (the test binary runs from the build dir). Pass the path in.
+        # DC_MAPDATA_DIR points the Tier-2 navmesh geometry suite at a sliced
+        # mmaps directory (produced by tools/slice_mapdata.py); the suite
+        # GTEST_SKIPs every case when it is absent, so a checkout WITHOUT
+        # client-derived map data (which is never committed) still builds and
+        # passes the rest of the suite.
         target_compile_definitions(dungeon_clear_tests PRIVATE
             DC_FIXTURE_DIR="${MOD_PATH}/t/fixtures"
+            DC_MAPDATA_DIR="${MOD_PATH}/t/fixtures/mapdata"
         )
 
         # Link the necessary targets
