@@ -180,6 +180,18 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;  // walking in / not spawned yet
             }
 
+            // Wait out a scripted walk: don't talk to an NPC that is still moving
+            // to its final spot (the ZulFarrak crew descending to the temple
+            // floor — their gossip is offered before they arrive). Hold until it
+            // settles; combat/normal ticks continue meanwhile.
+            if (step.waitForStill && npc->isMoving())
+            {
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step Gossip target {} still moving — waiting",
+                          bot->GetName(), npc->GetGUID().ToString());
+                return StepResult::Running;
+            }
+
             if (!bot->IsWithinDistInMap(npc, DC_EVENT_GOSSIP_RANGE))
             {
                 HopTo(bot, npc->GetPositionX(), npc->GetPositionY(), npc->GetPositionZ());

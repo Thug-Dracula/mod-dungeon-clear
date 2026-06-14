@@ -88,6 +88,14 @@ struct EventStep
     // "still walking in / just outside the gossip search radius" (keep approaching).
     bool   skipIfMissing{false};
 
+    // Gossip only. When set, the step WAITS (Running) while the target creature is
+    // still moving, so the bot never talks to an NPC mid-walk. Used when a scripted
+    // NPC walks to a final position before its gossip is meaningful (ZulFarrak's
+    // freed crew descending to the temple floor — their gossip is already offered
+    // while they are still walking down). Combined with skipIfMissing, a dead NPC
+    // still skips rather than waiting forever.
+    bool   waitForStill{false};
+
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry
@@ -179,6 +187,11 @@ public:
     // is dead/gone is skipped rather than waited on. Chain after the step:
     //   .Gossip(npc, 0).SkipIfTargetMissing()
     EventBuilder& SkipIfTargetMissing();
+
+    // Make the LAST-added Gossip step wait until its target NPC stops moving (has
+    // finished a scripted walk) before talking to it. Chain after the step:
+    //   .Gossip(npc, 0).WaitTargetStill()
+    EventBuilder& WaitTargetStill();
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,

@@ -99,18 +99,22 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       .KillCreatureEngage(ZF_SEZZIZ, /*count*/ 1, /*searchRadius*/ 250.0f)
                       // 4. Goblin FIRST — opens the door — then a short dwell so
                       //    Bly's later faction-flip can't catch Weegli mid-walk.
-                      //    SkipIfTargetMissing: if Weegli died the boss is
-                      //    unreachable, but don't deadlock — skip and still take
-                      //    Bly (the human can re-open / `dc skip` for the boss).
+                      //    WaitTargetStill: the crew's gossip is offered while they
+                      //    are still walking DOWN to the temple floor — wait until
+                      //    Weegli settles at his final spot before talking, or he is
+                      //    interrupted mid-descent. SkipIfTargetMissing: if Weegli
+                      //    died the boss is unreachable, but don't deadlock — skip
+                      //    and still take Bly (the human can re-open / `dc skip`).
                       .Gossip(ZF_WEEGLI, /*option*/ 0, /*searchRadius*/ 40.0f)
-                          .Timeout(ZF_NPC_TIMEOUT).SkipIfTargetMissing()
+                          .Timeout(ZF_NPC_TIMEOUT).WaitTargetStill().SkipIfTargetMissing()
                       .Wait(ZF_WEEGLI_LEAD_MS)
                       // 5. Human — starts the fight; killing Bly ends the event.
+                      //    WaitTargetStill so we don't provoke Bly mid-descent;
                       //    SkipIfTargetMissing on the gossip + the engage gate's
                       //    own dead-check mean a dead Bly just completes the event
                       //    (all helpers gone => the clear continues to Ukorz).
                       .Gossip(ZF_BLY, /*option*/ 0, /*searchRadius*/ 40.0f)
-                          .Timeout(ZF_NPC_TIMEOUT).SkipIfTargetMissing()
+                          .Timeout(ZF_NPC_TIMEOUT).WaitTargetStill().SkipIfTargetMissing()
                       .KillCreatureEngage(ZF_BLY, /*count*/ 1, /*searchRadius*/ 80.0f)
                       .Build());
 }

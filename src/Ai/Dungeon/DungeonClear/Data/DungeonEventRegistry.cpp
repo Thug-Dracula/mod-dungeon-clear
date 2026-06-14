@@ -78,6 +78,13 @@ EventBuilder& EventBuilder::SkipIfTargetMissing()
     return *this;
 }
 
+EventBuilder& EventBuilder::WaitTargetStill()
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().waitForStill = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
 {
     EventStep& s = Add(EventStepKind::MoveTo);
