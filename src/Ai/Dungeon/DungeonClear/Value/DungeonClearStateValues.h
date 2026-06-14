@@ -486,8 +486,11 @@ private:
 // driven by DcObjectiveArriveAction via DungeonEventExecutor: which event, the
 // current step, the step-entry timestamp (timeout base) and an attempt counter.
 // Leader-owned like the rest of the run state. Self-healing — Drive() resets it
-// the moment a different event starts (eventId mismatch) — so a stale value from
-// a prior run is harmless; Reset() clears it alongside the other run state.
+// when a different event starts (eventId mismatch) OR the bot is in a different
+// instance than the progress was recorded for (a re-entered fresh run). The
+// instance check is what catches a PERSISTENT event re-run in a new instance,
+// which the eventId/gap heals miss; it is tied to the instance, NOT to dc on/off,
+// so toggling dungeon-clear mid-run keeps real progress. Reset() clears it too.
 class DungeonEventProgressValue : public ManualSetValue<DungeonEventProgress&>
 {
 public:
@@ -506,9 +509,9 @@ private:
 // boss list), driven by DcRunEventAction. Kept SEPARATE from the anchored-event
 // progress above because the two id namespaces are per-map independent: an
 // anchored objective and a conditional event on the same map can share an id,
-// and Drive() self-heals on eventId mismatch — sharing one value would make it
-// thrash whenever the run alternated between them. Leader-owned, self-healing,
-// reset alongside the other run state.
+// and Drive() self-heals on eventId mismatch (and on an instance change for a
+// re-entered run) — sharing one value would make it thrash whenever the run
+// alternated between them. Leader-owned, self-healing, reset with the run state.
 class DungeonConditionalEventProgressValue : public ManualSetValue<DungeonEventProgress&>
 {
 public:

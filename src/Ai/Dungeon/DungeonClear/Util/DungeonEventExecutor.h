@@ -40,6 +40,7 @@ struct DungeonEventProgress
     uint32 stepStartMs{0};  // ms-time the active step was entered (timeout base)
     uint32 attempts{0};     // per-step attempt counter (re-click cadence, etc.)
     uint32 lastDriveMs{0};  // ms-time Drive last ran this event (gap detector)
+    uint32 instanceId{0};   // instance this progress belongs to (new-instance reset)
 
     void Reset()
     {
@@ -48,6 +49,7 @@ struct DungeonEventProgress
         stepStartMs = 0;
         attempts = 0;
         lastDriveMs = 0;
+        instanceId = 0;
     }
 };
 

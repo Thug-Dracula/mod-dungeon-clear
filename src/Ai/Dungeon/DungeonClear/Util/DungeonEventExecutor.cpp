@@ -291,6 +291,21 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
                                               DungeonEvent const& ev, DungeonEventProgress& prog)
 {
     uint32 const now = getMSTime();
+    uint32 const instanceId = bot ? bot->GetInstanceId() : 0;
+
+    // A different instance means this is a brand-new run of the dungeon (the player
+    // re-entered a fresh instance), even if the SAME event id is driven again. The
+    // eventId-mismatch and >1s-gap branches below both fail to catch this for a
+    // PERSISTENT event (the id is unchanged and the gap reset is skipped for
+    // persistent events), so without this a COMPLETED progress from the prior
+    // instance would carry over and make Drive report the event done on the first
+    // tick — latching its objective and skipping it (ZulFarrak's temple read as
+    // already cleared after a re-enter). Tie the reset to the instance id, NOT to
+    // dc on/off, so toggling dungeon-clear mid-run preserves real progress. Note:
+    // instanceId 0 means "not in an instance" — don't churn the reset on it.
+    if (instanceId != 0 && prog.instanceId != 0 && prog.instanceId != instanceId)
+        prog.Reset();
+    prog.instanceId = instanceId;
 
     // (Re)initialise on a new event — self-heals a stale value from a prior run.
     if (prog.eventId != ev.id)
