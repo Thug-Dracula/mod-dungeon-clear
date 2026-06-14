@@ -5,6 +5,7 @@
 
 #include "DungeonEventExecutor.h"
 
+#include <optional>
 #include <unordered_set>
 
 #include "Creature.h"
@@ -340,4 +341,26 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
             return ev;
     }
     return nullptr;
+}
+
+bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* context)
+{
+    if (!context)
+        return false;
+
+    std::optional<DungeonBossInfo> const next =
+        context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
+        return false;
+
+    DungeonEvent const* ev = DungeonEventRegistry::Find(next->mapId, next->eventId);
+    if (!ev || !ev->persistent)
+        return false;
+
+    DungeonEventProgress const& prog =
+        context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+    // stepIndex >= 1 means the event has advanced past its first step, so this is
+    // false until the tank has actually arrived and the event has begun running.
+    return prog.eventId == ev->id && prog.stepIndex >= 1 &&
+           prog.stepIndex < ev->steps.size();
 }

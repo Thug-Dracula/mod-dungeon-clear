@@ -7,9 +7,23 @@
 
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 bool DungeonClearPullModeCurrentValue::Calculate()
 {
+    // While a PERSISTENT anchored event drives (ZulFarrak's temple), the event
+    // owns the tank: force the EFFECTIVE pull mode Off so the whole dynamic/
+    // advanced pull system stands down as one — no camp-drag kiting the tank off
+    // the waves, no scout-lag stranding the party up-ramp (scout-lag reads the
+    // pull setting directly; see DcLeaderSignal::IsLeaderDynamicScouting, gated the
+    // same way). The tank engages directly and tanks in place; the party follows
+    // close and the leader-fight assist brings it in. This is the single switch
+    // that replaces per-mechanic suppressions — the event needs exactly "pull Off"
+    // behaviour. The stored pull-setting preference is untouched (the addon status
+    // still shows it, and it resumes the instant the event completes).
+    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(context))
+        return false;
+
     // Refresh the Dynamic (pull setting == 2) verdict for THIS tick, then report
     // the behavioural bool. UpdateDynamicPullMode is a no-op for Off/On (where
     // DcPullAction owns the bool) and internally throttles the expensive

@@ -90,6 +90,18 @@ public:
     // (driver) so the two never disagree about which event is active.
     static DungeonEvent const* FindDueConditionalEvent(Player* bot, AiObjectContext* context,
                                                        uint32 mapId);
+
+    // True if `context`'s run is currently driving a PERSISTENT anchored event
+    // that has started (stepIndex past 0) — i.e. a long multi-phase set-piece
+    // (ZulFarrak's temple) owns the tank. Single source of truth used to stand
+    // other systems down for the event's whole duration:
+    //   - the PULL pipeline (no advanced-pull camp-drag mid-event),
+    //   - the follower SCOUT-LAG (followers stay tight on the tank instead of
+    //     lagging up-ramp to rest and arriving late for the next wave), and
+    //   - the at-objective trigger stays sticky (tank may roam from the anchor).
+    // Reads the run's "next dungeon boss" + "dungeon clear event progress" values,
+    // so pass the context of the bot whose run state you mean (the leader's).
+    static bool IsPersistentAnchoredEventActive(AiObjectContext* context);
 };
 
 #endif
