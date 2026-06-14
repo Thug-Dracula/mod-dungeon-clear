@@ -66,26 +66,67 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
     EXPECT_EQ(out[objIdx].encounterIndex, 7u);
 }
 
-// Sunken Temple: the summoned Avatar of Hakkar (no spawn) is represented by a
-// travel objective gated on its entry (8443).
-TEST(BossRosterRegistryTest, SunkenTempleAddsGatedAltarObjective)
+// Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
+// the three phase/puzzle-gated bosses (Weaver 5720, Dreamscythe 5721, Atal'alarion
+// 8580) from their low bits and re-adds them — plus the statue/idol/Avatar pit
+// wing — as event-bearing objective anchors. Weaver & Dreamscythe land on the
+// required spine (after Jammal'an, before Eranikus); the whole pit wing lands at
+// the route tail (after Eranikus).
+TEST(BossRosterRegistryTest, SunkenTempleReordersPhaseGatedBosses)
 {
     std::vector<DungeonBossInfo> base = {
+        Boss(8580, 0, "Atal'alarion", 109),
+        Boss(5721, 1, "Dreamscythe", 109),
+        Boss(5720, 2, "Weaver", 109),
         Boss(5710, 3, "Jammal'an the Prophet", 109),
+        Boss(5719, 4, "Morphaz", 109),
+        Boss(5722, 6, "Hazzas", 109),
         Boss(5709, 8, "Shade of Eranikus", 109),
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(109, base);
 
-    DungeonBossInfo const* obj = nullptr;
-    for (DungeonBossInfo const& b : out)
-        if (b.kind == DungeonAnchorKind::Objective)
-            obj = &b;
-    ASSERT_NE(obj, nullptr);
-    EXPECT_EQ(obj->gateEntry, 8443u);
-    EXPECT_GT(obj->arriveRadius, 0.0f);
-    // Slots between Jammal'an (3) and Shade of Eranikus (8).
-    EXPECT_GT(obj->encounterIndex, 3u);
-    EXPECT_LT(obj->encounterIndex, 8u);
+    // The three phase/puzzle-gated bosses are gone as combat bosses.
+    EXPECT_EQ(Find(out, 8580), nullptr);
+    EXPECT_EQ(Find(out, 5721), nullptr);
+    EXPECT_EQ(Find(out, 5720), nullptr);
+
+    // Kept auto bosses survive with their real bits.
+    ASSERT_NE(Find(out, 5710), nullptr);
+    EXPECT_EQ(Find(out, 5710)->encounterIndex, 3u);
+    ASSERT_NE(Find(out, 5709), nullptr);
+
+    auto pos = [&](uint32 entry)
+    {
+        for (int i = 0; i < (int)out.size(); ++i)
+            if (out[i].entry == entry)
+                return i;
+        return -1;
+    };
+    // Locate the re-added objectives by their event ids: Weaver & Dreamscythe (10),
+    // statue 1 (2), and the Avatar (9).
+    int wdPos = -1, statuePos = -1, avatarPos = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].kind != DungeonAnchorKind::Objective)
+            continue;
+        if (out[i].eventId == 10)
+            wdPos = i;
+        if (out[i].eventId == 2)
+            statuePos = i;
+        if (out[i].eventId == 9)
+            avatarPos = i;
+    }
+    ASSERT_GE(wdPos, 0) << "Weaver & Dreamscythe objective missing";
+    ASSERT_GE(statuePos, 0) << "statue objective missing";
+    ASSERT_GE(avatarPos, 0) << "Avatar objective missing";
+
+    // Required spine: Weaver & Dreamscythe after Jammal'an, before Eranikus.
+    EXPECT_LT(pos(5710), wdPos);
+    EXPECT_LT(wdPos, pos(5709));
+
+    // Optional pit wing (statues..Avatar) at the tail, after Eranikus.
+    EXPECT_LT(pos(5709), statuePos);
+    EXPECT_LT(statuePos, avatarPos);
 }
 
 // --- Apply: pass-through for unpatched maps -------------------------------

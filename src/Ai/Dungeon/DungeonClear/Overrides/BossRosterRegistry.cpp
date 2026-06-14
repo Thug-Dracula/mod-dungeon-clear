@@ -93,31 +93,81 @@ namespace
                 t.push_back(std::move(p));
             }
 
-            // --- Sunken Temple (map 109) — EXPERIMENTAL, needs live test -
-            // The Avatar of Hakkar (8443) is summoned at the central Altar of
-            // Hakkar only after the Atal'ai sacrifice event; it has NO creature
-            // spawn, so BossSpawnIndex never emits it and the tank never goes to
-            // the altar. Add a travel objective at the altar (GO "Altar of
-            // Hakkar" coords) so the tank leads the party down into the central
-            // pit, clearing the priest event en route. gateEntry 8443 resolves
-            // the objective the moment the Avatar actually manifests. Ordered at
-            // bit 7 — after Hazzas (bit 6), before Shade of Eranikus (bit 8).
+            // --- Sunken Temple (map 109) — full dungeon-events restructure
+            // Three scripted gates + a phase-ordering trap (see
+            // deployment-files/docs/mod-dungeon-clear_sunken-temple-events_plan.md
+            // and SunkenTempleEvents.cpp). The DBC bit order is NOT a valid clear
+            // order: Atal'alarion is bit 0 but is the OPTIONAL, puzzle-gated pit
+            // boss, and Weaver/Dreamscythe are early bits but spawn phaseMask 2
+            // (invisible) until Jammal'an dies. Played straight the tank stalls on
+            // an invisible boss at #2 or wastes #0 on the deep optional pit.
             //
-            // EXPERIMENTAL: whether the Avatar summon triggers off the trash the
-            // bots kill (vs a scripted statue/quest gate) is unverified — if the
-            // tank reaches the altar and nothing spawns, `dc skip` past it. The
-            // statue-puzzle boss Atal'alarion is left in the auto-list as-is (it
-            // has a real spawn) — the bot can't run that ordered-click puzzle, so
-            // expect to `dc skip` it too.
+            // Fix (the established remove/re-add-as-objective pattern): drop the
+            // three phase/puzzle-gated bosses from their low bits and re-add them
+            // as OBJECTIVE anchors ordered AFTER their un-phase trigger, each
+            // carrying a KillCreature(engage) event so the real kill still flips
+            // the real DBC bit (objectives skip the completion-mask check, so
+            // their orderIndex is a pure ordering hint that can't collide). The
+            // forcefield gate is a separate CONDITIONAL event (condition 5), not a
+            // roster anchor. The remaining auto bosses — Jammal'an, Morphaz,
+            // Hazzas, Eranikus — keep their real bits and natural order.
+            //
+            // ORDER INDICES ARE INFERRED. dungeonencounter_dbc is empty in this DB,
+            // so the kept bosses' real bits (plan §9.2: Jammal'an 3, Morphaz 4,
+            // Hazzas 6, Eranikus 8) must be confirmed live (`dc bosses`). The
+            // objective indices below are chosen against those inferred bits:
+            //   5  Weaver & Dreamscythe (after Jammal'an 3 / Morphaz 4, before
+            //      Hazzas 6) — ONE merged objective (they are ~10yd apart and
+            //      un-phase together; two same-index objectives would be skipped
+            //      by NextDungeonBossValue's strictly-greater advance-forward).
+            //   10..15 six statues in click order } the whole OPTIONAL pit wing at
+            //   16     Atal'alarion                } the route tail (all > Eranikus
+            //   17     Idol of Hakkar               } 8) so a pit pathing failure
+            //   18     Avatar of Hakkar             } never blocks the spine.
             {
                 BossRosterPatch p;
                 p.mapId = 109;
+                // Remove the three phase/puzzle-gated bosses; re-added as
+                // objectives below. (Weaver 5720, Dreamscythe 5721, Atal'alarion
+                // 8580 are auto-derived bosses at bits 2/1/0 respectively.)
+                p.remove = { 5720, 5721, 8580 };
                 p.add = {
-                    MakeObjective(OBJ(1), /*orderIndex*/ 7, 109,
-                                  "Altar of Hakkar (Avatar event)",
-                                  -420.8f, 94.7f, -174.2f,
-                                  /*arriveRadius*/ 15.0f, /*gateEntry*/ 8443,
-                                  /*hook*/ 0, /*eventId*/ 1),
+                    // Required spine: Weaver + Dreamscythe (un-phased by Jammal'an).
+                    // One objective at their midpoint kills both via event 10.
+                    MakeObjective(OBJ(1), /*orderIndex*/ 5, 109, "Weaver & Dreamscythe",
+                                  -456.2f, 132.5f, -91.2f, /*arriveRadius*/ 30.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 10),
+
+                    // Optional pit wing — six statues in click order (each at its
+                    // statue so boss-nav does the long rim walk), Atal'alarion, the
+                    // idol, the Avatar. eventIds 2..9 (see SunkenTempleEvents.cpp).
+                    MakeObjective(OBJ(2), 10, 109, "Atal'ai Statue 1",
+                                  -515.6f, 95.3f, -148.7f, 8.0f, 0, 0, /*eventId*/ 2),
+                    MakeObjective(OBJ(3), 11, 109, "Atal'ai Statue 2",
+                                  -419.8f, 94.5f, -148.7f, 8.0f, 0, 0, /*eventId*/ 3),
+                    MakeObjective(OBJ(4), 12, 109, "Atal'ai Statue 3",
+                                  -491.4f, 136.0f, -148.7f, 8.0f, 0, 0, /*eventId*/ 4),
+                    MakeObjective(OBJ(5), 13, 109, "Atal'ai Statue 4",
+                                  -491.5f, 53.5f, -148.7f, 8.0f, 0, 0, /*eventId*/ 5),
+                    MakeObjective(OBJ(6), 14, 109, "Atal'ai Statue 5",
+                                  -443.9f, 136.1f, -148.7f, 8.0f, 0, 0, /*eventId*/ 6),
+                    MakeObjective(OBJ(7), 15, 109, "Atal'ai Statue 6",
+                                  -443.4f, 53.8f, -148.7f, 8.0f, 0, 0, /*eventId*/ 7),
+                    // Atal'alarion un-phases at statuePhase 6; killed via event 11.
+                    MakeObjective(OBJ(8), 16, 109, "Atal'alarion",
+                                  -480.4f, 96.6f, -189.7f, 30.0f, 0, 0, /*eventId*/ 11),
+                    // Idol usable after Atal'alarion dies; click it (event 8).
+                    MakeObjective(OBJ(9), 17, 109, "Idol of Hakkar",
+                                  -476.3f, 94.4f, -189.7f, 12.0f, 0, 0, /*eventId*/ 8),
+                    // Avatar manifests in the north flame room (event 9). NO
+                    // gateEntry: a gate firing the Persistent event from afar (the
+                    // tank still in the pit) would run its KillCreature gates with
+                    // the channelers/Avatar beyond the 80yd search and falsely
+                    // complete the fight. arriveRadius-only makes boss-nav travel
+                    // the tank INTO the room before the event starts.
+                    MakeObjective(OBJ(10), 18, 109, "Avatar of Hakkar",
+                                  -466.8f, 272.9f, -90.4f, 15.0f, /*gateEntry*/ 0,
+                                  0, /*eventId*/ 9),
                 };
                 t.push_back(std::move(p));
             }

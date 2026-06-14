@@ -41,7 +41,8 @@
 //   2  Shadowfang Keep  — courtyard door, Horde
 //   3  (shared)         — room-aggro pre-clear (every RoomAggroRegistry boss)
 //   4  Razorfen Downs   — the gong
-//   -- next free: 5
+//   5  Sunken Temple    — the forcefield (Atal'ai defenders -> Jammal'an)
+//   -- next free: 6
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 
@@ -56,5 +57,6 @@ void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out);
 void RegisterSharedEventConditions(EventConditionMap& out);
 void RegisterShadowfangKeepConditions(EventConditionMap& out);
 void RegisterRazorfenDownsConditions(EventConditionMap& out);
+void RegisterSunkenTempleConditions(EventConditionMap& out);
 
 #endif

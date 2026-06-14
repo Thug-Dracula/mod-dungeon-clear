@@ -861,6 +861,40 @@ bool DcRunEventAction::Execute(Event /*event*/)
         return EngageDirect(trash);
     }
 
+    // A non-room-aggro conditional event may carry KillCreature(.engage) steps:
+    // the Sunken Temple forcefield gate is six KillCreatureEngage steps that kill
+    // the Atal'ai defenders ringing the upper level (their deaths drop the gate to
+    // Jammal'an). Like the objective-arrive path (DcObjectiveArriveAction), while a
+    // live target of the active step's entry exists we drive the engage pipeline
+    // (EngageDirect — long-range walk-in + combat) so the tank actively SEEKS OUT a
+    // defender ~140yd off, rather than merely holding and GATING on its death (the
+    // executor's KillCreature step only gates — nothing else would walk the tank to
+    // it). Combat owns the tick once aggroed (this non-combat action stops running),
+    // so this only initiates/continues the approach between fights. Once none of the
+    // step's entry remain alive we fall through to Drive, whose KillCreature gate
+    // reports Done and advances to the next defender. (Room-aggro's entry-0
+    // room-trash mode is handled above; this is the fixed-entry counterpart.)
+    {
+        auto& prog =
+            context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
+        uint32 const idx = (prog.eventId == ev->id) ? prog.stepIndex : 0;
+        if (idx < ev->steps.size())
+        {
+            EventStep const& step = ev->steps[idx];
+            if (step.kind == EventStepKind::KillCreature && step.engage && step.creatureEntry)
+            {
+                float const search = step.radius > 0.0f ? step.radius : 250.0f;
+                if (Creature* target =
+                        bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true))
+                {
+                    DcMovement::ResolveEscortConflict(bot);
+                    SetPhase(context, "event");
+                    return EngageDirect(target);
+                }
+            }
+        }
+    }
+
     // Hold position while driving the event. ResolveEscortConflict only cancels a
     // launched escort glide (the coast-past from the advance ladder) — it leaves a
     // step's own intra-room MovePoint (HopTo) alone, so MoveTo/Gossip walk-ins

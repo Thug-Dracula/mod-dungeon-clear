@@ -149,9 +149,10 @@ TEST(DungeonEventAdvance, FailedRequiredStallsOptionalSkips)
 
 TEST(DungeonEventRegistryTest, FindAndHasEvents)
 {
-    EXPECT_NE(DungeonEventRegistry::Find(109, 1), nullptr);  // Sunken Temple altar
+    EXPECT_NE(DungeonEventRegistry::Find(109, 1), nullptr);  // Sunken Temple forcefield
     EXPECT_NE(DungeonEventRegistry::Find(209, 1), nullptr);  // ZulFarrak summit
-    EXPECT_EQ(DungeonEventRegistry::Find(109, 2), nullptr);  // no such event
+    EXPECT_NE(DungeonEventRegistry::Find(109, 11), nullptr);  // ST Atal'alarion
+    EXPECT_EQ(DungeonEventRegistry::Find(109, 99), nullptr);  // no such event
     EXPECT_EQ(DungeonEventRegistry::Find(0, 1), nullptr);    // no such map
     EXPECT_EQ(DungeonEventRegistry::Find(109, 0), nullptr);  // id 0 is "none"
 
@@ -160,17 +161,97 @@ TEST(DungeonEventRegistryTest, FindAndHasEvents)
     EXPECT_FALSE(DungeonEventRegistry::HasEvents(34));  // Stockades — none
 }
 
-// Sunken Temple altar event waits for the Avatar (8443) and is OPTIONAL so a
-// non-firing summon skips rather than wedging the clear (matches `dc skip` note).
-TEST(DungeonEventRegistryTest, SunkenTempleWaitsForAvatarOptional)
+// Sunken Temple GATE 1: event 1 is the forcefield kill-chain — a CONDITIONAL
+// (condition 5) required event that engage-kills the six Atal'ai defenders, each
+// with a generous per-step timeout (mini-boss walk + fight). It sorts before
+// Jammal'an in the panel (PanelBeforeBoss 5710).
+TEST(DungeonEventRegistryTest, SunkenTempleForcefieldChain)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(109, 1);
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(e->steps.size(), 1u);
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[0].creatureEntry, 8443u);
-    EXPECT_TRUE(e->steps[0].wantAlive);
-    EXPECT_FALSE(e->required);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_EQ(e->conditionId, 5u);
+    EXPECT_TRUE(e->required);
+    EXPECT_EQ(e->panelGatesBossEntry, 5710u);
+
+    uint32 const defenders[6] = {5712, 5713, 5714, 5715, 5716, 5717};
+    ASSERT_EQ(e->steps.size(), 6u);
+    for (uint32 i = 0; i < 6; ++i)
+    {
+        EXPECT_EQ(e->steps[i].kind, EventStepKind::KillCreature);
+        EXPECT_TRUE(e->steps[i].engage);
+        EXPECT_EQ(e->steps[i].creatureEntry, defenders[i]);
+        EXPECT_EQ(e->steps[i].timeoutMs, 120000u);
+    }
+}
+
+// Sunken Temple GATE 2: events 2-7 are the six statue clicks, one Anchored
+// (Optional) UseGO each, in entry/click order 148830..148835.
+TEST(DungeonEventRegistryTest, SunkenTempleStatueClicks)
+{
+    uint32 const statues[6] = {148830, 148831, 148832, 148833, 148834, 148835};
+    for (uint32 i = 0; i < 6; ++i)
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(109, 2 + i);
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(e->activation, EventActivation::Anchored);
+        EXPECT_FALSE(e->required);  // optional pit wing
+        ASSERT_EQ(e->steps.size(), 1u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[0].goEntry, statues[i]);
+    }
+}
+
+// Sunken Temple GATE 3 + reordered bosses: the idol (8), Avatar (9),
+// Weaver & Dreamscythe (10), and Atal'alarion (11) events.
+TEST(DungeonEventRegistryTest, SunkenTempleIdolAvatarAndReorderedBosses)
+{
+    // Event 8 — click the idol (optional pit-wing beat 1).
+    DungeonEvent const* idol = DungeonEventRegistry::Find(109, 8);
+    ASSERT_NE(idol, nullptr);
+    EXPECT_EQ(idol->activation, EventActivation::Anchored);
+    EXPECT_FALSE(idol->required);
+    ASSERT_EQ(idol->steps.size(), 1u);
+    EXPECT_EQ(idol->steps[0].kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(idol->steps[0].goEntry, 148838u);
+
+    // Event 9 — the Avatar fight: Persistent + Optional, clear channelers, wait
+    // for the Avatar to manifest, then kill it.
+    DungeonEvent const* avatar = DungeonEventRegistry::Find(109, 9);
+    ASSERT_NE(avatar, nullptr);
+    EXPECT_EQ(avatar->activation, EventActivation::Anchored);
+    EXPECT_TRUE(avatar->persistent);
+    EXPECT_FALSE(avatar->required);
+    ASSERT_EQ(avatar->steps.size(), 4u);
+    EXPECT_EQ(avatar->steps[0].creatureEntry, 8497u);  // Nightmare Suppressor
+    EXPECT_TRUE(avatar->steps[0].engage);
+    EXPECT_EQ(avatar->steps[1].creatureEntry, 8438u);  // Hakkari Bloodkeeper
+    EXPECT_EQ(avatar->steps[2].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(avatar->steps[2].creatureEntry, 8443u);
+    EXPECT_EQ(avatar->steps[3].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(avatar->steps[3].creatureEntry, 8443u);  // Avatar
+    EXPECT_TRUE(avatar->steps[3].engage);
+
+    // Event 10 — Weaver & Dreamscythe (required spine, Persistent), both engaged.
+    DungeonEvent const* wd = DungeonEventRegistry::Find(109, 10);
+    ASSERT_NE(wd, nullptr);
+    EXPECT_TRUE(wd->persistent);
+    EXPECT_TRUE(wd->required);
+    ASSERT_EQ(wd->steps.size(), 2u);
+    EXPECT_EQ(wd->steps[0].creatureEntry, 5720u);  // Weaver
+    EXPECT_TRUE(wd->steps[0].engage);
+    EXPECT_EQ(wd->steps[1].creatureEntry, 5721u);  // Dreamscythe
+    EXPECT_TRUE(wd->steps[1].engage);
+
+    // Event 11 — Atal'alarion (optional pit wing, Persistent), engaged.
+    DungeonEvent const* atal = DungeonEventRegistry::Find(109, 11);
+    ASSERT_NE(atal, nullptr);
+    EXPECT_TRUE(atal->persistent);
+    EXPECT_FALSE(atal->required);
+    ASSERT_EQ(atal->steps.size(), 1u);
+    EXPECT_EQ(atal->steps[0].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(atal->steps[0].creatureEntry, 8580u);
+    EXPECT_TRUE(atal->steps[0].engage);
 }
 
 // ZulFarrak temple (Executioner / Bly's Band) event: a PERSISTENT anchored step
@@ -194,11 +275,12 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
     EXPECT_EQ(e->steps[1].goEntry, 141073u);
 
-    // 2. GARRISON the ramp head (MoveTo with a spawn gate): hold there — re-moving
-    //    if combat displaced the tank — until Sezz'ziz (wave 3) spawns.
+    // 2. GARRISON the ramp head (MoveTo with a monotonic instance-phase gate):
+    //    hold there — re-moving if combat displaced the tank — until DATA_PYRAMID
+    //    (0) reaches WAVE_3 (7).
     EXPECT_EQ(e->steps[2].kind, EventStepKind::MoveTo);
-    EXPECT_EQ(e->steps[2].creatureEntry, 7275u);  // garrison gate: Sezz'ziz
-    EXPECT_TRUE(e->steps[2].wantAlive);
+    EXPECT_EQ(e->steps[2].instanceDataId, 0);   // DATA_PYRAMID
+    EXPECT_EQ(e->steps[2].instanceDataMin, 7u);  // PYRAMID_WAVE_3
 
     // 3. descend and kill the two temple bosses (engage-driven).
     EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
@@ -242,6 +324,22 @@ TEST(DungeonEventBuilderTest, MoveToHoldUntilSpawn)
     EXPECT_EQ(e.steps[1].kind, EventStepKind::MoveTo);
     EXPECT_EQ(e.steps[1].creatureEntry, 7275u);  // garrison gate
     EXPECT_TRUE(e.steps[1].wantAlive);
+    EXPECT_EQ(e.steps[1].instanceDataId, -1);  // no instance gate on the spawn variant
+}
+
+// Garrison MoveTo, instance-data variant: a MoveTo carrying a monotonic phase
+// gate (GetData(id) >= min), preferred for content the party kills mid-combat.
+TEST(DungeonEventBuilderTest, MoveToHoldUntilInstanceData)
+{
+    DungeonEvent e = EventBuilder(1, 1, "e")
+                         .MoveToHoldUntilInstanceData(1.0f, 2.0f, 3.0f, 10.0f,
+                                                      /*dataId*/ 0, /*min*/ 7)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 1u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e.steps[0].instanceDataId, 0);
+    EXPECT_EQ(e.steps[0].instanceDataMin, 7u);
+    EXPECT_EQ(e.steps[0].creatureEntry, 0u);  // instance gate, not a creature gate
 }
 
 // The builder's KillCreatureEngage marks the engage flag (vs plain KillCreature
@@ -277,11 +375,15 @@ TEST(DungeonEventBuilderTest, SkipIfTargetMissing)
 // --- Milestone 2: conditional activation ----------------------------------
 
 // Conditional() returns only EventActivation::Conditional events for the map.
-// Sunken Temple (109) has an anchored event but no conditional one; Shadowfang
-// Keep (33) has the conditional courtyard-door event.
+// Sunken Temple (109) has the forcefield conditional (id 1, condition 5) plus
+// many anchored events; Shadowfang Keep (33) has the conditional courtyard-door
+// event; ZulFarrak (209) is anchored only.
 TEST(DungeonEventConditional, ConditionalListFiltersByActivation)
 {
-    EXPECT_TRUE(DungeonEventRegistry::Conditional(109).empty());  // anchored only
+    std::vector<DungeonEvent const*> st = DungeonEventRegistry::Conditional(109);
+    ASSERT_EQ(st.size(), 1u);  // only the forcefield, not the anchored statues etc.
+    EXPECT_EQ(st[0]->id, 1u);
+    EXPECT_EQ(st[0]->conditionId, 5u);
     EXPECT_TRUE(DungeonEventRegistry::Conditional(209).empty());
 
     // SFK has two faction-specific conditional events (Alliance + Horde).
@@ -349,6 +451,7 @@ TEST(DungeonEventConditionRegistry, DispatchGuards)
     EXPECT_TRUE(EventConditionRegistry::Has(1));   // SFK Alliance
     EXPECT_TRUE(EventConditionRegistry::Has(2));   // SFK Horde
     EXPECT_TRUE(EventConditionRegistry::Has(3));   // room-aggro pre-clear (M3)
+    EXPECT_TRUE(EventConditionRegistry::Has(5));   // Sunken Temple forcefield
 
     EXPECT_FALSE(EventConditionRegistry::Evaluate(0, nullptr, nullptr));
     EXPECT_FALSE(EventConditionRegistry::Evaluate(9999, nullptr, nullptr));
@@ -379,18 +482,20 @@ TEST(DungeonEventRoomAggro, PredicateAndHasRoomAggroEvent)
 {
     DungeonEvent const* cath = DungeonEventRegistry::Find(189, 1);
     DungeonEvent const* sfk = DungeonEventRegistry::Find(33, 1);   // gossip event
-    DungeonEvent const* st = DungeonEventRegistry::Find(109, 1);   // anchored wait
+    DungeonEvent const* st = DungeonEventRegistry::Find(109, 1);   // forcefield chain
     ASSERT_NE(cath, nullptr);
     ASSERT_NE(sfk, nullptr);
     ASSERT_NE(st, nullptr);
 
     EXPECT_TRUE(DungeonEventRegistry::IsRoomAggroPreClear(*cath));
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*sfk));
+    // ST's forcefield is Conditional but has SIX KillCreature steps with real
+    // entries — not the lone KillCreature(0) room-trash shape.
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*st));
 
     EXPECT_TRUE(DungeonEventRegistry::HasRoomAggroEvent(189));
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(33));   // gossip only
-    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(109));  // anchored only
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(109));  // forcefield/anchored
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(0));
 
     // A non-Conditional KillCreature(0) (e.g. a hypothetical anchored row) is NOT
