@@ -207,12 +207,11 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[4].creatureEntry, 7275u);  // Sezz'ziz
     EXPECT_TRUE(e->steps[4].engage);
 
-    // 4. goblin FIRST (opens the door), then wait for him to leave/despawn.
+    // 4. goblin FIRST (opens the door), then a short dwell before provoking Bly.
     EXPECT_EQ(e->steps[5].kind, EventStepKind::Gossip);
     EXPECT_EQ(e->steps[5].creatureEntry, 7607u);  // Weegli
-    EXPECT_EQ(e->steps[6].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[6].creatureEntry, 7607u);
-    EXPECT_FALSE(e->steps[6].wantAlive);
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::Wait);
+    EXPECT_GT(e->steps[6].durationMs, 0u);
 
     // 5. human starts the fight; killing Bly ends the event.
     EXPECT_EQ(e->steps[7].kind, EventStepKind::Gossip);

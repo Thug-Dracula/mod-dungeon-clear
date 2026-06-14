@@ -30,11 +30,12 @@
 //      Nekrum Gutchewer (7796) and Shadowpriest Sezz'ziz (7275); the NPC crew
 //      moves down to engage. We descend (engage steps drive the long walk-in) and
 //      help kill them.
-//   4. With the trolls dead the crew settles at the bottom. We MUST talk to the
-//      goblin Weegli Blastfuse (7607) FIRST — his gossip sends him to blow open
-//      the door to Ukorz. Provoking Bly before Weegli leaves would flip Weegli
-//      hostile mid-walk and the door would never open, so we wait for Weegli to
-//      finish (despawn) before the next step.
+//   4. With the trolls dead the crew settles at the bottom. We talk to the goblin
+//      Weegli Blastfuse (7607) FIRST — his gossip sends him to blow open the door
+//      to Ukorz — then dwell ~10s before provoking Bly. (Per live experience: a
+//      ~10s gap is enough; Bly's faction-flip of the crew only fires ~10s after
+//      HIS gossip, by which point Weegli is well clear, so the door still opens. A
+//      full wait-for-Weegli-despawn is unnecessary.)
 //   5. Then talk to Sergeant Bly (7604, human) — his band turns hostile; killing
 //      Bly ends the event (DATA_PYRAMID = DONE, door to Ukorz open). The clear
 //      then latches the objective and proceeds to Chief Ukorz naturally.
@@ -58,6 +59,9 @@ namespace
     // escalating to a stall. The NPC gossips / door-blow likewise take a while.
     constexpr uint32 ZF_WAVES_TIMEOUT = 900000;  // 15 min
     constexpr uint32 ZF_NPC_TIMEOUT = 180000;    // 3 min
+    // Lead time between gossiping Weegli (door) and Bly (fight) — enough that
+    // Bly's faction-flip of the crew can't catch Weegli mid-walk (live-verified).
+    constexpr uint32 ZF_WEEGLI_LEAD_MS = 10000;  // 10 s
 }
 
 void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
@@ -74,10 +78,11 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       // 3. Descend and help the crew kill the temple bosses.
                       .KillCreatureEngage(ZF_NEKRUM, /*count*/ 1, /*searchRadius*/ 250.0f)
                       .KillCreatureEngage(ZF_SEZZIZ, /*count*/ 1, /*searchRadius*/ 250.0f)
-                      // 4. Goblin FIRST — opens the door — then wait for him to go.
+                      // 4. Goblin FIRST — opens the door — then a short dwell so
+                      //    Bly's later faction-flip can't catch Weegli mid-walk.
                       .Gossip(ZF_WEEGLI, /*option*/ 0, /*searchRadius*/ 40.0f)
                           .Timeout(ZF_NPC_TIMEOUT)
-                      .WaitForSpawn(ZF_WEEGLI, /*wantAlive*/ false).Timeout(ZF_NPC_TIMEOUT)
+                      .Wait(ZF_WEEGLI_LEAD_MS)
                       // 5. Human — starts the fight; killing Bly ends the event.
                       .Gossip(ZF_BLY, /*option*/ 0, /*searchRadius*/ 40.0f)
                           .Timeout(ZF_NPC_TIMEOUT)
