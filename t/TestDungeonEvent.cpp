@@ -214,6 +214,7 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[6].kind, EventStepKind::Gossip);
     EXPECT_EQ(e->steps[6].creatureEntry, 7607u);  // Weegli
     EXPECT_TRUE(e->steps[6].skipIfMissing);
+    EXPECT_TRUE(e->steps[6].waitForStill);  // wait out the walk down
     EXPECT_EQ(e->steps[7].kind, EventStepKind::Wait);
     EXPECT_GT(e->steps[7].durationMs, 0u);
 
@@ -221,6 +222,7 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[8].kind, EventStepKind::Gossip);
     EXPECT_EQ(e->steps[8].creatureEntry, 7604u);  // Bly
     EXPECT_TRUE(e->steps[8].skipIfMissing);
+    EXPECT_TRUE(e->steps[8].waitForStill);
     EXPECT_EQ(e->steps[9].kind, EventStepKind::KillCreature);
     EXPECT_EQ(e->steps[9].creatureEntry, 7604u);
     EXPECT_TRUE(e->steps[9].engage);
@@ -242,16 +244,18 @@ TEST(DungeonEventBuilderTest, KillCreatureEngageAndTimeout)
     EXPECT_EQ(e.steps[2].timeoutMs, 900000u);
 }
 
-// SkipIfTargetMissing flags the last-added step's optional-target bit.
+// SkipIfTargetMissing / WaitTargetStill flag the last-added step's gossip bits.
 TEST(DungeonEventBuilderTest, SkipIfTargetMissing)
 {
     DungeonEvent e = EventBuilder(1, 1, "e")
                          .Gossip(100, 0)
-                         .Gossip(200, 0).SkipIfTargetMissing()
+                         .Gossip(200, 0).SkipIfTargetMissing().WaitTargetStill()
                          .Build();
     ASSERT_EQ(e.steps.size(), 2u);
     EXPECT_FALSE(e.steps[0].skipIfMissing);
+    EXPECT_FALSE(e.steps[0].waitForStill);
     EXPECT_TRUE(e.steps[1].skipIfMissing);
+    EXPECT_TRUE(e.steps[1].waitForStill);
 }
 
 // --- Milestone 2: conditional activation ----------------------------------
