@@ -40,6 +40,8 @@
  */
 
 #include "ScriptMgr.h"
+#include "AllCreatureScript.h"
+#include "Creature.h"
 #include "Log.h"
 #include "Player.h"
 #include "PlayerScript.h"
@@ -360,6 +362,47 @@ public:
     }
 };
 
+// WORKAROUND for an upstream Zul'Farrak core-script typo (fixed on branch
+// fix/zf-sezziz-summon-coords): Shadowpriest Sezz'ziz's summon table lists
+// several add coords as x=895 instead of 1895, so during his fight he summons
+// Sandfury Acolytes/Zealots ~1000yd OUTSIDE the temple. There they are
+// unreachable and never die, holding the whole party in combat indefinitely —
+// which freezes the DungeonClear temple event, whose end gossips (open the door,
+// then fight Bly) run on the NON-combat engine and so never get a tick. We can't
+// fix that in SQL (the coords are hardcoded in C++), so until the core fix is
+// deployed this hook despawns the stray adds the instant they spawn, letting
+// combat end and the event finish.
+//
+// Surgical: only Sandfury Acolyte/Zealot SUMMONS on the Zul'Farrak map that
+// appear far WEST of the temple (x < 1500; the temple sits at x~1873-1902, so no
+// legitimate creature is there). The pyramid-wave summons of the same entries
+// spawn at the correct x (>1873) and are untouched. Despawn is deferred a beat so
+// it can't dangle the pointer the summon caller uses right after SummonCreature
+// (Sezz'ziz calls AttackStart on the fresh add); 1000yd away, the few-hundred-ms
+// of phantom threat before despawn is harmless.
+class DungeonClearZfStraySummonScript : public AllCreatureScript
+{
+public:
+    DungeonClearZfStraySummonScript() : AllCreatureScript("DungeonClearZfStraySummonScript") {}
+
+    void OnCreatureAddWorld(Creature* creature) override
+    {
+        if (!creature || creature->GetMapId() != 209 /*Zul'Farrak*/)
+            return;
+        uint32 const entry = creature->GetEntry();
+        if (entry != 8876 /*Sandfury Acolyte*/ && entry != 8877 /*Sandfury Zealot*/)
+            return;
+        if (!creature->IsSummon() || creature->GetPositionX() >= 1500.0f)
+            return;  // a real wave spawn / static trash at the temple — leave it
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC] despawning stray Sezz'ziz summon {} (entry {}) at x={:.1f} "
+                 "(ZF coord-typo workaround)",
+                 creature->GetGUID().ToString(), entry, creature->GetPositionX());
+        creature->DespawnOrUnsummon(Milliseconds(200));
+    }
+};
+
 void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
@@ -370,4 +413,5 @@ void AddSC_dungeon_clear_module()
     new DungeonClearSpectatorPlayerScript();
     new DungeonClearSpectatorDeathGuardScript();
     new DungeonClearReaperScript();
+    new DungeonClearZfStraySummonScript();
 }
