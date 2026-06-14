@@ -71,6 +71,13 @@ EventBuilder& EventBuilder::Timeout(uint32 ms)
     return *this;
 }
 
+EventBuilder& EventBuilder::SkipIfTargetMissing()
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().skipIfMissing = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
 {
     EventStep& s = Add(EventStepKind::MoveTo);

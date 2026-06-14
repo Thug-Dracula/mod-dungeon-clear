@@ -210,14 +210,17 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_TRUE(e->steps[5].engage);
 
     // 4. goblin FIRST (opens the door), then a short dwell before provoking Bly.
+    //    Both gossips skip if the NPC is dead so a lost helper can't deadlock.
     EXPECT_EQ(e->steps[6].kind, EventStepKind::Gossip);
     EXPECT_EQ(e->steps[6].creatureEntry, 7607u);  // Weegli
+    EXPECT_TRUE(e->steps[6].skipIfMissing);
     EXPECT_EQ(e->steps[7].kind, EventStepKind::Wait);
     EXPECT_GT(e->steps[7].durationMs, 0u);
 
     // 5. human starts the fight; killing Bly ends the event.
     EXPECT_EQ(e->steps[8].kind, EventStepKind::Gossip);
     EXPECT_EQ(e->steps[8].creatureEntry, 7604u);  // Bly
+    EXPECT_TRUE(e->steps[8].skipIfMissing);
     EXPECT_EQ(e->steps[9].kind, EventStepKind::KillCreature);
     EXPECT_EQ(e->steps[9].creatureEntry, 7604u);
     EXPECT_TRUE(e->steps[9].engage);
@@ -237,6 +240,18 @@ TEST(DungeonEventBuilderTest, KillCreatureEngageAndTimeout)
     EXPECT_TRUE(e.steps[1].engage);
     EXPECT_EQ(e.steps[1].creatureEntry, 200u);
     EXPECT_EQ(e.steps[2].timeoutMs, 900000u);
+}
+
+// SkipIfTargetMissing flags the last-added step's optional-target bit.
+TEST(DungeonEventBuilderTest, SkipIfTargetMissing)
+{
+    DungeonEvent e = EventBuilder(1, 1, "e")
+                         .Gossip(100, 0)
+                         .Gossip(200, 0).SkipIfTargetMissing()
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 2u);
+    EXPECT_FALSE(e.steps[0].skipIfMissing);
+    EXPECT_TRUE(e.steps[1].skipIfMissing);
 }
 
 // --- Milestone 2: conditional activation ----------------------------------

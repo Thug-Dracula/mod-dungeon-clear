@@ -79,6 +79,15 @@ struct EventStep
     // which targets the room-trash value rather than a fixed entry.)
     bool   engage{false};
 
+    // Gossip only. When set, a Gossip step whose target creature is not alive
+    // anywhere nearby is SKIPPED (Done) instead of waited on — for an OPTIONAL
+    // interaction the run must not deadlock on if the NPC died (a freed ZulFarrak
+    // helper the party let die: a dead Weegli leaves the boss unreachable but we
+    // still talk to Bly, and if every helper is dead the event simply completes
+    // and the clear continues). A wide rescan separates "dead/gone" (skip) from
+    // "still walking in / just outside the gossip search radius" (keep approaching).
+    bool   skipIfMissing{false};
+
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry
@@ -165,6 +174,11 @@ public:
     // EventStepTimeout config default). Chain it right after the step it tunes:
     //   .WaitForSpawn(entry).Timeout(900000)
     EventBuilder& Timeout(uint32 ms);
+
+    // Mark the LAST-added step's target as optional: a Gossip step whose creature
+    // is dead/gone is skipped rather than waited on. Chain after the step:
+    //   .Gossip(npc, 0).SkipIfTargetMissing()
+    EventBuilder& SkipIfTargetMissing();
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,

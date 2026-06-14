@@ -161,7 +161,23 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             float const search = step.radius > 0.0f ? step.radius : DC_EVENT_GO_SEARCH;
             Creature* npc = bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true);
             if (!npc)
+            {
+                // Optional target: if it's not merely outside the gossip search
+                // radius but actually gone (no alive one anywhere nearby), SKIP the
+                // step rather than waiting forever for an NPC that will never come
+                // (a freed ZulFarrak helper the party let die). The wide rescan
+                // separates "dead/gone" (skip) from "still walking in" (approach).
+                if (step.skipIfMissing &&
+                    !bot->FindNearestCreature(step.creatureEntry, DC_EVENT_CREATURE_SCAN,
+                                              /*alive*/ true))
+                {
+                    LOG_DEBUG("playerbots.dungeonclear",
+                              "[dungeon-clear] {} event-step Gossip target {} gone — skipping",
+                              bot->GetName(), step.creatureEntry);
+                    return StepResult::Done;
+                }
                 return StepResult::Running;  // walking in / not spawned yet
+            }
 
             if (!bot->IsWithinDistInMap(npc, DC_EVENT_GOSSIP_RANGE))
             {
