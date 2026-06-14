@@ -108,14 +108,24 @@ namespace
             // carrying a KillCreature(engage) event so the real kill still flips
             // the real DBC bit (objectives skip the completion-mask check, so
             // their orderIndex is a pure ordering hint that can't collide). The
-            // forcefield gate is a separate CONDITIONAL event (condition 5), not a
-            // roster anchor. The remaining auto bosses — Jammal'an, Morphaz,
-            // Hazzas, Eranikus — keep their real bits and natural order.
+            // remaining auto bosses — Jammal'an, Morphaz, Hazzas, Eranikus — keep
+            // their real bits and natural order.
+            //
+            // FORCEFIELD via OBJECTIVE anchors (not a conditional event). The six
+            // Atal'ai defenders stand on an upper BALCONY ring whose only walkable
+            // approach is a long multi-level route around the room — a raw
+            // MoveTo/EngageDirect (74-cap PathGenerator) overruns the cap, resolves
+            // INCOMPLETE, and walks the tank to the wrong floor-level room under
+            // the balcony (live-verified). Only boss-nav's LongRangePathfinder (no
+            // cap) resolves the full ring ascent, so the defenders are reached via
+            // three ring anchors ordered 0/1/2 (before Jammal'an), each killing one
+            // adjacent pair via its event (1/12/13). See SunkenTempleEvents.cpp.
             //
             // ORDER INDICES ARE INFERRED. dungeonencounter_dbc is empty in this DB,
             // so the kept bosses' real bits (plan §9.2: Jammal'an 3, Morphaz 4,
             // Hazzas 6, Eranikus 8) must be confirmed live (`dc bosses`). The
             // objective indices below are chosen against those inferred bits:
+            //   0,1,2  forcefield ring anchors (before Jammal'an 3)
             //   5  Weaver & Dreamscythe (after Jammal'an 3 / Morphaz 4, before
             //      Hazzas 6) — ONE merged objective (they are ~10yd apart and
             //      un-phase together; two same-index objectives would be skipped
@@ -132,6 +142,20 @@ namespace
                 // 8580 are auto-derived bosses at bits 2/1/0 respectively.)
                 p.remove = { 5720, 5721, 8580 };
                 p.add = {
+                    // GATE 1 forcefield — three ring anchors in a monotonic sweep
+                    // around the balcony, each killing one adjacent defender pair
+                    // (boss-nav drives the ascent + inter-anchor travel). At each
+                    // anchor's lead defender's spawn coords (Z ≈ −66.8).
+                    MakeObjective(OBJ(11), /*orderIndex*/ 0, 109, "Atal'ai Defenders (Mijan & Zul'Lor)",
+                                  -406.2f, 131.1f, -66.9f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+                    MakeObjective(OBJ(12), /*orderIndex*/ 1, 109, "Atal'ai Defenders (Zolo & Gasher)",
+                                  -528.6f, 130.2f, -66.8f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 12),
+                    MakeObjective(OBJ(13), /*orderIndex*/ 2, 109, "Atal'ai Defenders (Loro & Hukku)",
+                                  -466.7f, 24.4f, -66.8f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 13),
+
                     // Required spine: Weaver + Dreamscythe (un-phased by Jammal'an).
                     // One objective at their midpoint kills both via event 10.
                     MakeObjective(OBJ(1), /*orderIndex*/ 5, 109, "Weaver & Dreamscythe",

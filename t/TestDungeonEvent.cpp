@@ -161,27 +161,31 @@ TEST(DungeonEventRegistryTest, FindAndHasEvents)
     EXPECT_FALSE(DungeonEventRegistry::HasEvents(34));  // Stockades — none
 }
 
-// Sunken Temple GATE 1: event 1 is the forcefield kill-chain — a CONDITIONAL
-// (condition 5) required event that engage-kills the six Atal'ai defenders, each
-// with a generous per-step timeout (mini-boss walk + fight). It sorts before
-// Jammal'an in the panel (PanelBeforeBoss 5710).
-TEST(DungeonEventRegistryTest, SunkenTempleForcefieldChain)
+// Sunken Temple GATE 1: the forcefield is dropped via THREE Anchored + Persistent
+// ring-anchor events (ids 1/12/13), each engage-killing one adjacent pair of the
+// six Atal'ai defenders. Anchored (not conditional) because the defenders sit on
+// an upper balcony only boss-nav's LongRangePathfinder can reach — a raw MoveTo
+// walks the tank to the wrong floor-level room. Each kill step has a generous
+// per-step timeout (mini-boss walk + fight).
+TEST(DungeonEventRegistryTest, SunkenTempleForcefieldRingAnchors)
 {
-    DungeonEvent const* e = DungeonEventRegistry::Find(109, 1);
-    ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 5u);
-    EXPECT_TRUE(e->required);
-    EXPECT_EQ(e->panelGatesBossEntry, 5710u);
-
-    uint32 const defenders[6] = {5712, 5713, 5714, 5715, 5716, 5717};
-    ASSERT_EQ(e->steps.size(), 6u);
-    for (uint32 i = 0; i < 6; ++i)
+    struct Anchor { uint32 id; uint32 d1; uint32 d2; };
+    for (Anchor const& a : { Anchor{1, 5717, 5716},     // Mijan & Zul'Lor
+                             Anchor{12, 5712, 5713},    // Zolo & Gasher
+                             Anchor{13, 5714, 5715} })  // Loro & Hukku
     {
-        EXPECT_EQ(e->steps[i].kind, EventStepKind::KillCreature);
-        EXPECT_TRUE(e->steps[i].engage);
-        EXPECT_EQ(e->steps[i].creatureEntry, defenders[i]);
-        EXPECT_EQ(e->steps[i].timeoutMs, 120000u);
+        DungeonEvent const* e = DungeonEventRegistry::Find(109, a.id);
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(e->activation, EventActivation::Anchored);
+        EXPECT_TRUE(e->persistent);
+        EXPECT_TRUE(e->required);
+        ASSERT_EQ(e->steps.size(), 2u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
+        EXPECT_TRUE(e->steps[0].engage);
+        EXPECT_EQ(e->steps[0].creatureEntry, a.d1);
+        EXPECT_EQ(e->steps[0].timeoutMs, 120000u);
+        EXPECT_EQ(e->steps[1].creatureEntry, a.d2);
+        EXPECT_TRUE(e->steps[1].engage);
     }
 }
 
@@ -375,15 +379,12 @@ TEST(DungeonEventBuilderTest, SkipIfTargetMissing)
 // --- Milestone 2: conditional activation ----------------------------------
 
 // Conditional() returns only EventActivation::Conditional events for the map.
-// Sunken Temple (109) has the forcefield conditional (id 1, condition 5) plus
-// many anchored events; Shadowfang Keep (33) has the conditional courtyard-door
-// event; ZulFarrak (209) is anchored only.
+// Sunken Temple (109) is anchored-only (forcefield ring anchors + statues etc.);
+// Shadowfang Keep (33) has the conditional courtyard-door event; ZulFarrak (209)
+// is anchored only.
 TEST(DungeonEventConditional, ConditionalListFiltersByActivation)
 {
-    std::vector<DungeonEvent const*> st = DungeonEventRegistry::Conditional(109);
-    ASSERT_EQ(st.size(), 1u);  // only the forcefield, not the anchored statues etc.
-    EXPECT_EQ(st[0]->id, 1u);
-    EXPECT_EQ(st[0]->conditionId, 5u);
+    EXPECT_TRUE(DungeonEventRegistry::Conditional(109).empty());  // anchored only
     EXPECT_TRUE(DungeonEventRegistry::Conditional(209).empty());
 
     // SFK has two faction-specific conditional events (Alliance + Horde).
@@ -451,7 +452,6 @@ TEST(DungeonEventConditionRegistry, DispatchGuards)
     EXPECT_TRUE(EventConditionRegistry::Has(1));   // SFK Alliance
     EXPECT_TRUE(EventConditionRegistry::Has(2));   // SFK Horde
     EXPECT_TRUE(EventConditionRegistry::Has(3));   // room-aggro pre-clear (M3)
-    EXPECT_TRUE(EventConditionRegistry::Has(5));   // Sunken Temple forcefield
 
     EXPECT_FALSE(EventConditionRegistry::Evaluate(0, nullptr, nullptr));
     EXPECT_FALSE(EventConditionRegistry::Evaluate(9999, nullptr, nullptr));
@@ -482,20 +482,20 @@ TEST(DungeonEventRoomAggro, PredicateAndHasRoomAggroEvent)
 {
     DungeonEvent const* cath = DungeonEventRegistry::Find(189, 1);
     DungeonEvent const* sfk = DungeonEventRegistry::Find(33, 1);   // gossip event
-    DungeonEvent const* st = DungeonEventRegistry::Find(109, 1);   // forcefield chain
+    DungeonEvent const* st = DungeonEventRegistry::Find(109, 1);   // forcefield anchor
     ASSERT_NE(cath, nullptr);
     ASSERT_NE(sfk, nullptr);
     ASSERT_NE(st, nullptr);
 
     EXPECT_TRUE(DungeonEventRegistry::IsRoomAggroPreClear(*cath));
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*sfk));
-    // ST's forcefield is Conditional but has SIX KillCreature steps with real
-    // entries — not the lone KillCreature(0) room-trash shape.
+    // ST's forcefield is an Anchored ring-anchor event, not the lone
+    // Conditional KillCreature(0) room-trash shape.
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*st));
 
     EXPECT_TRUE(DungeonEventRegistry::HasRoomAggroEvent(189));
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(33));   // gossip only
-    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(109));  // forcefield/anchored
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(109));  // anchored only
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(0));
 
     // A non-Conditional KillCreature(0) (e.g. a hypothetical anchored row) is NOT

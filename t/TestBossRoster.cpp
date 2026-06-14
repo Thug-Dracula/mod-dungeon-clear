@@ -102,13 +102,15 @@ TEST(BossRosterRegistryTest, SunkenTempleReordersPhaseGatedBosses)
                 return i;
         return -1;
     };
-    // Locate the re-added objectives by their event ids: Weaver & Dreamscythe (10),
-    // statue 1 (2), and the Avatar (9).
-    int wdPos = -1, statuePos = -1, avatarPos = -1;
+    // Locate the re-added objectives by their event ids: a forcefield ring anchor
+    // (1), Weaver & Dreamscythe (10), statue 1 (2), and the Avatar (9).
+    int ffPos = -1, wdPos = -1, statuePos = -1, avatarPos = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
         if (out[i].kind != DungeonAnchorKind::Objective)
             continue;
+        if (out[i].eventId == 1)
+            ffPos = i;
         if (out[i].eventId == 10)
             wdPos = i;
         if (out[i].eventId == 2)
@@ -116,9 +118,13 @@ TEST(BossRosterRegistryTest, SunkenTempleReordersPhaseGatedBosses)
         if (out[i].eventId == 9)
             avatarPos = i;
     }
+    ASSERT_GE(ffPos, 0) << "forcefield ring anchor missing";
     ASSERT_GE(wdPos, 0) << "Weaver & Dreamscythe objective missing";
     ASSERT_GE(statuePos, 0) << "statue objective missing";
     ASSERT_GE(avatarPos, 0) << "Avatar objective missing";
+
+    // Forcefield ring anchors come first, before Jammal'an (the gate to him).
+    EXPECT_LT(ffPos, pos(5710));
 
     // Required spine: Weaver & Dreamscythe after Jammal'an, before Eranikus.
     EXPECT_LT(pos(5710), wdPos);
