@@ -9,6 +9,7 @@
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -646,6 +647,14 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     // window — the party either always follows close (Off) or always holds at camp
     // (On) — so the lag would only ever delay them for no benefit there.
     if (ctx->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
+        return false;
+
+    // While a PERSISTENT anchored event drives (ZulFarrak's temple), the pull
+    // system is forced Off (see DungeonClearPullModeCurrentValue): drop the
+    // scout-lag too so followers stay tight on the tank and are in position when
+    // each wave hits, instead of lagging up-ramp to rest and arriving late. Same
+    // single predicate as the pull-mode override, evaluated on the leader's context.
+    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(ctx))
         return false;
 
     // Still scouting: the verdict for the upcoming pack hasn't been committed. Once

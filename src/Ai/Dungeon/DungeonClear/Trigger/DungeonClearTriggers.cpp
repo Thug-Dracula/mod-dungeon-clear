@@ -65,33 +65,6 @@ namespace
         // one tick and each does a full party walk. See DcTickMemo.
         return DcTickMemoAccess::BetweenPullsReady(bot, context, /*requireNoLoot*/ true);
     }
-
-    // True if `next` is a travel objective running a PERSISTENT event that has
-    // already started (a long multi-phase set-piece like ZulFarrak's temple).
-    // While such an event drives:
-    //   - the at-objective trigger stays sticky regardless of distance, so the
-    //     tank can roam from the anchor (down the stairs to the bosses) while the
-    //     event's steps run; and
-    //   - the PULL pipeline must stand down — otherwise it grabs the event's wave
-    //     packs and runs the advanced-pull "drag to camp" maneuver, kiting the
-    //     tank back UP the stairs off the waves (the temple "tank retreats and the
-    //     DPS/healer fight alone" bug). The tank instead tanks the waves in place
-    //     via normal combat while the event holds it at the ramp head.
-    // stepIndex >= 1 means the event has advanced past its first step, so we never
-    // engage this before the tank has actually arrived and started it.
-    bool IsPersistentObjectiveEventActive(Player* bot, AiObjectContext* context,
-                                          std::optional<DungeonBossInfo> const& next)
-    {
-        if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
-            return false;
-        DungeonEvent const* ev = DungeonEventRegistry::Find(next->mapId, next->eventId);
-        if (!ev || !ev->persistent)
-            return false;
-        auto& prog =
-            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
-        return prog.eventId == ev->id && prog.stepIndex >= 1 &&
-               prog.stepIndex < ev->steps.size();
-    }
 }
 
 bool DungeonClearIdleTrigger::IsActive()
@@ -217,7 +190,7 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     // NPCs). Initial arrival still goes through the distance/gate check below;
     // completion latches the objective, after which `next` becomes the boss and
     // this returns false at the kind check above.
-    if (IsPersistentObjectiveEventActive(bot, context, next))
+    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(context))
         return true;
 
     // Satisfied when the tank has reached the anchor (within arriveRadius), or
@@ -605,14 +578,6 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
     Map* map = bot->GetMap();
     if (!map || !map->IsDungeon())
-        return false;
-
-    // A persistent anchored event (ZulFarrak's temple) owns the tank: stand the
-    // pull pipeline down entirely so it can't grab the event's wave packs and drag
-    // the tank back up the stairs to a camp (kiting the waves off the DPS/healer).
-    // The tank tanks the waves in place via normal combat; the event holds it.
-    if (IsPersistentObjectiveEventActive(bot, context,
-            AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss")))
         return false;
 
     // `dungeon clear pull mode current` refreshes the Dynamic (pull setting == 2)
