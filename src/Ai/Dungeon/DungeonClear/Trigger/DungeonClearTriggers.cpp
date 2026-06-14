@@ -184,6 +184,27 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
+    // Sticky for a PERSISTENT event already in progress: once the event has
+    // advanced past its first step, stay live regardless of distance so the tank
+    // can roam far from the anchor while the event drives it (down ZulFarrak's
+    // stairs to the temple bosses, back to the NPCs). The stepIndex>=1 guard means
+    // we never stick before the tank has actually arrived and started the event;
+    // initial arrival still goes through the distance/gate check below. Completion
+    // latches the objective, after which `next` becomes the boss and this returns
+    // false at the kind check above.
+    if (DungeonEvent const* ev =
+            next->eventId ? DungeonEventRegistry::Find(next->mapId, next->eventId) : nullptr)
+    {
+        if (ev->persistent)
+        {
+            auto& prog =
+                context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+            if (prog.eventId == ev->id && prog.stepIndex >= 1 &&
+                prog.stepIndex < ev->steps.size())
+                return true;
+        }
+    }
+
     // Satisfied when the tank has reached the anchor (within arriveRadius), or
     // when the optional gate creature has spawned alive (the event already fired
     // its result, e.g. the real boss is up), so we don't need to babysit it.

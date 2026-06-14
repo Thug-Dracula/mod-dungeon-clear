@@ -712,6 +712,42 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
+    DungeonEvent const* ev =
+        next->eventId ? DungeonEventRegistry::Find(next->mapId, next->eventId) : nullptr;
+
+    // An ENGAGE step (KillCreature with .engage) drives the engage pipeline so the
+    // tank actively seeks out and fights the named creature — possibly far from the
+    // anchor (down ZulFarrak's stairs to the temple bosses) — instead of merely
+    // gating on its death while held. While a live target of the active step's
+    // entry exists, EngageDirect it (long-range walk-in + combat) rather than
+    // holding; combat owns the tick once aggroed (this non-combat action stops
+    // running), so this only initiates/continues the approach between fights. Once
+    // none remain alive we fall through to Drive, whose KillCreature gate reports
+    // Done and advances the step.
+    if (ev)
+    {
+        auto& prog =
+            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+        uint32 const idx = (prog.eventId == ev->id) ? prog.stepIndex : 0;
+        if (idx < ev->steps.size())
+        {
+            EventStep const& step = ev->steps[idx];
+            if (step.kind == EventStepKind::KillCreature && step.engage && step.creatureEntry)
+            {
+                float const search = step.radius > 0.0f ? step.radius : 250.0f;
+                if (Creature* target =
+                        bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true))
+                {
+                    // ResolveEscortConflict cancels a launched escort glide but
+                    // leaves our own approach move intact (unlike StopBot(Hold)).
+                    DcMovement::ResolveEscortConflict(bot);
+                    SetPhase(context, "objective");
+                    return EngageDirect(target);
+                }
+            }
+        }
+    }
+
     // Hold at the anchor while the event/hook runs — StopBot(Hold) cancels a
     // launched escort glide so the tank doesn't coast past the objective.
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
@@ -720,8 +756,6 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     // one; otherwise fall back to the legacy freeform hook (ObjectiveHookRegistry)
     // so existing objectives are unchanged. Both reduce to one drive outcome.
     EventDriveOutcome outcome = EventDriveOutcome::Completed;
-    DungeonEvent const* ev =
-        next->eventId ? DungeonEventRegistry::Find(next->mapId, next->eventId) : nullptr;
     if (ev)
     {
         auto& prog =

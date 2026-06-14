@@ -69,6 +69,16 @@ struct EventStep
     uint32 wantState{0};     // WaitForGameObjectState: target GOState value
     bool   wantAlive{true};  // WaitForSpawn: wait for alive (true) vs gone (false)
 
+    // KillCreature only. When set, the DRIVING action (DcObjectiveArriveAction /
+    // DcRunEventAction) actively walks the leader into the named creature via the
+    // engage pipeline (EngageDirect — long-range path + combat) instead of merely
+    // GATING on its death while the bot holds. Use it for a kill the bot must seek
+    // out (a boss across the room / down the stairs), where waiting for the mob to
+    // come to a held bot would deadlock. The step is still Done once no live
+    // creature of the entry remains. (Distinct from the room-aggro entry-0 mode,
+    // which targets the room-trash value rather than a fixed entry.)
+    bool   engage{false};
+
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry
@@ -110,6 +120,19 @@ struct DungeonEvent
     // boss going live ends the loop, so a fixed latch would stop it after ring 1.
     bool repeatable{false};
 
+    // ANCHORED events only. A normal anchored event is driven only while the tank
+    // sits at its objective anchor, and DungeonEventExecutor::Drive RESTARTS it
+    // from step 0 whenever Drive hasn't run for >1s (treated as a fresh
+    // activation). That is right for a quick one-room event, but wrong for a long
+    // multi-combat event that spans the dungeon (ZulFarrak's temple): every wave /
+    // boss fight is a >1s gap on the combat engine, which would rewind the step
+    // list each time combat ends. A Persistent event keeps its progress across
+    // those gaps — Drive only (re)initialises it on a real eventId mismatch (new
+    // run / different event), never on a tick gap — and its "at objective" trigger
+    // stays sticky once started so the tank can roam far from the anchor (down the
+    // stairs to the bosses) while the event drives, instead of being held at it.
+    bool persistent{false};
+
     // Conditional events only, panel cosmetics. By default an off-path
     // conditional event renders last in the `dc bosses` panel (index 99). When
     // this names a boss entry, the event instead sorts just BEFORE that boss —
@@ -135,7 +158,13 @@ public:
     EventBuilder& Conditional(uint32 conditionId);
     EventBuilder& Optional();
     EventBuilder& Repeatable();
+    EventBuilder& Persistent();
     EventBuilder& PanelBeforeBoss(uint32 bossEntry);
+
+    // Override the LAST-added step's timeout (0 on the step => the
+    // EventStepTimeout config default). Chain it right after the step it tunes:
+    //   .WaitForSpawn(entry).Timeout(900000)
+    EventBuilder& Timeout(uint32 ms);
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
@@ -147,6 +176,11 @@ public:
                                  uint32 timeoutMs = 0, float searchRadius = 0.0f);
     EventBuilder& KillCreature(uint32 creatureEntry, uint32 count = 1,
                                float searchRadius = 0.0f);
+    // KillCreature variant whose driving action actively seeks out and engages
+    // the creature (EngageDirect) rather than only gating on its death. See
+    // EventStep::engage.
+    EventBuilder& KillCreatureEngage(uint32 creatureEntry, uint32 count = 1,
+                                     float searchRadius = 0.0f);
     EventBuilder& Wait(uint32 durationMs);
     EventBuilder& Custom(uint32 hookId);
 

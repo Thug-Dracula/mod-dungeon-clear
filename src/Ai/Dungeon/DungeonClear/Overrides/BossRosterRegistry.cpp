@@ -151,16 +151,20 @@ namespace
             }
 
             // --- ZulFarrak (map 209) -------------------------------------
-            // The temple-summit (Sandfury prisoner) event fires when the party
-            // reaches the top of the great staircase, and completing it opens
-            // the door to the final boss Chief Ukorz Sandscalp (bit 7). Without
-            // a target up there the tank heads straight for Ukorz, hits his
-            // closed door, and stalls. Add a travel objective at the Sandfury
-            // Executioner's spot (top of the stairs, verified from the creature
-            // table) ordered at bit 7 — the equal-index tie-break sorts an
-            // objective BEFORE the boss it shares an index with, so the tank goes
-            // up and triggers the event first; arrival latches it done and the
-            // tank then proceeds to Ukorz with the door open.
+            // The temple (Executioner / Bly's Band) event runs at the top of the
+            // great staircase, and completing it opens the door to the final boss
+            // Chief Ukorz Sandscalp (bit 7). Without a target up there the tank
+            // heads straight for Ukorz, hits his closed door, and stalls. Add a
+            // travel objective at the Sandfury Executioner's spot (top of the
+            // stairs, verified from the creature table) ordered at bit 7 — the
+            // equal-index tie-break sorts an objective BEFORE the boss it shares an
+            // index with, so the tank goes up and triggers the event first.
+            // eventId 1 is the full PERSISTENT temple step list (see
+            // ZulFarrakEvents.cpp): the tank kills the executioner, cracks a cage,
+            // survives the waves, descends to help kill the temple bosses, then
+            // gossips Weegli (door) and Bly (final fight). Only when Bly dies does
+            // the event complete and latch this objective, after which the clear
+            // proceeds to Ukorz with the door open.
             {
                 BossRosterPatch p;
                 p.mapId = 209;

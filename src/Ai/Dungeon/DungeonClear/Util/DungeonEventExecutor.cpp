@@ -264,7 +264,14 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // parks there forever because the lever/gossip that would open it never run.
     // Safe because the steps are idempotent (UseGameObject skips an already-
     // activated GO, MoveTo/Gossip/WaitFor* re-run harmlessly).
-    else if (getMSTimeDiff(prog.lastDriveMs, now) > 1000)
+    //
+    // EXCEPTION: a Persistent event keeps its progress across gaps. A long,
+    // multi-combat anchored event (ZulFarrak's temple) sees a >1s gap after every
+    // wave / boss fight (the bot is on the combat engine, so Drive isn't called),
+    // and rewinding to step 0 each time would re-run the whole chain endlessly and
+    // strand WaitForSpawn(wantAlive) steps whose creature has since died. The
+    // eventId-mismatch reset above still re-inits it for a genuine new run.
+    else if (!ev.persistent && getMSTimeDiff(prog.lastDriveMs, now) > 1000)
     {
         prog.stepIndex = 0;
         prog.attempts = 0;

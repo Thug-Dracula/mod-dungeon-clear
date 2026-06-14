@@ -52,9 +52,22 @@ EventBuilder& EventBuilder::Repeatable()
     return *this;
 }
 
+EventBuilder& EventBuilder::Persistent()
+{
+    _ev.persistent = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::PanelBeforeBoss(uint32 bossEntry)
 {
     _ev.panelGatesBossEntry = bossEntry;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Timeout(uint32 ms)
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().timeoutMs = ms;
     return *this;
 }
 
@@ -115,6 +128,17 @@ EventBuilder& EventBuilder::KillCreature(uint32 creatureEntry, uint32 count, flo
     s.creatureEntry = creatureEntry;
     s.count = count;
     s.radius = searchRadius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::KillCreatureEngage(uint32 creatureEntry, uint32 count,
+                                               float searchRadius)
+{
+    EventStep& s = Add(EventStepKind::KillCreature);
+    s.creatureEntry = creatureEntry;
+    s.count = count;
+    s.radius = searchRadius;
+    s.engage = true;
     return *this;
 }
 

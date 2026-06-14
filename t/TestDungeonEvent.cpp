@@ -173,13 +173,69 @@ TEST(DungeonEventRegistryTest, SunkenTempleWaitsForAvatarOptional)
     EXPECT_FALSE(e->required);
 }
 
-// ZulFarrak summit migrates onto the framework with no extra steps — arrival
-// equals completion, identical to the pre-framework objective behaviour.
-TEST(DungeonEventRegistryTest, ZulFarrakSummitIsBehaviourPreserving)
+// ZulFarrak temple (Executioner / Bly's Band) event: a PERSISTENT anchored step
+// list that runs the whole pyramid set-piece — kill the executioner, crack a cage
+// (UseGO), survive the waves (wait for Sezz'ziz), descend to kill the temple
+// bosses (engage steps), gossip Weegli (door) then Bly (fight), and kill Bly.
+TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(209, 1);
     ASSERT_NE(e, nullptr);
-    EXPECT_TRUE(e->steps.empty());
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 9u);
+
+    // 1. kill the executioner (engage-driven), then crack a cage to start it.
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[0].creatureEntry, 7274u);
+    EXPECT_TRUE(e->steps[0].engage);
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(e->steps[1].goEntry, 141073u);
+
+    // 2. survive the waves — wait for Sezz'ziz to spawn (wave 3).
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[2].creatureEntry, 7275u);
+    EXPECT_TRUE(e->steps[2].wantAlive);
+
+    // 3. descend and kill the two temple bosses (engage-driven).
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[3].creatureEntry, 7796u);  // Nekrum
+    EXPECT_TRUE(e->steps[3].engage);
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[4].creatureEntry, 7275u);  // Sezz'ziz
+    EXPECT_TRUE(e->steps[4].engage);
+
+    // 4. goblin FIRST (opens the door), then wait for him to leave/despawn.
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[5].creatureEntry, 7607u);  // Weegli
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[6].creatureEntry, 7607u);
+    EXPECT_FALSE(e->steps[6].wantAlive);
+
+    // 5. human starts the fight; killing Bly ends the event.
+    EXPECT_EQ(e->steps[7].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[7].creatureEntry, 7604u);  // Bly
+    EXPECT_EQ(e->steps[8].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[8].creatureEntry, 7604u);
+    EXPECT_TRUE(e->steps[8].engage);
+}
+
+// The builder's KillCreatureEngage marks the engage flag (vs plain KillCreature
+// which only gates), and Timeout() tunes the last-added step's timeout.
+TEST(DungeonEventBuilderTest, KillCreatureEngageAndTimeout)
+{
+    DungeonEvent e = EventBuilder(1, 1, "e")
+                         .KillCreature(100)
+                         .KillCreatureEngage(200)
+                         .WaitForSpawn(300, true).Timeout(900000)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 3u);
+    EXPECT_FALSE(e.steps[0].engage);
+    EXPECT_TRUE(e.steps[1].engage);
+    EXPECT_EQ(e.steps[1].creatureEntry, 200u);
+    EXPECT_EQ(e.steps[2].timeoutMs, 900000u);
 }
 
 // --- Milestone 2: conditional activation ----------------------------------

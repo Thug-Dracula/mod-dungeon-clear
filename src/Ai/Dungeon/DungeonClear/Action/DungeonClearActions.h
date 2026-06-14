@@ -189,15 +189,21 @@ public:
 
 // Drives a travel OBJECTIVE (DungeonAnchorKind::Objective from
 // BossRosterRegistry) once the tank has reached it (DungeonClearAtObjectiveTrigger
-// fired). Runs the objective's optional on-arrival hook (ObjectiveHookRegistry):
-// on Done / no hook it latches the anchor into "dungeon clear cleared anchors"
-// so NextDungeonBossValue advances to the next target; on Running it holds the
-// tank at the anchor; on Blocked it stalls the run for the human. Never engages
-// combat — objectives are not creatures.
-class DcObjectiveArriveAction : public DcMovementAction
+// fired). Runs the objective's declarative event (DungeonEventRegistry) or its
+// legacy on-arrival hook (ObjectiveHookRegistry): on Done it latches the anchor
+// into "dungeon clear cleared anchors" so NextDungeonBossValue advances to the
+// next target; on Running it holds the tank at the anchor; on Blocked it stalls
+// the run for the human. Derives from DungeonClearEngageActionBase so a
+// KillCreature(engage) step can drive the engage pipeline (EngageDirect) — the
+// tank actively seeks out and fights the named creature (e.g. the temple bosses
+// down ZulFarrak's stairs) instead of merely gating on its death while held.
+class DcObjectiveArriveAction : public DungeonClearEngageActionBase
 {
 public:
-    DcObjectiveArriveAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear objective arrive") {}
+    DcObjectiveArriveAction(PlayerbotAI* botAI)
+        : DungeonClearEngageActionBase(botAI, "dungeon clear objective arrive")
+    {
+    }
     bool Execute(Event event) override;
 };
 
