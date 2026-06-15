@@ -22,6 +22,7 @@ public:
         creators["dungeon clear event due"] = &DungeonClearTriggerContext::event_due;
         creators["dungeon clear blocking trash"] = &DungeonClearTriggerContext::blocking_trash;
         creators["dungeon clear room trash"] = &DungeonClearTriggerContext::room_trash;
+        creators["dungeon clear room preclear hold"] = &DungeonClearTriggerContext::room_preclear_hold;
         creators["dungeon clear party died"] = &DungeonClearTriggerContext::party_died;
         creators["dungeon clear all cleared"] = &DungeonClearTriggerContext::all_cleared;
         creators["dungeon clear stalled"] = &DungeonClearTriggerContext::stalled;
@@ -39,6 +40,9 @@ public:
         creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
         creators["dungeon clear leader assist"] = &DungeonClearTriggerContext::leader_assist;
         creators["dungeon clear regroup combat"] = &DungeonClearTriggerContext::regroup_combat;
+        creators["dungeon clear hakkar suppressor"] = &DungeonClearTriggerContext::hakkar_suppressor;
+        creators["dungeon clear hakkar flame"] = &DungeonClearTriggerContext::hakkar_flame;
+        creators["dungeon clear hakkar loot blood"] = &DungeonClearTriggerContext::hakkar_loot_blood;
         creators["dungeon clear loot roll pending"] = &DungeonClearTriggerContext::loot_roll_pending;
 
         // Chat-command triggers (one per keyword/alias).
@@ -62,6 +66,7 @@ private:
     static Trigger* event_due(PlayerbotAI* ai) { return new DungeonClearEventDueTrigger(ai); }
     static Trigger* blocking_trash(PlayerbotAI* ai) { return new DungeonClearBlockingTrashTrigger(ai); }
     static Trigger* room_trash(PlayerbotAI* ai) { return new DungeonClearRoomTrashTrigger(ai); }
+    static Trigger* room_preclear_hold(PlayerbotAI* ai) { return new DungeonClearRoomPreClearHoldTrigger(ai); }
     static Trigger* party_died(PlayerbotAI* ai) { return new DungeonClearPartyDiedTrigger(ai); }
     static Trigger* all_cleared(PlayerbotAI* ai) { return new DungeonClearAllClearedTrigger(ai); }
     static Trigger* stalled(PlayerbotAI* ai) { return new DungeonClearStalledTrigger(ai); }
@@ -79,6 +84,9 @@ private:
     static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
     static Trigger* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistTrigger(ai); }
     static Trigger* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatTrigger(ai); }
+    static Trigger* hakkar_suppressor(PlayerbotAI* ai) { return new DungeonClearHakkarSuppressorTrigger(ai); }
+    static Trigger* hakkar_flame(PlayerbotAI* ai) { return new DungeonClearHakkarFlameTrigger(ai); }
+    static Trigger* hakkar_loot_blood(PlayerbotAI* ai) { return new DungeonClearHakkarLootBloodTrigger(ai); }
     static Trigger* loot_roll_pending(PlayerbotAI* ai) { return new DungeonClearLootRollPendingTrigger(ai); }
 
     static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }

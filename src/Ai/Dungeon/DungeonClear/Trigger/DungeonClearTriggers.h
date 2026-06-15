@@ -72,6 +72,21 @@ public:
     bool IsActive() override;
 };
 
+// Room pre-clear OWNER (fix #2). Active for the WHOLE pre-clear window — a flagged
+// room-aggro boss with trash still up and the tank arrived at the standoff (same
+// window as DcTargeting::IsRoomClearActive). Registered just ABOVE the default
+// Advance (rel 16 vs 15) so that whenever no higher driver (pull/event/room-clear/
+// engage) claims the tick, this HOLDS the tank at the standoff instead of letting
+// the room-aggro-blind Advance creep at the boss centre. Closes the structural gap
+// behind the recurring "boss woken mid-clear" failures: the standoff is now owned
+// every tick, not just when the conditional Advance hold rung happens to fire.
+class DungeonClearRoomPreClearHoldTrigger : public Trigger
+{
+public:
+    DungeonClearRoomPreClearHoldTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear room preclear hold", 1) {}
+    bool IsActive() override;
+};
+
 class DungeonClearPartyDiedTrigger : public Trigger
 {
 public:
@@ -83,6 +98,37 @@ class DungeonClearAllClearedTrigger : public Trigger
 {
 public:
     DungeonClearAllClearedTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear all cleared", 1) {}
+    bool IsActive() override;
+};
+
+// --- Sunken Temple (map 109) Avatar of Hakkar encounter ------------------
+// Both fire ONLY in the Sanctum of the Fallen while the encounter is live (the
+// Shade 8440 / a Suppressor 8497 is up) — inert on every other map and run.
+
+// A Nightmare Suppressor (8497) is alive nearby. Drives the suppressor-aggro
+// action (top relevance) so the channel that would reset the event is silenced.
+class DungeonClearHakkarSuppressorTrigger : public Trigger
+{
+public:
+    DungeonClearHakkarSuppressorTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear hakkar suppressor", 1) {}
+    bool IsActive() override;
+};
+
+// This bot carries Hakkari Blood (10460) AND an un-doused Eternal Flame remains.
+// Drives the flame-douse action for the blood carrier (any member).
+class DungeonClearHakkarFlameTrigger : public Trigger
+{
+public:
+    DungeonClearHakkarFlameTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear hakkar flame", 1) {}
+    bool IsActive() override;
+};
+
+// A freshly-killed Bloodkeeper (8438) corpse this party hasn't yet looted is
+// nearby. Drives the in-combat blood looter so the flame douse has its key item.
+class DungeonClearHakkarLootBloodTrigger : public Trigger
+{
+public:
+    DungeonClearHakkarLootBloodTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear hakkar loot blood", 1) {}
     bool IsActive() override;
 };
 

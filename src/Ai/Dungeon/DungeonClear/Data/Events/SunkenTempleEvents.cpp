@@ -16,20 +16,22 @@
 //   DungeonEncounters (the auto-roster treats them as trash) and sit ~186yd
 //   from Jammal'an, so normal flow doesn't guarantee the gate opens.
 //
-//   CRITICAL navigation note (live-verified 2026-06-14): the defenders stand on
-//   an upper BALCONY ring whose only walkable approach is a long, winding route
+//   CRITICAL navigation note (live-verified 2026-06-14): each defender stands on
+//   its OWN upper BALCONY whose only walkable approach is a long, winding route
 //   AROUND the room — the balcony sits high above a floor-level room that shares
 //   its X,Y. A raw MoveTo/EngageDirect (base PathGenerator, 74-waypoint cap)
 //   can't build that whole ascent: it overruns the cap, the path resolves
 //   INCOMPLETE, and the tank walks to the wrong floor-level room directly under
-//   the balcony instead of up the ring. So the forcefield CANNOT be a conditional
-//   KillCreatureEngage chain (that drives EngageDirect, which bee-lines into the
-//   wrong room). It MUST be reached by BOSS-NAV: the LongRangePathfinder (no hop
-//   cap, used only for roster anchors) resolves the full multi-level ring route.
-//   Hence three OBJECTIVE anchors on the ring (events 1/12/13), each killing one
-//   adjacent pair of defenders — boss-nav drives the ascent and the long
-//   inter-anchor ring travel; only the short ~70yd same-level within-pair hop
-//   falls to EngageDirect. Same lesson as the statue rim walk (§5/§6 Watch B).
+//   the balcony instead of up to the defender. So the forcefield CANNOT be a
+//   conditional KillCreatureEngage chain (that drives EngageDirect, which
+//   bee-lines into the wrong room), and it CANNOT pair two defenders per anchor
+//   (the second, far defender is reached via EngageDirect and gets skipped —
+//   the reported bug). Each defender MUST be reached by BOSS-NAV: the
+//   LongRangePathfinder (no hop cap, used only for roster anchors) resolves the
+//   full multi-level route. Hence SIX OBJECTIVE anchors, one per defender
+//   (events 1/12/13/14/15/16); boss-nav drives every approach, and EngageDirect
+//   only closes the last few yards once the tank has arrived. Same lesson as the
+//   statue rim walk (§5/§6 Watch B).
 //
 // GATE 2 (optional pit wing) — the STATUE order puzzle -> Atal'alarion. Six
 //   statues on the middle ring must be clicked IN ENTRY ORDER (148830..148835);
@@ -37,9 +39,13 @@
 //   Hakkar is summoned. Each statue is its OWN objective anchor (boss-nav does
 //   the long rim walk) carrying a one-step UseGO event (events 2..7).
 //
-// GATE 3 (optional, hardest) — the AVATAR of Hakkar. Atal'alarion's death makes
-//   the idol usable (event 8); using it summons the Avatar fight in the far
-//   NORTH flame room (event 9, Optional + Persistent).
+// GATE 3 (optional, hardest) — the AVATAR of Hakkar. Clicking the idol is a
+//   QUESTGIVER no-op; the Shade is summoned ONLY by player spell 12346 "Awaken
+//   the Soulflayer" (normally fired via the quest item Yeh'kinya's Scroll). The
+//   bot CASTS 12346 directly (event 8) — the spell script has no statue/boss/
+//   quest gate, so the Shade spawns at the fixed north-room spot. It manifests
+//   into the Avatar (event 9, Optional + Persistent) on its own via the OOC
+//   suppressor counter while the bot walks north.
 //
 // ORDERING TRAP — Weaver/Dreamscythe spawn phaseMask 2 (invisible) until
 //   Jammal'an dies, and Atal'alarion is bit 0 (visited first by default) but is
@@ -51,9 +57,9 @@
 
 namespace
 {
-    // GATE 1 — the six Atal'ai defenders (upper balcony ring, Z ≈ −66.8), in
-    // ring order. Killing all six drops the forcefield. Each is a mini-boss with
-    // adds/totems; the kill steps get a generous timeout (approach + fight).
+    // GATE 1 — the six Atal'ai defenders (each on its own upper balcony,
+    // Z ≈ −66.8). Killing all six drops the forcefield. Each is a mini-boss with
+    // adds/totems; the kill step gets a generous timeout (approach + fight).
     constexpr uint32 ST_ZOLO = 5712;
     constexpr uint32 ST_GASHER = 5713;
     constexpr uint32 ST_LORO = 5714;
@@ -61,9 +67,17 @@ namespace
     constexpr uint32 ST_ZULLOR = 5716;
     constexpr uint32 ST_MIJAN = 5717;
     constexpr uint32 ST_DEFENDER_TIMEOUT = 120000;  // 120s per defender
-    // Comfortably covers the ~70yd hop to the anchor's ring-adjacent partner
-    // (only ever matches the named entry, so no cross-pair pickup).
-    constexpr float ST_DEFENDER_SEARCH = 120.0f;
+    // Boss-nav delivers the tank to the anchor (its own defender), so the engage
+    // only needs a local search around the arrival spot to find that defender.
+    constexpr float ST_DEFENDER_SEARCH = 60.0f;
+
+    // Central-circle pre-clear (event 17, before Jammal'an). Centre = the pit
+    // centre (matches the defender-ring centre). Radius covers the circular floor;
+    // the floor z-band keeps the defender balconies (Z ≈ −66.8, above) and the
+    // statue/Atal'alarion pit (Z ≤ −148, below) out of a floor-level sweep.
+    constexpr float ST_CIRCLE_RADIUS = 60.0f;
+    constexpr float ST_CIRCLE_ZBAND = 20.0f;
+    constexpr uint32 ST_CIRCLE_TIMEOUT = 120000;  // give-up valve -> pull anyway
 
     // GATE 2 — statues (middle ring, Z -148.7), in correct click order.
     constexpr uint32 ST_STATUE_1 = 148830;
@@ -83,47 +97,97 @@ namespace
     // A real boss fight (approach + kill) far exceeds the default step timeout.
     constexpr uint32 ST_BOSS_TIMEOUT = 180000;  // 3 min
 
-    // GATE 3 — Avatar of Hakkar (north flame room, summoned).
-    constexpr uint32 ST_IDOL_GO = 148838;
-    constexpr uint32 ST_NIGHTMARE_SUPPRESSOR = 8497;
-    constexpr uint32 ST_HAKKARI_BLOODKEEPER = 8438;
+    // GATE 3 — Avatar of Hakkar (the Sanctum of the Fallen, the north flame room).
+    // FULL mechanic (live + DB verified). The summon trigger is NOT the idol:
+    // GO 148838 "Idol of Hakkar" is a QUESTGIVER (Use() just opens a gossip
+    // greeting), and a bare CastSpell(12346) is rejected before its SEND_EVENT
+    // fires. The encounter starts ONLY when a player USES the quest item
+    //   Egg of Hakkar (10465)  [casts 12346 "Awaken the Soulflayer"]
+    // standing AT THE CENTRE of the Sanctum (the Shade-spawn spot below). On use:
+    //   - the Shade of Hakkar (8440) spawns; the room gates (149432/149433) shut;
+    //     waves spawn.
+    //   - The Shade tracks two counters (its smart_scripts):
+    //       counter 1 = Eternal Flames doused. Each of the FOUR corner flame GOs
+    //         (148418-148421), when USED, does SET_COUNTER 1 +1 on the Shade
+    //         (their event 64 GOSSIP_HELLO -> action 63). At counter 1 == 4 the
+    //         Shade casts 12639 and SUMMONS the Avatar (8443). <- the win path.
+    //       counter 2 = suppressor drain. Nightmare Suppressors (8497) channel and
+    //         SET_COUNTER 2 +1; at counter 2 == 25 the Shade DESPAWNS and the
+    //         event RESETS (fail). So the suppressors MUST be interrupted/killed.
+    //   - Using a flame needs Hakkari Blood (item 10460) — the flame's lock (520)
+    //     consumes it (dropped by Bloodkeepers 8438 during the waves).
+    // OUR CHEAT (phase 2, the in-combat orchestration — TODO): after the egg use,
+    // grant the tank Hakkari Blood and walk it corner-to-corner USING each flame
+    // (counter 1 -> 4) while the party fights the waves and interrupts the
+    // suppressors; then kill the Avatar. PHASE 1 (this file) only fires the egg
+    // so the encounter actually starts.
+    constexpr uint32 ST_EGG_OF_HAKKAR = 10465;   // used at the room centre
+    // The Sanctum centre / Shade-spawn spot (mirrors the OBJ(9) anchor in
+    // BossRosterRegistry). The egg summon FAILS unless it is used FROM this
+    // centre, so the egg-use event walks the tank precisely here first.
+    constexpr float ST_SANCTUM_CX = -466.8f;
+    constexpr float ST_SANCTUM_CY = 272.9f;
+    constexpr float ST_SANCTUM_CZ = -90.4f;
+    // Tight tolerance for the centre approach — the objective arrive radius (8yd)
+    // is too loose; an off-centre egg use deadlocks the run (live-verified
+    // 2026-06-15: tank parked short of centre, summon silently failed).
+    constexpr float ST_SANCTUM_CENTRE_RADIUS = 3.0f;
     constexpr uint32 ST_AVATAR = 8443;
     constexpr float ST_NORTH_SEARCH = 80.0f;
-    constexpr uint32 ST_AVATAR_SPAWN_WAIT = 60000;
+    // Generous wait for the Avatar to manifest once the flames are doused.
+    constexpr uint32 ST_AVATAR_SPAWN_WAIT = 150000;
 }
 
 void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out)
 {
-    // --- Events 1/12/13: GATE 1 — drop the forcefield (3 ring anchors) ------
-    // Three Anchored + Persistent events, one per objective anchor on the upper
-    // balcony ring (BossRosterRegistry orders them 0/1/2, before Jammal'an).
-    // Boss-nav walks the tank UP the ring to each anchor (the long multi-level
-    // ascent a raw MoveTo can't build); each event then engage-kills the anchor's
-    // defender plus its ring-adjacent partner (~70yd, a short same-level hop
-    // EngageDirect handles). Visited in a monotonic sweep around the ring:
-    //   A (Mijan, Zul'Lor) -> B (Zolo, Gasher) -> C (Loro, Hukku).
+    // --- Events 1/12/13/14/15/16: GATE 1 — drop the forcefield (6 anchors) --
+    // ONE Anchored event per Atal'ai defender, one per objective anchor — each
+    // defender stands on its OWN balcony reachable only by a long winding route
+    // (BossRosterRegistry gives all six index 0, before Jammal'an, visited as one
+    // gate). Boss-nav (LongRangePathfinder, no 74-cap) walks the tank all the way
+    // to each defender; the event then engage-kills just that one (a short hop now
+    // that the tank has arrived). Pairing two defenders per anchor was the bug:
+    // the second, far defender was reached via EngageDirect's capped MoveTo, which
+    // could not path the long inter-balcony trip and SKIPPED it.
     // Required: if the gate won't open the run should stall for the human rather
     // than skip a wall. A defender already swept by trash no-ops instantly (its
     // KillCreature gate is Done with no live target). The instance drops GO 149431
-    // when all six die — no WaitForGOState confirm (the tank ends on the far ring
+    // when all six die — no WaitForGOState confirm (the tank ends on a far balcony
     // where that GO's grid may be cold, so a GO scan would false-timeout).
-    out.push_back(EventBuilder(109, 1, "Atal'ai Defenders (Mijan & Zul'Lor)")
-                      .Anchored(0)
-                      .Persistent()
-                      .KillCreatureEngage(ST_MIJAN, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
-                      .KillCreatureEngage(ST_ZULLOR, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
-                      .Build());
-    out.push_back(EventBuilder(109, 12, "Atal'ai Defenders (Zolo & Gasher)")
+    struct DefenderAnchor { uint32 eventId; uint32 entry; char const* name; };
+    for (DefenderAnchor const& d : {
+             DefenderAnchor{1, ST_MIJAN, "Atal'ai Defender (Mijan)"},
+             DefenderAnchor{12, ST_ZULLOR, "Atal'ai Defender (Zul'Lor)"},
+             DefenderAnchor{13, ST_ZOLO, "Atal'ai Defender (Zolo)"},
+             DefenderAnchor{14, ST_GASHER, "Atal'ai Defender (Gasher)"},
+             DefenderAnchor{15, ST_LORO, "Atal'ai Defender (Loro)"},
+             DefenderAnchor{16, ST_HUKKU, "Atal'ai Defender (Hukku)"} })
+    {
+        out.push_back(EventBuilder(109, d.eventId, d.name)
+                          .Anchored(0)
+                          .KillCreatureEngage(d.entry, 1, ST_DEFENDER_SEARCH)
+                          .Timeout(ST_DEFENDER_TIMEOUT)
+                          .Build());
+    }
+
+    // --- Event 17: central-circle pre-clear (orderIndex 1, before Jammal'an) -
+    // The wide circular FLOOR around the central pit is patrolled by dangerous
+    // packs. Weaver & Dreamscythe un-phase and circle this floor only AFTER
+    // Jammal'an dies, so the party must clear it FIRST or it walks into the whole
+    // pile mid-Weaver/Dreamscythe fight. ClearRadius engages every reachable
+    // hostile within ST_CIRCLE_RADIUS (2D) and ST_CIRCLE_ZBAND of the pit centre
+    // — position-based, so it sweeps whatever patrols regardless of entry; the
+    // floor band excludes the upper defender balconies and the deep statue/
+    // Atal'alarion pit directly below. Persistent so chasing a patrolling pack to
+    // the ring edge doesn't drop the objective; Optional + a generous timeout so a
+    // respawn-churn or an unreachable straggler degrades to "pull anyway / dc
+    // skip" rather than livelocking the required spine.
+    out.push_back(EventBuilder(109, 17, "Central Circle (pre-clear)")
                       .Anchored(1)
                       .Persistent()
-                      .KillCreatureEngage(ST_ZOLO, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
-                      .KillCreatureEngage(ST_GASHER, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
-                      .Build());
-    out.push_back(EventBuilder(109, 13, "Atal'ai Defenders (Loro & Hukku)")
-                      .Anchored(2)
-                      .Persistent()
-                      .KillCreatureEngage(ST_LORO, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
-                      .KillCreatureEngage(ST_HUKKU, 1, ST_DEFENDER_SEARCH).Timeout(ST_DEFENDER_TIMEOUT)
+                      .Optional()
+                      .ClearRadius(-467.0f, 95.0f, -91.0f, ST_CIRCLE_RADIUS, ST_CIRCLE_ZBAND)
+                      .Timeout(ST_CIRCLE_TIMEOUT)
                       .Build());
 
     // --- Events 2-7: GATE 2 — the six statue clicks ------------------------
@@ -146,30 +210,35 @@ void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out)
     out.push_back(EventBuilder(109, 7, "Atal'ai Statue 6")
                       .Anchored(15).UseGO(ST_STATUE_6, ST_STATUE_SEARCH).Optional().Build());
 
-    // --- Event 8: GATE 3 beat 1 — Awaken the Soulflayer (Idol of Hakkar) ---
-    // Anchored at the idol (ordered right after Atal'alarion so it is usable on
-    // arrival — his death removes the idol's NOT_SELECTABLE). Using it summons the
-    // Avatar fight in the north room NOW; the Avatar anchor (event 9) is the very
-    // next objective so boss-nav heads north immediately (the Avatar despawns out
-    // of combat). Optional — pit-wing bonus.
-    out.push_back(EventBuilder(109, 8, "Awaken the Soulflayer (Idol of Hakkar)")
-                      .Anchored(17).UseGO(ST_IDOL_GO, 20.0f).Optional().Build());
+    // --- Event 8: GATE 3 beat 1 — start the encounter (use the Egg) -------
+    // Anchored at the CENTRE of the Sanctum of the Fallen (the Shade-spawn spot),
+    // ordered after Atal'alarion. The bot USES the Egg of Hakkar (10465) — granted
+    // on the fly — which is the only thing that actually summons the Shade and
+    // starts the encounter (a bare spell cast / idol click does not). Optional —
+    // pit-wing bonus; degrades to `dc skip` if the room can't be reached.
+    // The egg summon FAILS unless used from dead centre, and the objective arrive
+    // radius (8yd) lets boss-nav park the tank short of it — so a tight MoveTo
+    // walks the tank precisely to the centre BEFORE the egg fires (live bug
+    // 2026-06-15: tank stopped short of centre, summon failed, run deadlocked).
+    out.push_back(EventBuilder(109, 8, "Awaken the Soulflayer (Egg of Hakkar)")
+                      .Anchored(17)
+                      .MoveTo(ST_SANCTUM_CX, ST_SANCTUM_CY, ST_SANCTUM_CZ,
+                              ST_SANCTUM_CENTRE_RADIUS)
+                      .UseItem(ST_EGG_OF_HAKKAR).Optional().Build());
 
     // --- Event 9: GATE 3 beat 2 — the Avatar of Hakkar fight ---------------
-    // Anchored in the north flame room, Optional + Persistent. Clear the
-    // channelers, wait for the Avatar to manifest, then kill it. UNVERIFIED from
-    // static DB: the channelers respawn on a counter and the Avatar may only be
-    // vulnerable past a threshold — the two engage steps are a first cut. Optional
-    // means any channeler-loop hang degrades to `dc skip`; Persistent keeps
-    // progress across the channeler/Avatar combat gaps and lets the tank roam the
-    // room. (If live runs demand it, convert to a Conditional+Repeatable
-    // "clear channelers while Avatar absent" loop, Razorfen-gong shape.)
+    // Anchored at the Sanctum centre, Optional + Persistent. The Avatar (8443)
+    // only manifests once the FOUR Eternal Flames are doused (Shade counter 1 ->
+    // 4) while the suppressors are kept interrupted (counter 2 < 25). That flame/
+    // suppressor orchestration is PHASE 2 (not yet built); until then this event
+    // waits for 8443 and degrades to `dc skip` on timeout. When phase 2 lands it
+    // drives the douse loop, then this waits for the Avatar and kills it.
+    // Persistent keeps progress across the long fight; Optional degrades a hang to
+    // `dc skip`.
     out.push_back(EventBuilder(109, 9, "Avatar of Hakkar")
                       .Anchored(18)
                       .Persistent()
                       .Optional()
-                      .KillCreatureEngage(ST_NIGHTMARE_SUPPRESSOR, 1, ST_NORTH_SEARCH)
-                      .KillCreatureEngage(ST_HAKKARI_BLOODKEEPER, 1, ST_NORTH_SEARCH)
                       .WaitForSpawn(ST_AVATAR, /*wantAlive*/ true, ST_AVATAR_SPAWN_WAIT)
                       .KillCreatureEngage(ST_AVATAR, 1, ST_NORTH_SEARCH).Timeout(ST_BOSS_TIMEOUT)
                       .Build());

@@ -24,6 +24,7 @@ public:
         creators["dungeon clear objective arrive"] = &DungeonClearActionContext::objective_arrive;
         creators["dungeon clear run event"] = &DungeonClearActionContext::run_event;
         creators["dungeon clear room clear"] = &DungeonClearActionContext::room_clear;
+        creators["dungeon clear room preclear hold"] = &DungeonClearActionContext::room_preclear_hold;
         creators["dungeon clear clear stalled"] = &DungeonClearActionContext::clear_stalled;
         creators["dungeon clear follow tank"] = &DungeonClearActionContext::follow_tank;
         creators["dungeon clear disable on death"] = &DungeonClearActionContext::disable_on_death;
@@ -39,6 +40,9 @@ public:
         creators["dungeon clear assist camp combat"] = &DungeonClearActionContext::assist_camp_combat;
         creators["dungeon clear leader assist"] = &DungeonClearActionContext::leader_assist;
         creators["dungeon clear regroup combat"] = &DungeonClearActionContext::regroup_combat;
+        creators["dungeon clear hakkar suppressor"] = &DungeonClearActionContext::hakkar_suppressor;
+        creators["dungeon clear hakkar flame"] = &DungeonClearActionContext::hakkar_flame;
+        creators["dungeon clear hakkar loot blood"] = &DungeonClearActionContext::hakkar_loot_blood;
 
         creators["dc on"] = &DungeonClearActionContext::dc_on;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
@@ -74,6 +78,7 @@ private:
     static Action* objective_arrive(PlayerbotAI* ai) { return new DcObjectiveArriveAction(ai); }
     static Action* run_event(PlayerbotAI* ai) { return new DcRunEventAction(ai); }
     static Action* room_clear(PlayerbotAI* ai) { return new DungeonClearRoomClearAction(ai); }
+    static Action* room_preclear_hold(PlayerbotAI* ai) { return new DungeonClearRoomPreClearHoldAction(ai); }
     static Action* clear_stalled(PlayerbotAI* ai) { return new DungeonClearClearStalledAction(ai); }
     static Action* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankAction(ai); }
     static Action* disable_on_death(PlayerbotAI* ai) { return new DungeonClearDisableOnDeathAction(ai); }
@@ -89,6 +94,9 @@ private:
     static Action* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatAction(ai); }
     static Action* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistAction(ai); }
     static Action* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatAction(ai); }
+    static Action* hakkar_suppressor(PlayerbotAI* ai) { return new DungeonClearHakkarSuppressorAction(ai); }
+    static Action* hakkar_flame(PlayerbotAI* ai) { return new DungeonClearHakkarFlameAction(ai); }
+    static Action* hakkar_loot_blood(PlayerbotAI* ai) { return new DungeonClearHakkarLootBloodAction(ai); }
 
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }

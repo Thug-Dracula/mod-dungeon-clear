@@ -782,12 +782,18 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
     if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
         return false;
 
-    // Cheap cached read first; the at-boss probe (level-reachability) runs only
+    // Cheap cached read first; the envelope probe (level-reachability) runs only
     // when there is actually room trash left to clear.
     if (ctx->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty())
         return false;
 
-    return DcEngageGeometry::IsAtBossEngage(bot, ctx, *next, DC_ENGAGE_RANGE);
+    // The room-clear DRIVER stays active across the WHOLE room envelope, not just
+    // the tight engage standoff. The skirt orbits the avoid sphere on a ring WIDER
+    // than the standoff, so gating on IsAtBossEngage dropped the driver (and the
+    // governor) the instant the bot ran back onto the ring to round the sphere —
+    // handing the tick to the boss-bound Advance mid-orbit (the live Jammal'an
+    // failure: "ran backwards at a large angle, then snapped straight at the boss").
+    return DcEngageGeometry::WithinRoomClearWindow(bot, ctx, *next);
 }
 Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
 {
@@ -804,6 +810,63 @@ Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
         Unit* u = ObjectAccessor::GetUnit(*bot, guid);
         if (!u || !u->IsAlive())
             continue;
+        float const d = bot->GetExactDist2d(u);
+        if (d < bestDist)
+        {
+            best = u;
+            bestDist = d;
+        }
+    }
+    return best;
+}
+
+Unit* DcTargeting::NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
+                                           float px, float py, float pz,
+                                           float radius, float zBand)
+{
+    if (!bot || !ctx || radius <= 0.0f)
+        return nullptr;
+
+    // Reuse the standard candidate set (nearby units the room/trash machinery
+    // already gathers); filter to those that sit in the point's 2D radius and
+    // floor band, mirroring the room-trash exclusions.
+    GuidVector const& candidates =
+        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
+
+    float const r2 = radius * radius;
+    Unit* best = nullptr;
+    float bestDist = std::numeric_limits<float>::max();
+    for (ObjectGuid const guid : candidates)
+    {
+        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+        if (!u || !u->IsAlive())
+            continue;
+        if (!bot->IsHostileTo(u))
+            continue;
+        if (!AttackersValue::IsPossibleTarget(u, bot))
+            continue;
+        // Never treat an encounter boss or a room-aggro boss/partner as clearable
+        // area trash — those belong to the dedicated boss/at-boss paths.
+        if (IsDungeonBossEntry(ctx, u->GetEntry()))
+            continue;
+        if (RoomAggroRegistry::Find(bot->GetMapId(), u->GetEntry()))
+            continue;
+
+        if (zBand > 0.0f && std::fabs(u->GetPositionZ() - pz) > zBand)
+            continue;
+        float const dx = u->GetPositionX() - px;
+        float const dy = u->GetPositionY() - py;
+        if (dx * dx + dy * dy > r2)
+            continue;
+
+        // Skip what the tank can't actually reach (different level / no route) or
+        // is behind a closed door, so the clear can't livelock on it.
+        if (!DcEngageGeometry::IsLevelReachable(bot, u))
+            continue;
+        if (DcEngageGeometry::ClosedDoorBetween(bot, u->GetPositionX(),
+                                                u->GetPositionY(), u->GetPositionZ()))
+            continue;
+
         float const d = bot->GetExactDist2d(u);
         if (d < bestDist)
         {

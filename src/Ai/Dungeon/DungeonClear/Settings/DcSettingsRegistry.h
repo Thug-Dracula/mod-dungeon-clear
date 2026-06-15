@@ -110,6 +110,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     // reaches + AggroRangeMargin; the orbiting APPROACH wants a little more slack
     // on top so the tank skirts comfortably outside aggro instead of grazing it.
     { "RoomAggroPathPadding",  DcType::Float,  3,   0,   30,  true  },
+    // How far OUTSIDE a room-aggro boss's aggro sphere the tank arcs when skirting
+    // around it to reach room trash (DcEngageGeometry::AggroSafeApproachPoint). The
+    // tank itself only needs to clear aggro, but the party follows imperfectly and
+    // cuts the corner — a tight skirt on the aggro edge pulls the boss anyway. This
+    // buffer makes the tank "run back at an angle" to a wider stand-off so the
+    // trailing followers stay clear and a straight shot at far packs opens up. Too
+    // large wastes travel / can push the ring into a wall (the navmesh snap pulls
+    // it back in); too small risks the party clipping aggro.
+    { "RoomAggroPartyMargin",  DcType::Float, 10,   0,   40,  true  },
 
     // Travel-objective anchors (BossRosterRegistry, e.g. Sunken Temple event
     // waypoints): the default arrival radius at which a non-combat objective is

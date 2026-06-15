@@ -39,8 +39,24 @@ struct DcApproachState
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
+    uint32 lastTickLogMs       = 0;  // advance-tick debug-log throttle (getMSTime)
     uint32 lastTargetEntry     = 0;  // committed boss entry the approach is for
     uint32 lootYieldStartMs    = 0;  // loot-yield commit anchor (getMSTime)
+
+    // --- room-aggro skirt orbit latch -------------------------------------
+    // When the room-clear must reach a trash pack on the far side of a boss's
+    // aggro sphere it ORBITS the safe ring. If the short arc (toward the target's
+    // bearing) is wall-blocked the skirt rounds "the long way" instead — but
+    // re-deriving the short/long choice every tick made the tank step the long
+    // way once, then immediately flip back toward the target next tick (the short
+    // arc reads clean again from the new spot), bouncing between two ring points
+    // forever and never committing to going BACKWARD around the boss. Latching
+    // the chosen rotation direction (+1/-1) for the duration of one orbit makes
+    // the tank round the whole long way to the open side. Released the instant a
+    // straight shot at the target clears the sphere, when the skirt target
+    // changes, and on every approach reset / boss change.
+    int8 skirtOrbitDir         = 0;  // 0 = unlatched, +/-1 = committed orbit rotation
+    ObjectGuid skirtOrbitTarget;     // trash GUID the current orbit latch is for
 
     // --- blocking-door interaction ----------------------------------------
     // Last door the bot clicked open and when, so the door-blocked action can
@@ -95,6 +111,8 @@ struct DcApproachState
         doneNotEngagedTicks = 0;
         pursuitFailTicks    = 0;
         lastPos             = Position();
+        skirtOrbitDir       = 0;
+        skirtOrbitTarget.Clear();
         doorStallGuid.Clear();
         doorStallSinceMs    = 0;
         doorStallLastMs     = 0;

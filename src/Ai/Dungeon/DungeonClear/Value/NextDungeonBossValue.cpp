@@ -123,12 +123,29 @@ namespace
         // `cands` arrives in encounter-index order, so the first match is
         // always the lowest-index one.
 
-        // Commit released: head to the lowest-index boss strictly after the
-        // one we just left.
         if (haveStickyIndex)
+        {
+            // Finish any remaining anchors that SHARE the index we just left
+            // before advancing past it. A single gate can be expressed as
+            // several same-index objectives (Sunken Temple's six forcefield
+            // defenders all sit at index 0, each on its own balcony that needs
+            // its own boss-nav anchor); the old strict-greater advance picked
+            // the next HIGHER index and stranded the siblings, dropping the gate
+            // to a later wrap-around. `cands` is in clear order, so the first
+            // equal-index match is the next sibling to clear. This also fixes
+            // the boss-tied-to-objective case (e.g. Morphaz, a boss at index 5,
+            // sharing its slot with the Weaver & Dreamscythe objective): the
+            // boss is now picked right after its objective instead of last.
+            for (DungeonBossInfo const& info : cands)
+                if (info.encounterIndex == stickyEncounterIndex)
+                    return info;
+
+            // Commit released and the shared slot is done: head to the
+            // lowest-index boss strictly after the one we just left.
             for (DungeonBossInfo const& info : cands)
                 if (info.encounterIndex > stickyEncounterIndex)
                     return info;
+        }
 
         // Fresh selection (no prior commit) or wrap-around (nothing ahead):
         // lowest-index survivor.

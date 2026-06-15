@@ -45,6 +45,32 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear at boss",
         { NextAction("dungeon clear engage boss", 30.0f) }));
 
+    // Sunken Temple (map 109) Avatar of Hakkar encounter handlers. These live in
+    // BOTH strategies: here for the brief out-of-combat gaps between waves, and
+    // (the important copy) in DungeonClearCombatStrategy so they actually run mid-
+    // fight — the whole encounter is a wave fight, so a bot is almost always in
+    // combat, and the previous non-combat-only registration was why the flames
+    // never got doused (the win path) and the fight just timed out. Inert
+    // everywhere but the live Sanctum (the triggers gate on it).
+    //
+    // Priority: suppressor (36) > flame (35) > loot blood (34).
+    //  - Suppressor first: a Nightmare Suppressor left channelling RESETS the
+    //    event; merely tagging it (its drain is an OOC channel) silences it.
+    //  - Flame ABOVE loot blood: once a bot HOLDS blood, dousing makes progress
+    //    toward the 4/4 that spawns the Avatar — it must not keep grabbing more
+    //    blood (the old loot>flame order starved the douse, the reported "trouble
+    //    getting priority to extinguish the flames"). The flame trigger only fires
+    //    when the bot already carries blood, so a bot WITHOUT blood still loots.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar suppressor",
+        { NextAction("dungeon clear hakkar suppressor", 36.0f) }));
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar flame",
+        { NextAction("dungeon clear hakkar flame", 35.0f) }));
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar loot blood",
+        { NextAction("dungeon clear hakkar loot blood", 34.0f) }));
+
     // Arrived at a travel OBJECTIVE (BossRosterRegistry, non-combat anchor).
     // Peer of at-boss (30) — mutually exclusive via the anchor-kind check in
     // each trigger — so the objective is completed and the clear advances
@@ -107,6 +133,18 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "dungeon clear door reopened",
         { NextAction("dungeon clear door reopened", 90.0f) }));
+
+    // Room pre-clear OWNER (fix #2). Active for the whole pre-clear window (flagged
+    // room-aggro boss, trash still up, tank at the standoff). Relevance 16 — just
+    // ABOVE the default Advance (15) and BELOW every real driver (engage/door/stall/
+    // assist 20-35) — so whenever no higher driver claims the tick it HOLDS the tank
+    // at the standoff instead of letting the room-aggro-blind Advance creep at the
+    // boss centre. This is the structural close for the recurring "boss woken
+    // mid-clear" failures: the standoff is owned every gap, not just when Advance's
+    // own conditional engage-hold rung happens to fire.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear room preclear hold",
+        { NextAction("dungeon clear room preclear hold", 16.0f) }));
 
     // Default: walk toward the next boss. Lowest of the bunch but above
     // grind (4) / new rpg (11). Wander strategies are also suppressed by
@@ -262,4 +300,24 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear regroup combat",
         { NextAction("dungeon clear regroup combat", 33.0f) }));
+
+    // Sunken Temple Avatar of Hakkar orchestration, COMBAT side — THE place these
+    // run. The encounter is a continuous wave fight, so every member is in combat
+    // almost the whole time; with the handlers only in the non-combat strategy
+    // (their original home) the win path never executed — the flames stayed 0/4
+    // and the WaitForSpawn(Avatar) step just timed out (the "very long fight").
+    // Relevance ABOVE every stock combat mover/attack (MoveChase ~30) and the DC
+    // camp/regroup rungs so the carrier actually peels mid-fight to silence a
+    // resetting suppressor / douse a flame / grab blood. Same suppressor > flame >
+    // loot-blood order as the non-combat copy (flame above loot so a blood carrier
+    // douses instead of hoarding). All inert outside the live Sanctum.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar suppressor",
+        { NextAction("dungeon clear hakkar suppressor", 64.0f) }));
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar flame",
+        { NextAction("dungeon clear hakkar flame", 63.0f) }));
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hakkar loot blood",
+        { NextAction("dungeon clear hakkar loot blood", 62.0f) }));
 }

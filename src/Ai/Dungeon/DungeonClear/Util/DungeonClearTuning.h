@@ -37,6 +37,22 @@ using uint32 = std::uint32_t;  // matches the core's Define.h typedef; this
 // hand-off, so they must agree.
 constexpr float DC_ENGAGE_RANGE = 22.0f;
 
+// Extra standoff added OUTSIDE a room-aggro boss's skirt sphere when computing
+// its (uncapped) boss-engage range — see DcEngageGeometry::BossEngageRange. The
+// engage hand-off for a room-aggro boss must trip while the tank is still clear
+// of the sphere, with a few yards of slack so a per-tick approach glide that
+// overshoots the hand-off distance still stops before crossing the sphere edge
+// (and waking the boss mid-clear). Small: the sphere already carries the aggro
+// margin + path padding beyond the boss's real wake distance.
+constexpr float DC_ROOM_AGGRO_STANDOFF_BUFFER = 4.0f;
+// Ordering invariant: the tank's hold/clear standoff is the avoid sphere PLUS
+// this buffer, so it must be strictly outside the sphere. Encoded at compile time
+// so a future edit that zeroes/negates the buffer (re-introducing the "engage
+// hand-off lands inside the sphere" regression) fails the build instead of
+// silently waking the boss mid-clear.
+static_assert(DC_ROOM_AGGRO_STANDOFF_BUFFER > 0.0f,
+              "room-aggro standoff must sit OUTSIDE the avoid sphere");
+
 // Cone scan for "blocking trash" — the geometric fallback the trigger uses and
 // the action falls back to when the corridor path scan can't run (boss off-mesh,
 // etc.). 35yd catches packs one tick-cycle earlier than the engage range. Both

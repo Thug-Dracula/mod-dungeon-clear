@@ -391,6 +391,49 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     return DcTargeting::NearestRoomTrash(bot, context) != nullptr;
 }
 
+bool DungeonClearRoomPreClearHoldTrigger::IsActive()
+{
+    // IsEnabled already gates on enabled + not-paused + leader (tank). Followers
+    // own themselves via follow-tank + their own skirt, so this is leader-only.
+    if (!IsEnabled(context, bot))
+        return false;
+    if (!bot || bot->IsInCombat() || bot->isDead())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    // Necessary: the room-clear DRIVER window is open (flagged boss, trash up, bot
+    // in the room envelope, on the boss's floor). The higher drivers (pull 35 /
+    // event 31 / room-clear 26 / engage trash 25) outrank this, so when one is
+    // actively pulling it runs and this never fires; this only ever takes the ticks
+    // that would otherwise fall through to the room-aggro-blind Advance (15).
+    if (!DcTargeting::IsRoomClearActive(bot, context))
+        return false;
+
+    // Sufficient: the bot is NEAR the boss — within the skirt orbit ring (avoid
+    // sphere + party margin) plus a buffer. The DRIVER window spans the whole room
+    // (so the clear can round the sphere and reach far packs); but the governor
+    // only HOLDS, so it must engage ONLY near the boss. Out at a far pack or still
+    // on the approach, holding would freeze the bot where the room-clear driver /
+    // Advance must be free to move it — so we stand down there and let them drive,
+    // and re-arm the moment the bot is back inside the keep-out ring. Near the boss
+    // this is exactly the backstop that stops Advance creeping into the sphere
+    // during a between-pulls gap. If Advance momentarily overshoots inward, this
+    // re-asserts the hold the instant the bot is within the ring — still well
+    // outside the boss's real wake distance.
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    if (!next.has_value())
+        return false;
+    Creature* const boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
+    if (!boss)
+        return false;
+    float const keepout = DcEngageGeometry::RoomAggroSphereRadius(bot, boss) +
+                          DcSettings::GetFloat(bot, "RoomAggroPartyMargin") +
+                          DC_ROOM_AGGRO_STANDOFF_BUFFER;
+    return bot->GetDistance(boss) <= keepout;
+}
+
 bool DungeonClearPartyDiedTrigger::IsActive()
 {
     if (!IsEnabled(context, bot))

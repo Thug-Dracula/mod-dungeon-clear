@@ -42,6 +42,13 @@ struct DungeonEventProgress
     uint32 lastDriveMs{0};  // ms-time Drive last ran this event (gap detector)
     uint32 instanceId{0};   // instance this progress belongs to (new-instance reset)
 
+    // Drive-log throttle: the per-tick step line is logged only on a transition
+    // (step or result change) or every kLogHeartbeatMs while Running, so a long
+    // WaitForSpawn doesn't spam one line per tick.
+    int32  lastLoggedStep{-1};
+    int32  lastLoggedResult{-1};
+    uint32 lastLogMs{0};
+
     void Reset()
     {
         eventId = 0;
@@ -50,6 +57,9 @@ struct DungeonEventProgress
         attempts = 0;
         lastDriveMs = 0;
         instanceId = 0;
+        lastLoggedStep = -1;
+        lastLoggedResult = -1;
+        lastLogMs = 0;
     }
 };
 

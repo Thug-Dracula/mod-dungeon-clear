@@ -133,6 +133,20 @@ EventBuilder& EventBuilder::UseGO(uint32 goEntry, float searchRadius,
     return *this;
 }
 
+EventBuilder& EventBuilder::CastSpell(uint32 spellId)
+{
+    EventStep& s = Add(EventStepKind::CastSpell);
+    s.spellId = spellId;
+    return *this;
+}
+
+EventBuilder& EventBuilder::UseItem(uint32 itemId)
+{
+    EventStep& s = Add(EventStepKind::UseItem);
+    s.itemId = itemId;
+    return *this;
+}
+
 EventBuilder& EventBuilder::Gossip(uint32 creatureEntry, int32 option, float searchRadius)
 {
     EventStep& s = Add(EventStepKind::Gossip);
@@ -179,6 +193,19 @@ EventBuilder& EventBuilder::KillCreatureEngage(uint32 creatureEntry, uint32 coun
     s.count = count;
     s.radius = searchRadius;
     s.engage = true;
+    return *this;
+}
+
+EventBuilder& EventBuilder::ClearRadius(float x, float y, float z, float radius,
+                                        float zBand)
+{
+    EventStep& s = Add(EventStepKind::ClearRadius);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    s.zBand = zBand;
+    s.engage = true;  // the driving action seeks out and fights in-radius hostiles
     return *this;
 }
 

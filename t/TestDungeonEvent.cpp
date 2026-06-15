@@ -161,31 +161,32 @@ TEST(DungeonEventRegistryTest, FindAndHasEvents)
     EXPECT_FALSE(DungeonEventRegistry::HasEvents(34));  // Stockades — none
 }
 
-// Sunken Temple GATE 1: the forcefield is dropped via THREE Anchored + Persistent
-// ring-anchor events (ids 1/12/13), each engage-killing one adjacent pair of the
-// six Atal'ai defenders. Anchored (not conditional) because the defenders sit on
-// an upper balcony only boss-nav's LongRangePathfinder can reach — a raw MoveTo
-// walks the tank to the wrong floor-level room. Each kill step has a generous
+// Sunken Temple GATE 1: the forcefield is dropped via SIX Anchored ring-anchor
+// events (ids 1/12/13/14/15/16), one per Atal'ai defender, each engage-killing
+// exactly ONE defender. Anchored (not conditional) because each defender sits on
+// its own balcony only boss-nav's LongRangePathfinder can reach — a raw MoveTo
+// walks the tank to the wrong floor-level room. Pairing two per anchor skipped
+// the second (far) defender, the reported bug. The kill step has a generous
 // per-step timeout (mini-boss walk + fight).
 TEST(DungeonEventRegistryTest, SunkenTempleForcefieldRingAnchors)
 {
-    struct Anchor { uint32 id; uint32 d1; uint32 d2; };
-    for (Anchor const& a : { Anchor{1, 5717, 5716},     // Mijan & Zul'Lor
-                             Anchor{12, 5712, 5713},    // Zolo & Gasher
-                             Anchor{13, 5714, 5715} })  // Loro & Hukku
+    struct Anchor { uint32 id; uint32 defender; };
+    for (Anchor const& a : { Anchor{1, 5717},    // Mijan
+                             Anchor{12, 5716},   // Zul'Lor
+                             Anchor{13, 5712},   // Zolo
+                             Anchor{14, 5713},   // Gasher
+                             Anchor{15, 5714},   // Loro
+                             Anchor{16, 5715} }) // Hukku
     {
         DungeonEvent const* e = DungeonEventRegistry::Find(109, a.id);
         ASSERT_NE(e, nullptr);
         EXPECT_EQ(e->activation, EventActivation::Anchored);
-        EXPECT_TRUE(e->persistent);
         EXPECT_TRUE(e->required);
-        ASSERT_EQ(e->steps.size(), 2u);
+        ASSERT_EQ(e->steps.size(), 1u);
         EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
         EXPECT_TRUE(e->steps[0].engage);
-        EXPECT_EQ(e->steps[0].creatureEntry, a.d1);
+        EXPECT_EQ(e->steps[0].creatureEntry, a.defender);
         EXPECT_EQ(e->steps[0].timeoutMs, 120000u);
-        EXPECT_EQ(e->steps[1].creatureEntry, a.d2);
-        EXPECT_TRUE(e->steps[1].engage);
     }
 }
 
@@ -206,35 +207,39 @@ TEST(DungeonEventRegistryTest, SunkenTempleStatueClicks)
     }
 }
 
-// Sunken Temple GATE 3 + reordered bosses: the idol (8), Avatar (9),
+// Sunken Temple GATE 3 + reordered bosses: the summon (8), Avatar (9),
 // Weaver & Dreamscythe (10), and Atal'alarion (11) events.
 TEST(DungeonEventRegistryTest, SunkenTempleIdolAvatarAndReorderedBosses)
 {
-    // Event 8 — click the idol (optional pit-wing beat 1).
+    // Event 8 — Awaken the Soulflayer (optional pit-wing beat 1). The encounter
+    // starts only by USING the Egg of Hakkar (10465) at the Sanctum centre — the
+    // idol click is a QUESTGIVER no-op and a bare spell cast is rejected.
     DungeonEvent const* idol = DungeonEventRegistry::Find(109, 8);
     ASSERT_NE(idol, nullptr);
     EXPECT_EQ(idol->activation, EventActivation::Anchored);
     EXPECT_FALSE(idol->required);
     ASSERT_EQ(idol->steps.size(), 1u);
-    EXPECT_EQ(idol->steps[0].kind, EventStepKind::UseGameObject);
-    EXPECT_EQ(idol->steps[0].goEntry, 148838u);
+    EXPECT_EQ(idol->steps[0].kind, EventStepKind::UseItem);
+    EXPECT_EQ(idol->steps[0].itemId, 10465u);
 
-    // Event 9 — the Avatar fight: Persistent + Optional, clear channelers, wait
-    // for the Avatar to manifest, then kill it.
+    // Event 9 — the Avatar fight: Persistent + Optional. The summon cast spawns
+    // the Shade of Hakkar, which transforms into the Avatar (8443) ON ITS OWN
+    // once the Nightmare Suppressors drive its counter to 25 (~79s). The bots
+    // must NOT engage the suppressors (combat stops their counter tick), so the
+    // event has NO channeler pre-kill steps — it only waits for the Avatar to
+    // manifest, then kills it.
     DungeonEvent const* avatar = DungeonEventRegistry::Find(109, 9);
     ASSERT_NE(avatar, nullptr);
     EXPECT_EQ(avatar->activation, EventActivation::Anchored);
     EXPECT_TRUE(avatar->persistent);
     EXPECT_FALSE(avatar->required);
-    ASSERT_EQ(avatar->steps.size(), 4u);
-    EXPECT_EQ(avatar->steps[0].creatureEntry, 8497u);  // Nightmare Suppressor
-    EXPECT_TRUE(avatar->steps[0].engage);
-    EXPECT_EQ(avatar->steps[1].creatureEntry, 8438u);  // Hakkari Bloodkeeper
-    EXPECT_EQ(avatar->steps[2].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(avatar->steps[2].creatureEntry, 8443u);
-    EXPECT_EQ(avatar->steps[3].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(avatar->steps[3].creatureEntry, 8443u);  // Avatar
-    EXPECT_TRUE(avatar->steps[3].engage);
+    ASSERT_EQ(avatar->steps.size(), 2u);
+    EXPECT_EQ(avatar->steps[0].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(avatar->steps[0].creatureEntry, 8443u);  // Avatar of Hakkar
+    EXPECT_GE(avatar->steps[0].timeoutMs, 120000u);    // long enough to manifest
+    EXPECT_EQ(avatar->steps[1].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(avatar->steps[1].creatureEntry, 8443u);  // Avatar
+    EXPECT_TRUE(avatar->steps[1].engage);
 
     // Event 10 — Weaver & Dreamscythe (required spine, Persistent), both engaged.
     DungeonEvent const* wd = DungeonEventRegistry::Find(109, 10);
@@ -256,6 +261,40 @@ TEST(DungeonEventRegistryTest, SunkenTempleIdolAvatarAndReorderedBosses)
     EXPECT_EQ(atal->steps[0].kind, EventStepKind::KillCreature);
     EXPECT_EQ(atal->steps[0].creatureEntry, 8580u);
     EXPECT_TRUE(atal->steps[0].engage);
+}
+
+// Event 17 — central-circle PRE-CLEAR (before Jammal'an): a ClearRadius step, a
+// position-based area sweep, on a Persistent + Optional objective. Cleared
+// before Weaver/Dreamscythe un-phase and circle the floor.
+TEST(DungeonEventRegistryTest, SunkenTempleCentralCirclePreClear)
+{
+    DungeonEvent const* circle = DungeonEventRegistry::Find(109, 17);
+    ASSERT_NE(circle, nullptr);
+    EXPECT_EQ(circle->activation, EventActivation::Anchored);
+    EXPECT_TRUE(circle->persistent);
+    EXPECT_FALSE(circle->required);
+    ASSERT_EQ(circle->steps.size(), 1u);
+    EXPECT_EQ(circle->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_TRUE(circle->steps[0].engage);          // driving action seeks & fights
+    EXPECT_GT(circle->steps[0].radius, 0.0f);
+    EXPECT_GT(circle->steps[0].zBand, 0.0f);       // floor band set
+}
+
+// The ClearRadius builder packs the centre, radius and floor z-band, and marks
+// the step engage-driven (the objective action walks the tank in to fight).
+TEST(DungeonEventBuilderTest, ClearRadiusStep)
+{
+    DungeonEvent e = EventBuilder(1, 1, "e")
+                         .ClearRadius(10.0f, 20.0f, 30.0f, 55.0f, /*zBand*/ 18.0f)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 1u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_FLOAT_EQ(e.steps[0].x, 10.0f);
+    EXPECT_FLOAT_EQ(e.steps[0].y, 20.0f);
+    EXPECT_FLOAT_EQ(e.steps[0].z, 30.0f);
+    EXPECT_FLOAT_EQ(e.steps[0].radius, 55.0f);
+    EXPECT_FLOAT_EQ(e.steps[0].zBand, 18.0f);
+    EXPECT_TRUE(e.steps[0].engage);
 }
 
 // ZulFarrak temple (Executioner / Bly's Band) event: a PERSISTENT anchored step

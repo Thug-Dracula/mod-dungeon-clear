@@ -821,14 +821,12 @@ bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
     if (!boss)
         return false;
 
-    // Size the avoid-sphere with THIS follower's aggro range and reach: a low-level
-    // follower's notice distance against the boss can differ from the tank's, but
-    // the rest of the formula matches the tank's RoomAggroSkirtPoint exactly so the
-    // party and tank agree on where the sphere ends.
-    radiusOut = boss->GetAggroRange(bot) + bot->GetCombatReach() +
-                boss->GetCombatReach() +
-                DcSettings::GetFloat(bot, "AggroRangeMargin") +
-                DcSettings::GetFloat(bot, "RoomAggroPathPadding");
+    // Size the avoid-sphere with THIS follower's own aggro range and reach (a
+    // low-level follower's notice distance against the boss can differ from the
+    // tank's). The single-source helper is the same formula the tank's skirt and
+    // the room-trash exclusion read, so the party and tank agree on where the
+    // sphere ends.
+    radiusOut = DcEngageGeometry::RoomAggroSphereRadius(bot, boss);
     centerOut = Position(boss->GetPositionX(), boss->GetPositionY(),
                          boss->GetPositionZ(), 0.0f);
     return true;

@@ -167,6 +167,22 @@ public:
     bool Execute(Event event) override;
 };
 
+// Room pre-clear OWNER (fix #2). Paired with DungeonClearRoomPreClearHoldTrigger
+// at relevance 16 — just above the default Advance (15). Runs only on the ticks no
+// higher driver claimed (party resting, between pulls, or no reachable pack right
+// now). It HOLDS the tank at the standoff so the room-aggro-blind Advance can never
+// take those ticks and creep at the boss centre. Defers (returns false) only when
+// the tank has its own corpse to loot, so the loot pipeline below still runs.
+class DungeonClearRoomPreClearHoldAction : public DcMovementAction
+{
+public:
+    DungeonClearRoomPreClearHoldAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear room preclear hold")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Fallback when the tank can't path to the next boss. Picks the closest
 // reachable hostile anywhere on the map and pulls it; clearing obstacles
 // usually unblocks the path on the next advance tick.
@@ -174,6 +190,54 @@ class DungeonClearClearStalledAction : public DungeonClearEngageActionBase
 {
 public:
     DungeonClearClearStalledAction(PlayerbotAI* botAI) : DungeonClearEngageActionBase(botAI, "dungeon clear clear stalled") {}
+    bool Execute(Event event) override;
+};
+
+// --- Sunken Temple (map 109) Avatar of Hakkar encounter ------------------
+// Two in-combat behaviours for the Sanctum of the Fallen, gated to the live
+// encounter (see the Hakkar triggers). Inert everywhere else.
+//
+// SUPPRESSOR: the Nightmare Suppressors (8497) channel a counter on the Shade
+// that RESETS the event at 25. Their channel is an OUT-OF-COMBAT SmartAI event,
+// so merely AGGROing one silences it — we just need to tag them. Top relevance
+// so the party peels onto a suppressor the instant one spawns.
+class DungeonClearHakkarSuppressorAction : public DungeonClearEngageActionBase
+{
+public:
+    DungeonClearHakkarSuppressorAction(PlayerbotAI* botAI)
+        : DungeonClearEngageActionBase(botAI, "dungeon clear hakkar suppressor")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// FLAME: whoever is carrying Hakkari Blood (item 10460, looted from Bloodkeepers
+// 8438) walks to the nearest un-doused Eternal Flame (148418-148421) and USES it
+// — the flame's lock consumes the blood and bumps the Shade's douse counter. Four
+// distinct flames -> the Shade summons the Avatar. Any member, not just the tank.
+class DungeonClearHakkarFlameAction : public DcMovementAction
+{
+public:
+    DungeonClearHakkarFlameAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear hakkar flame")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// LOOT: take Hakkari Blood (10460) from a freshly-killed Bloodkeeper (8438)
+// corpse, driving the loot DIRECTLY (fill + StoreLootItem) so it lands mid-wave
+// — the normal DC loot pipeline only runs out of combat and may quality-filter a
+// white item. Feeds the flame douse; per-corpse latch so each Bloodkeeper yields
+// its blood once. Falls back to a grant if the direct loot can't complete, so a
+// hard-to-reach encounter never stalls for want of blood.
+class DungeonClearHakkarLootBloodAction : public DcMovementAction
+{
+public:
+    DungeonClearHakkarLootBloodAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear hakkar loot blood")
+    {
+    }
     bool Execute(Event event) override;
 };
 

@@ -39,6 +39,10 @@ enum class EventStepKind : uint8
     WaitForSpawn,            // hold until creatureEntry is alive (wantAlive) / gone
     WaitForGameObjectState,  // hold until goEntry reaches GOState `wantState`
     KillCreature,            // gate: done when no alive creatureEntry remain in range
+    ClearRadius,             // engage + gate: clear every reachable hostile within
+                             // `radius` (2D) and a floor `zBand` of (x,y,z); done
+                             // when none remain. POSITION-based (any entry), unlike
+                             // KillCreature — a point-anchored room pre-clear.
     CastSpell,               // leader casts spellId on self (milestone 2+)
     UseItem,                 // leader uses itemId (milestone 2+)
     Wait,                    // dwell `durationMs` then continue
@@ -58,6 +62,8 @@ struct EventStep
     float y{0.0f};
     float z{0.0f};
     float radius{0.0f};      // arrival / search radius; 0 => a per-kind default
+    float zBand{0.0f};       // ClearRadius: vertical half-band around z (keeps a
+                             // multi-level chamber's balconies/pit out of a clear)
 
     uint32 goEntry{0};       // UseGameObject / WaitForGameObjectState
     uint32 creatureEntry{0}; // Gossip target / WaitForSpawn / KillCreature
@@ -221,6 +227,19 @@ public:
                                               uint32 dataId, uint32 minValue);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
                         float x = 0.0f, float y = 0.0f, float z = 0.0f);
+    // Leader casts `spellId` on itself (triggered: no cost/cooldown/reagent/cast
+    // time). For a scripted "use a quest item" spell whose effect a bot cannot
+    // otherwise reach — e.g. Sunken Temple's "Awaken the Soulflayer" (12346),
+    // which a player normally fires via Yeh'kinya's Scroll / Egg of Hakkar to
+    // summon the Shade of Hakkar. The spell's SEND_EVENT script only checks the
+    // instance + event-not-started, so a direct triggered cast summons the Shade
+    // without the quest item (and no-ops if the event already started).
+    EventBuilder& CastSpell(uint32 spellId);
+    // Leader USES `itemId` (granted first if not in bags), via the full item-use
+    // cast path. For a scripted "use a quest item" the bot never earned — Sunken
+    // Temple's Egg of Hakkar (10465), which fires Awaken the Soulflayer to summon
+    // the Shade ONLY when used as an item (a bare CastSpell is rejected).
+    EventBuilder& UseItem(uint32 itemId);
     EventBuilder& Gossip(uint32 creatureEntry, int32 option, float searchRadius = 0.0f);
     EventBuilder& WaitForSpawn(uint32 creatureEntry, bool wantAlive = true,
                                uint32 timeoutMs = 0);
@@ -233,6 +252,12 @@ public:
     // EventStep::engage.
     EventBuilder& KillCreatureEngage(uint32 creatureEntry, uint32 count = 1,
                                      float searchRadius = 0.0f);
+    // Point-anchored room pre-clear: the driving action engages every reachable
+    // hostile within `radius` (2D) and `zBand` (vertical, floor-keeping) of the
+    // centre (x,y,z); the step is Done once none remain. Use on an OBJECTIVE
+    // anchor placed at the centre so boss-nav travels the tank in first.
+    EventBuilder& ClearRadius(float x, float y, float z, float radius,
+                              float zBand = 20.0f);
     EventBuilder& Wait(uint32 durationMs);
     EventBuilder& Custom(uint32 hookId);
 

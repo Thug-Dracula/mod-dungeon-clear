@@ -19,6 +19,7 @@
 #include "MoveSplineInitArgs.h"
 #include "Player.h"
 #include "Playerbots.h"
+#include "Spell.h"
 #include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
@@ -158,6 +159,20 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             return c ? StepResult::Running : StepResult::Done;
         }
 
+        case EventStepKind::ClearRadius:
+        {
+            // Gate only, like KillCreature: Running while any reachable hostile
+            // remains inside the point's radius/floor band, Done once none do. The
+            // engage itself is driven by DcObjectiveArriveAction (engage pipeline).
+            // Evaluated only once the tank is AT the objective (the arrive trigger
+            // gates this), so the in-radius creatures are loaded — no premature
+            // "clear" while still travelling in.
+            float const r = step.radius > 0.0f ? step.radius : 50.0f;
+            Unit* u = DcTargeting::NearestHostileNearPoint(bot, context, step.x, step.y,
+                                                           step.z, r, step.zBand);
+            return u ? StepResult::Running : StepResult::Done;
+        }
+
         case EventStepKind::Wait:
         {
             return (getMSTimeDiff(prog.stepStartMs, nowMs) >= step.durationMs)
@@ -254,10 +269,59 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
         }
 
         case EventStepKind::CastSpell:
+        {
+            // Leader casts spellId on self, triggered (bypassing cost / cooldown /
+            // reagents / cast time / item requirement). Used for a scripted
+            // "use a quest item" spell whose effect a bot cannot otherwise reach
+            // — Sunken Temple's "Awaken the Soulflayer" (12346), normally fired
+            // via Yeh'kinya's Scroll / Egg of Hakkar to summon the Shade of
+            // Hakkar. The spell's SEND_EVENT script only checks the instance +
+            // event-not-started, so a direct triggered cast summons the Shade
+            // without the quest item, and is idempotent (it no-ops once the event
+            // has started). One-shot: cast and report Done.
+            if (step.spellId == 0)
+                return StepResult::Done;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[dungeon-clear] {} event-step CastSpell {}",
+                      bot->GetName(), step.spellId);
+            bot->CastSpell(bot, step.spellId, true);
+            return StepResult::Done;
+        }
+
         case EventStepKind::UseItem:
+        {
+            // Leader USES a quest item (granting it first if the bag lacks it —
+            // bots never ran the questline that awards it). This goes through the
+            // full item-use cast path (CastItemUseSpell), which supplies the
+            // cast-item context the bare spell lacks: Sunken Temple's Egg of
+            // Hakkar (10465) casts "Awaken the Soulflayer" (12346) ONLY when used
+            // as an item — a direct CastSpell(12346) is rejected before its
+            // SEND_EVENT fires (verified: the instance's TYPE_HAKKAR_EVENT stayed
+            // NOT_STARTED). The summon happens at a fixed position, but the egg
+            // must be used FROM the encounter room, so the anchor sits at the room
+            // centre. One-shot: use and report Done.
+            if (step.itemId == 0)
+                return StepResult::Done;
+            Item* item = bot->GetItemByEntry(step.itemId);
+            if (!item)
+            {
+                bot->AddItem(step.itemId, 1);
+                item = bot->GetItemByEntry(step.itemId);
+                if (!item)
+                    return StepResult::Running;  // bags full this tick — retry
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} event-step UseItem {} (encounter trigger)",
+                     bot->GetName(), step.itemId);
+            SpellCastTargets targets;
+            targets.SetUnitTarget(bot);
+            bot->CastItemUseSpell(item, targets, 0, 0);
+            return StepResult::Done;
+        }
+
         default:
-            // Not yet implemented (milestone 3+). Blocked makes an accidentally
-            // authored step stall visibly rather than silently pass.
+            // Not yet implemented. Blocked makes an accidentally authored step
+            // stall visibly rather than silently pass.
             LOG_WARN("playerbots.dungeonclear",
                      "[dungeon-clear] {} event-step kind {} not yet implemented",
                      bot->GetName(), static_cast<uint32>(step.kind));
@@ -364,12 +428,25 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
 
     if (bot)
     {
-        uint32 const timeout = active.timeoutMs ? active.timeoutMs : defaultTimeoutMs;
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] event '{}' step {} kind {} result {} elapsed {}ms timeout {}ms",
-                  bot->GetName(), ev.name, prog.stepIndex,
-                  static_cast<uint32>(active.kind), static_cast<uint32>(result),
-                  static_cast<uint32>(now - prog.stepStartMs), timeout);
+        // Throttle: log only on a transition (step or result change), or every
+        // kLogHeartbeatMs while a step keeps Running — a long WaitForSpawn used to
+        // emit one line per tick (~240ms), burying everything else.
+        constexpr uint32 kLogHeartbeatMs = 5000;
+        bool const changed = prog.lastLoggedStep != static_cast<int32>(prog.stepIndex) ||
+                             prog.lastLoggedResult != static_cast<int32>(result);
+        bool const heartbeat = (now - prog.lastLogMs) >= kLogHeartbeatMs;
+        if (changed || heartbeat)
+        {
+            uint32 const timeout = active.timeoutMs ? active.timeoutMs : defaultTimeoutMs;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] event '{}' step {} kind {} result {} elapsed {}ms timeout {}ms",
+                      bot->GetName(), ev.name, prog.stepIndex,
+                      static_cast<uint32>(active.kind), static_cast<uint32>(result),
+                      static_cast<uint32>(now - prog.stepStartMs), timeout);
+            prog.lastLoggedStep = static_cast<int32>(prog.stepIndex);
+            prog.lastLoggedResult = static_cast<int32>(result);
+            prog.lastLogMs = now;
+        }
     }
 
     return Advance(ev, prog, result, now, defaultTimeoutMs);

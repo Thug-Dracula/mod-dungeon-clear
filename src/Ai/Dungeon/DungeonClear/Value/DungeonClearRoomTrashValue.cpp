@@ -93,9 +93,21 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     // within a combat reach of it, so the reaches keep the tank itself outside
     // the boss's aggro even at point-blank on that unit — the whole point of the
     // exclusion is "don't wake the boss while clearing".
-    float const bossSafe = liveBoss->GetAggroRange(bot) +
-                           bot->GetCombatReach() + liveBoss->GetCombatReach() +
-                           DcSettings::GetFloat(bot, "AggroRangeMargin");
+    //
+    // This exclusion ring MUST be identical to the skirt's avoid ring and the
+    // tank's standoff — they all read the one DcEngageGeometry::RoomAggroSphereRadius
+    // source now. Previously each re-derived the formula and they disagreed by
+    // exactly RoomAggroPathPadding, leaving a dead band of packs KEPT as room-trash
+    // (just outside this ring) but UNREACHABLE by the tank (just inside the skirt's
+    // wider avoid ring): the skirt can't deliver the tank to a point inside its own
+    // no-go zone, so NearestRoomTrash handed the tank a dead-band pack, the skirt
+    // orbited the boss forever, and it never fell through to a genuinely reachable
+    // pack. (Live: a small pack at ~30yd from Jammal'an, inside the 33yd skirt ring
+    // but outside the 27yd exclusion, locked the room clear.) One source keeps any
+    // pack the skirt can't approach "coming with the boss" — cleared by the boss
+    // pull, not chased into the aggro range.
+    float const bossSafe =
+        DcEngageGeometry::RoomAggroSphereRadius(bot, liveBoss);
 
     // Per-reason exclusion tallies — logged below when the kept count changes so
     // a premature "room clear" (set empties while trash is alive, opening the boss
@@ -209,16 +221,18 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         return out;
     }
 
-    // CRITICAL: the room-clear driver (DungeonClearRoomTrashTrigger) only fires
-    // once the tank is at the boss's engage range — while it's still walking the
-    // long path to the room, no trash is being engaged and the count can't drop.
-    // So keep the clock RE-ARMED until the tank actually arrives; otherwise the
-    // whole timeout is burned by the travel leg and the room-clear "gives up"
-    // before the first pull (a 192yd approach trivially outlasts 30s). The
-    // no-progress window must measure stalls WHILE CLEARING, not the walk in.
-    bool const atBoss =
-        DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
-    if (!atBoss)
+    // CRITICAL: the room-clear driver only engages trash once the tank is in the
+    // room — while it's still walking the long path in, no trash is being engaged
+    // and the count can't drop. So keep the clock RE-ARMED until the tank actually
+    // arrives; otherwise the whole timeout is burned by the travel leg and the
+    // room-clear "gives up" before the first pull (a 192yd approach trivially
+    // outlasts 30s). The no-progress window must measure stalls WHILE CLEARING, not
+    // the walk in. Use the same room-clear envelope the driver activates on
+    // (WithinRoomClearWindow) — NOT the tight IsAtBossEngage standoff, which the
+    // tank never reaches while clearing from out on the skirt orbit ring.
+    bool const inRoom =
+        DcEngageGeometry::WithinRoomClearWindow(bot, context, *next);
+    if (!inRoom)
     {
         lastRemaining = remaining;
         lastProgressMs = now;

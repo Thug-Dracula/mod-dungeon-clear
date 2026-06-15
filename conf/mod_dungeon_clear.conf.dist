@@ -285,6 +285,22 @@ DungeonClear.RoomClearTimeout = 30
 DungeonClear.RoomAggroPathPadding = 3.0
 
 #
+#    DungeonClear.RoomAggroPartyMargin
+#        How far OUTSIDE a room-aggro boss's aggro sphere the tank arcs when
+#        skirting around it to reach room trash. The tank itself only needs to
+#        clear aggro, but the party follows imperfectly and cuts the corner, so a
+#        tight skirt on the aggro edge pulls the boss anyway. This buffer makes
+#        the tank "run back at an angle" to a wider stand-off so the trailing
+#        followers stay clear, and from there a straight shot at packs on the far
+#        side of the boss opens up. Raise it if followers still clip the boss;
+#        lower it if the wide arc wastes time or pushes into walls.
+#
+#        Default: 10.0
+#
+
+DungeonClear.RoomAggroPartyMargin = 10.0
+
+#
 #    DungeonClear.BossEngageRangeFloor / DungeonClear.BossEngageRangeCap
 #        Clamp the dynamic boss engage hand-off distance to [floor, cap] yards.
 #        The floor keeps the tank from having to reach point-blank melee on a

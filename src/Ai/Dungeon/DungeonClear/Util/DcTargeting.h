@@ -155,6 +155,18 @@ public:
     // the chance of waking the boss while clearing.
     static Unit* NearestRoomTrash(Player* bot, AiObjectContext* ctx);
 
+    // The nearest reachable, attackable hostile within `radius` (2D) of the point
+    // (px,py,pz) and within `zBand` vertically — or nullptr. Backs the ClearRadius
+    // event step (a POINT-anchored room pre-clear, e.g. Sunken Temple's central
+    // circle before Jammal'an): position-based, NOT entry-based, so it clears
+    // whatever patrols the area regardless of entry. Excludes encounter and
+    // room-aggro bosses, the unreachable, and door-blocked units. Nearest-to-the-
+    // BOT so the tank works inward from where it stands. zBand keeps a multi-level
+    // chamber's balconies (above) and pit (below) out of a floor-level clear.
+    static Unit* NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
+                                         float px, float py, float pz,
+                                         float radius, float zBand = 20.0f);
+
 };
 
 #endif  // _DC_TARGETING_H

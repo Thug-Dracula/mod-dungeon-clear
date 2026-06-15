@@ -9,6 +9,7 @@
 #include "DungeonClearUtil.h"   // DcTargeting::GetLiveBoss (until DcTargeting moves)
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
+#include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include <algorithm>
 #include <cmath>
@@ -113,7 +114,42 @@ float DcEngageGeometry::BossEngageRange(Player* bot, AiObjectContext* ctx,
         range = floorYd;
     if (range > capYd)
         range = capYd;
+
+    // Room-wide-aggro boss (RoomAggroRegistry): engaging it force-pulls the WHOLE
+    // room, so the tank must clear the room from OUTSIDE the boss's aggro sphere
+    // and never cross it during the pre-clear. The capped hand-off above is wrong
+    // for a big-aggro boss: for Jammal'an (sphere ~33yd) the cap (30) lands "at
+    // boss engage" 3yd INSIDE the skirt sphere and only 2yd outside the boss's
+    // real wake distance, so the approach creeps straight through that gap and
+    // wakes the boss before the room is clear (the live failure). Widen the
+    // hand-off to the skirt-sphere edge plus a small overshoot buffer and DROP the
+    // cap, so IsAtBossEngage — which drives the engage HOLD (TryEngageHold), the
+    // room-clear activation (IsRoomClearActive), and the no-progress valve — all
+    // trip while the tank is still clear of the sphere. The boss PULL stays gated
+    // by the at-boss trigger until the room is clear (RoomAggroRegistry + trash
+    // remaining), so this changes only WHERE the tank stands to clear, not when it
+    // pulls.
+    if (RoomAggroRegistry::Find(bot->GetMapId(), boss.entry))
+    {
+        // The single-source sphere (same value the room-trash exclusion and the
+        // skirt avoid-ring use). The standoff sits a fixed buffer OUTSIDE it; the
+        // buffer is a positive constant (see the static_assert by its definition),
+        // so the ordering invariant "tank hold/clear distance > avoid sphere" holds
+        // by construction and cannot drift — the regression that woke Jammal'an.
+        float const sphere = RoomAggroSphereRadius(bot, live);
+        range = std::max(range, sphere + DC_ROOM_AGGRO_STANDOFF_BUFFER);
+    }
     return range;
+}
+
+float DcEngageGeometry::RoomAggroSphereRadius(Player* bot, Creature* boss)
+{
+    if (!bot || !boss)
+        return 0.0f;
+    return boss->GetAggroRange(bot) + bot->GetCombatReach()
+         + boss->GetCombatReach()
+         + DcSettings::GetFloat(bot, "AggroRangeMargin")
+         + DcSettings::GetFloat(bot, "RoomAggroPathPadding");
 }
 float DcEngageGeometry::PullCommitRange(Player* bot, Unit* target, float staticRange)
 {
@@ -143,8 +179,45 @@ float DcEngageGeometry::PullCommitRange(Player* bot, Unit* target, float staticR
     return range;
 }
 
+namespace
+{
+    // True if the navmesh path from the bot to (dx,dy,dz) is a complete walk that
+    // stays OUTSIDE the boss's aggro sphere — i.e. a usable skirt leg. A leg whose
+    // path can't be completed (not PATHFIND_NORMAL) or that plunges back through
+    // the sphere (the only route on that side hugs a wall through the boss's aggro
+    // range) is rejected so the caller can try the other way around the ring.
+    bool SkirtLegIsClean(Player* bot, float dx, float dy, float dz,
+                         float bx, float by, float safeRadius)
+    {
+        PathGenerator gen(bot);
+        gen.CalculatePath(dx, dy, dz, /*forceDest*/ false);
+        if (gen.GetPathType() != PATHFIND_NORMAL)
+            return false;
+
+        Movement::PointsArray const& path = gen.GetPath();
+        // Reject a leg that dips well inside the aggro sphere. Skip the first
+        // point (the bot's own position, which may legitimately graze the ring
+        // edge) and allow a 2yd tolerance so a clean exterior skirt that only
+        // kisses the boundary isn't thrown out.
+        float const intrudeR = safeRadius - 2.0f;
+        if (intrudeR > 0.0f)
+        {
+            float const intrudeSq = intrudeR * intrudeR;
+            for (size_t i = 1; i < path.size(); ++i)
+            {
+                float const px = path[i].x - bx;
+                float const py = path[i].y - by;
+                if (px * px + py * py < intrudeSq)
+                    return false;
+            }
+        }
+        return true;
+    }
+}
+
 std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
-    Player* bot, float bx, float by, float bz, float safeRadius, Unit* target)
+    Player* bot, float bx, float by, float bz, float safeRadius, Unit* target,
+    int8* orbitDir)
 {
     if (!bot || !target || safeRadius <= 0.0f)
         return std::nullopt;
@@ -154,35 +227,132 @@ std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
     float const gx = target->GetPositionX();
     float const gy = target->GetPositionY();
 
-    // Does the straight 2D approach bot->target already stay outside the boss's
-    // aggro sphere? Then no detour — engage directly.
-    if (!NeedsRoomAggroSkirt(tx, ty, gx, gy, bx, by, safeRadius))
+    // Distance from the boss centre to the target (the kept room-trash is always
+    // OUTSIDE the aggro sphere, so this is > safeRadius).
+    float const targetDist = std::sqrt((gx - bx) * (gx - bx) + (gy - by) * (gy - by));
+
+    // Stand WELL back from the aggro sphere, not hard against it. The party
+    // follows the tank imperfectly and cuts the corner, so a tight skirt right on
+    // the aggro edge pulls the boss even when the TANK stays clear. Orbit at the
+    // sphere + a party buffer: the tank "runs back at an angle" out of aggro, and
+    // from that wider stand-off a straight shot at far packs opens up while the
+    // trailing party still has margin. Tunable (RoomAggroPartyMargin).
+    float const partyMargin = DcSettings::GetFloat(bot, "RoomAggroPartyMargin");
+
+    // Clearance the STRAIGHT approach must keep from the aggro sphere before we
+    // stop skirting and walk straight in. Full party margin when the target is far
+    // enough to allow it; but a pack sitting only a few yards outside the sphere
+    // can't be reached with the full buffer, so cap the test radius just under the
+    // target's own distance (else the orbit could never resolve to a straight shot
+    // — the target would sit inside the test ring forever, the boss-centre
+    // infinite-orbit trap). Never below raw aggro: we always clear the sphere.
+    float const earlyOutR = std::max(safeRadius,
+        std::min(safeRadius + partyMargin, targetDist - 1.0f));
+
+    // Does the straight 2D approach bot->target already keep that clearance from
+    // the boss's aggro sphere? Then no detour — engage directly. Release the orbit
+    // latch: the orbit is over (we rounded to the open side / the target moved into
+    // the clear), so the next skirt for any target starts unbiased.
+    if (!NeedsRoomAggroSkirt(tx, ty, gx, gy, bx, by, earlyOutR))
+    {
+        if (orbitDir)
+            *orbitDir = 0;
         return std::nullopt;
+    }
 
     // Orbit the sphere: step the bot's current bearing (measured from the boss)
     // toward the target's bearing by a capped angular increment and place the
     // waypoint on the safe ring there. Called each tick this walks the tank around
-    // the short arc; the early-out above ends the orbit the moment a straight shot
-    // at the target clears the sphere.
+    // the ring; the early-out above ends the orbit the moment a straight shot at
+    // the target clears the sphere.
     float const phi = std::atan2(ty - by, tx - bx);   // bot bearing from boss
     float const angG = std::atan2(gy - by, gx - bx);  // target bearing from boss
     // Shortest signed turn phi->angG, in (-pi, pi].
     float const delta = std::atan2(std::sin(angG - phi), std::cos(angG - phi));
     // ~34 degrees/tick keeps each leg short enough that it hugs the ring exterior.
     constexpr float kOrbitStep = 0.6f;
-    float const step = std::clamp(delta, -kOrbitStep, kOrbitStep);
-    float const wpBearing = phi + step;
+    // Orbit ring: the aggro sphere PLUS the party buffer, so the tank arcs wide
+    // around the OUTSIDE with the followers clear of aggro. For a pack that sits
+    // closer in than this ring (the edge packs at the room's inner wall), the tank
+    // backs out past it to the ring, lines up the bearing, then steps straight IN —
+    // a radial leg that clears the sphere — instead of hugging the aggro edge the
+    // whole way around. Capped to the room via the navmesh snap below.
+    float const wpR = safeRadius + partyMargin;
 
-    // A touch beyond the ring so the tank skirts the OUTSIDE of the aggro sphere.
-    float const wpR = safeRadius * 1.15f + 1.0f;
-    float const wx = bx + std::cos(wpBearing) * wpR;
-    float const wy = by + std::sin(wpBearing) * wpR;
+    // Snap a ring waypoint at `bearing` to the navmesh.
+    auto ringPoint = [&](float bearing) -> std::optional<Position>
+    {
+        float const wx = bx + std::cos(bearing) * wpR;
+        float const wy = by + std::sin(bearing) * wpR;
+        NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot, wx, wy, bz, 25.0f);
+        if (!snap.ok)
+            return std::nullopt;
+        return Position(snap.x, snap.y, snap.z, 0.0f);
+    };
 
-    NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot, wx, wy, bz, 25.0f);
-    if (!snap.ok)
-        return std::nullopt;  // no walkable detour — fall back to a direct approach
+    // Already committed to a rotation direction this orbit? KEEP rounding that
+    // way. Re-deriving the short/long choice every tick is what livelocked the
+    // tank: it would step the long way once (away from the target, "backward"
+    // past the boss), then next tick read the short arc as clean again from the
+    // new spot and step right back — bouncing between two ring points forever,
+    // unable to commit to going all the way around. With the latch the tank
+    // rounds the whole long arc to the open side, where the early-out above fires
+    // and releases the latch. The committed leg is returned even when its own
+    // probe reads blocked (tolerant): one more step that way is how it escapes a
+    // pocket, and the early-out is the only thing that ends the orbit.
+    if (orbitDir && *orbitDir != 0)
+    {
+        if (std::optional<Position> wp = ringPoint(phi + float(*orbitDir) * kOrbitStep))
+            return wp;
+        // Ring snap failed outright — fall through and re-pick a direction.
+    }
 
-    return Position(snap.x, snap.y, snap.z, 0.0f);
+    // Two candidate directions around the ring:
+    //  - SHORT arc: turn the bot's bearing toward the target (the natural,
+    //    shortest detour — correct when that side is open).
+    //  - LONG arc: the opposite way around. Needed when the short side is
+    //    wall-blocked: the live Jammal'an case orbited the short arc straight
+    //    into a wall behind the boss and stalled, hugging the wall INTO his aggro
+    //    range. Rounding the open front instead reaches the far packs cleanly.
+    float const shortBearing = phi + std::clamp(delta, -kOrbitStep, kOrbitStep);
+    float const longBearing = phi - std::copysign(kOrbitStep, delta);
+    // Rotation sign (bearing += dir * step) for each arc. Short turns toward the
+    // target's bearing (sign of delta); long is the opposite way around.
+    int8 const shortDir = (delta >= 0.0f) ? int8(1) : int8(-1);
+
+    std::optional<Position> shortWp = ringPoint(shortBearing);
+    if (shortWp && SkirtLegIsClean(bot, shortWp->GetPositionX(),
+                                   shortWp->GetPositionY(), shortWp->GetPositionZ(),
+                                   bx, by, safeRadius))
+    {
+        // Short arc converges monotonically (delta shrinks each step) and can't
+        // oscillate on its own, so it needs no latch — leaving it unlatched lets
+        // the choice re-evaluate to LONG the moment the arc runs into a wall.
+        if (orbitDir)
+            *orbitDir = 0;
+        return shortWp;
+    }
+
+    std::optional<Position> longWp = ringPoint(longBearing);
+    if (longWp && SkirtLegIsClean(bot, longWp->GetPositionX(),
+                                  longWp->GetPositionY(), longWp->GetPositionZ(),
+                                  bx, by, safeRadius))
+    {
+        // Commit: latch the long rotation direction so we round the whole way.
+        if (orbitDir)
+            *orbitDir = int8(-shortDir);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] room-clear skirt: short arc blocked, rounding the long "
+                  "way -> detour ({:.1f}, {:.1f})",
+                  bot->GetName(), longWp->GetPositionX(), longWp->GetPositionY());
+        return longWp;
+    }
+
+    // Neither side validated a clean leg (tight geometry, or the probe couldn't
+    // build a full path) — keep the legacy short-arc snap rather than abandoning
+    // the skirt and bee-lining through the sphere. May be nullopt, in which case
+    // the caller falls through to the direct approach exactly as before.
+    return shortWp;
 }
 
 bool DcEngageGeometry::NeedsRoomAggroSkirt(float botX, float botY,
@@ -199,6 +369,46 @@ bool DcEngageGeometry::NeedsRoomAggroSkirt(float botX, float botY,
         bossX, bossY, botX, botY, targetX, targetY);
     return clipSq < avoidRadius * avoidRadius;
 }
+namespace
+{
+    // Shared body for the boss-proximity predicates (IsAtBossEngage at the engage
+    // standoff; WithinRoomClearWindow at the wider room envelope): within `range`
+    // of the boss AND on a navigable SAME level — not a floor up/down. `live` may
+    // be null (boss not loaded), in which case bx/by/bz are the static spawn
+    // coords (necessarily far and only reached on the tank's own floor).
+    bool WithinBossRangeOnFloor(Player* bot, Creature* live,
+                                float bx, float by, float bz, float range)
+    {
+        if (bot->GetDistance(bx, by, bz) >= range)
+            return false;
+
+        // Same-floor fast path: within tolerance the straight-line distance is the
+        // real approach distance (slopes/ramps stay under it). Skips the path probe
+        // in the overwhelmingly common case.
+        float const dz = std::fabs(bz - bot->GetPositionZ());
+        if (dz <= DC_Z_LEVEL_TOLERANCE)
+            return true;
+        if (!live)
+            return true;
+
+        // Vertically separated: a 3D-close boss may be a whole floor below/above
+        // (the tank on a walkway over Rethilgore, or parked under Fenrus). Straight-
+        // line proximity is then a lie — require the NAVIGATIONAL distance to be
+        // within range AND to end on the boss's level, so a balcony/overhead boss
+        // defers the handoff and Advance keeps walking the route to the right floor.
+        PathGenerator gen(bot);
+        gen.CalculatePath(bx, by, bz, /*forceDest*/ false);
+        if (gen.GetPathType() != PATHFIND_NORMAL)
+            return false;
+        Movement::PointsArray const& path = gen.GetPath();
+        if (path.empty())
+            return false;
+        if (std::fabs(path.back().z - bz) > DC_Z_LEVEL_TOLERANCE)
+            return false;
+        return gen.getPathLength() <= range;
+    }
+}
+
 bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                       DungeonBossInfo const& boss, float staticRange)
 {
@@ -211,52 +421,39 @@ bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
     float const bz = live ? live->GetPositionZ() : boss.z;
 
     float const engageRange = BossEngageRange(bot, ctx, boss, staticRange);
+    return WithinBossRangeOnFloor(bot, live, bx, by, bz, engageRange);
+}
 
-    // Straight-line aggro-bubble gate (same value the trigger ladder reads).
-    if (bot->GetDistance(bx, by, bz) >= engageRange)
+bool DcEngageGeometry::WithinRoomClearWindow(Player* bot, AiObjectContext* ctx,
+                                             DungeonBossInfo const& boss)
+{
+    if (!bot || !ctx)
         return false;
 
-    // Same-floor fast path: within tolerance the straight-line distance is the
-    // real approach distance (slopes/ramps stay under it), so trust the gate
-    // above. Skips the path probe in the overwhelmingly common case.
-    float const dz = std::fabs(bz - bot->GetPositionZ());
-    if (dz <= DC_Z_LEVEL_TOLERANCE)
-        return true;
+    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), boss.entry);
+    if (!room)
+        return false;   // not a room-aggro boss — no room-clear window
 
-    // Static coords (boss not loaded) are necessarily far and only reached on
-    // the tank's own floor; no under/over-the-ledge case to guard against.
-    if (!live)
-        return true;
+    Creature* live = DcTargeting::GetLiveBoss(bot, ctx, boss.entry);
+    float const bx = live ? live->GetPositionX() : boss.x;
+    float const by = live ? live->GetPositionY() : boss.y;
+    float const bz = live ? live->GetPositionZ() : boss.z;
 
-    // Vertically separated: a 3D-close boss may be a whole floor below or above
-    // — the tank on a balcony/walkway directly over Rethilgore, or parked under
-    // an upper-floor boss like Fenrus. Straight-line proximity is then a lie:
-    // the real approach winds down stairs/ramps and the boss can neither be
-    // pulled (no LOS / out of its own aggro band) nor does the tank ever reach
-    // it, so the at-boss handoff fires and the run dead-stops in "Holding near".
-    //
-    // The old guard (IsLevelReachable) only asked whether SOME ground path to
-    // the boss's level exists — which, in a connected dungeon, it almost always
-    // does — so it failed to catch this. Require instead that the NAVIGATIONAL
-    // distance to the boss is itself within engage range: a real arrival, not a
-    // long detour down. A boss directly overhead clamps off-mesh (PathGenerator
-    // snaps the destination back to the tank's own floor) and fails the
-    // end-on-boss-level check; a balcony boss produces a long stairs path and
-    // fails the length check. Either way the handoff defers and Advance keeps
-    // walking the route to the boss's floor, where dz collapses and the pull
-    // fires for real.
-    PathGenerator gen(bot);
-    gen.CalculatePath(bx, by, bz, /*forceDest*/ false);
-    if (gen.GetPathType() != PATHFIND_NORMAL)
-        return false;
-
-    Movement::PointsArray const& path = gen.GetPath();
-    if (path.empty())
-        return false;
-    if (std::fabs(path.back().z - bz) > DC_Z_LEVEL_TOLERANCE)
-        return false;
-
-    return gen.getPathLength() <= engageRange;
+    // The room-clear DRIVER roams the whole room: it orbits the avoid sphere on a
+    // ring at safeRadius + RoomAggroPartyMargin (navmesh-snapped, so a few yards
+    // wider still), and walks out to packs anywhere inside the room radius. Gate
+    // the window on whichever is larger — the room, or the orbit ring — plus a
+    // buffer, so the bot NEVER falls out of the room-clear window while legitimately
+    // rounding the sphere or reaching a far pack. The tight IsAtBossEngage standoff
+    // was inside the orbit ring (37 < 43 for Jammal'an), so the bot running back
+    // onto the ring exited the window and was handed to the boss-bound Advance —
+    // the live failure. NB this is the DRIVER window; the governor keeps its own
+    // narrow keep-out ring so it only HOLDS near the boss, never freezing the
+    // approach or a far-pack excursion.
+    float const sphere = RoomAggroSphereRadius(bot, live);
+    float const orbit = sphere + DcSettings::GetFloat(bot, "RoomAggroPartyMargin");
+    float const window = std::max(room->radius, orbit) + DC_ROOM_AGGRO_STANDOFF_BUFFER;
+    return WithinBossRangeOnFloor(bot, live, bx, by, bz, window);
 }
 bool DcEngageGeometry::IsRangedAttacker(Player* bot, Unit* u)
 {

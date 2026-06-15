@@ -778,11 +778,21 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(A
         MovementGeneratorType const gen =
             tmm ? tmm->GetCurrentMovementGeneratorType() : NULL_MOTION_TYPE;
         float const posDelta = lastPosValid ? cur.GetExactDist(lastPos) : -1.0f;
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance tick: posDelta={:.2f}yd moving={} gen={}({}) combat={}",
-                  bot->GetName(), posDelta, bot->isMoving() ? 1 : 0,
-                  MoveGenTypeName(gen), static_cast<uint32>(gen),
-                  bot->IsInCombat() ? 1 : 0);
+        // Throttle: this per-tick line exists to diagnose the pacing WEDGE, so log
+        // it only when something looks wrong — barely moving (posDelta < 0.5yd)
+        // while supposedly travelling — or on a 5s heartbeat. Healthy gliding
+        // (~1.4yd/tick) no longer emits one line per tick.
+        uint32 const nowMs = getMSTime();
+        bool const suspicious = posDelta >= 0.0f && posDelta < 0.5f;
+        if (suspicious || (nowMs - appr.lastTickLogMs) >= 5000)
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] advance tick: posDelta={:.2f}yd moving={} gen={}({}) combat={}",
+                      bot->GetName(), posDelta, bot->isMoving() ? 1 : 0,
+                      MoveGenTypeName(gen), static_cast<uint32>(gen),
+                      bot->IsInCombat() ? 1 : 0);
+            appr.lastTickLogMs = nowMs;
+        }
     }
 
     lastPos = cur;

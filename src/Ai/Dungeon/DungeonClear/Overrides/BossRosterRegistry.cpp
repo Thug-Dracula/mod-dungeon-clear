@@ -112,24 +112,31 @@ namespace
             // their real bits and natural order.
             //
             // FORCEFIELD via OBJECTIVE anchors (not a conditional event). The six
-            // Atal'ai defenders stand on an upper BALCONY ring whose only walkable
-            // approach is a long multi-level route around the room — a raw
-            // MoveTo/EngageDirect (74-cap PathGenerator) overruns the cap, resolves
-            // INCOMPLETE, and walks the tank to the wrong floor-level room under
-            // the balcony (live-verified). Only boss-nav's LongRangePathfinder (no
-            // cap) resolves the full ring ascent, so the defenders are reached via
-            // three ring anchors ordered 0/1/2 (before Jammal'an), each killing one
-            // adjacent pair via its event (1/12/13). See SunkenTempleEvents.cpp.
+            // Atal'ai defenders each stand on their OWN separate upper BALCONY
+            // whose only walkable approach is a long multi-level route around the
+            // room — a raw MoveTo/EngageDirect (74-cap PathGenerator) overruns the
+            // cap, resolves INCOMPLETE, and walks the tank to the wrong floor-level
+            // room under the balcony (live-verified). Only boss-nav's
+            // LongRangePathfinder (no cap) resolves each ring approach, so EACH
+            // defender gets its OWN anchor (six total). An earlier design paired
+            // two defenders per anchor and engaged the second via EngageDirect;
+            // that second, far defender could not be pathed and was skipped — the
+            // reported "it skips the second boss of the group" bug.
             //
-            // ORDER INDICES ARE INFERRED. dungeonencounter_dbc is empty in this DB,
-            // so the kept bosses' real bits (plan §9.2: Jammal'an 3, Morphaz 4,
-            // Hazzas 6, Eranikus 8) must be confirmed live (`dc bosses`). The
-            // objective indices below are chosen against those inferred bits:
-            //   0,1,2  forcefield ring anchors (before Jammal'an 3)
-            //   5  Weaver & Dreamscythe (after Jammal'an 3 / Morphaz 4, before
-            //      Hazzas 6) — ONE merged objective (they are ~10yd apart and
-            //      un-phase together; two same-index objectives would be skipped
-            //      by NextDungeonBossValue's strictly-greater advance-forward).
+            // ORDER INDICES (real DBC bits, read from DungeonEncounter.dbc:
+            // Jammal'an 3, Morphaz 5, Hazzas 6, Eranikus 8; Atal'alarion 0,
+            // Dreamscythe 1, Weaver 2 are removed). Objective indices below:
+            //   0      all six forcefield defenders (before Jammal'an 3) — they
+            //          share index 0 and are visited as one gate by
+            //          NextDungeonBossValue::PickTarget's same-index-first advance
+            //          (only the spawned auto boss at bit 0, Atal'alarion, used
+            //          this slot, and it is removed). Order among them is the
+            //          ring-sweep insertion order; the forcefield drops once all
+            //          six die regardless of which order they fall in.
+            //   5  Weaver & Dreamscythe (after Jammal'an 3, shares Morphaz's bit 5
+            //      so it is reached just before Morphaz via the same same-index
+            //      advance) — ONE merged objective (they are ~10yd apart and
+            //      un-phase together).
             //   10..15 six statues in click order } the whole OPTIONAL pit wing at
             //   16     Atal'alarion                } the route tail (all > Eranikus
             //   17     Idol of Hakkar               } 8) so a pit pathing failure
@@ -142,19 +149,53 @@ namespace
                 // 8580 are auto-derived bosses at bits 2/1/0 respectively.)
                 p.remove = { 5720, 5721, 8580 };
                 p.add = {
-                    // GATE 1 forcefield — three ring anchors in a monotonic sweep
-                    // around the balcony, each killing one adjacent defender pair
-                    // (boss-nav drives the ascent + inter-anchor travel). At each
-                    // anchor's lead defender's spawn coords (Z ≈ −66.8).
-                    MakeObjective(OBJ(11), /*orderIndex*/ 0, 109, "Atal'ai Defenders (Mijan & Zul'Lor)",
+                    // GATE 1 forcefield — SIX ring anchors, one per Atal'ai
+                    // defender, in a monotonic sweep around the balcony. Each
+                    // defender stands on its OWN separate balcony reachable only
+                    // by a long, winding multi-level route, so each needs its own
+                    // boss-nav anchor (LongRangePathfinder, no 74-cap) to be
+                    // travelled to — a single anchor that then tried to engage a
+                    // second, far defender via EngageDirect (raw capped MoveTo)
+                    // could not path the trip and SKIPPED that second defender
+                    // (the live "it skips the second boss of the group" bug). All
+                    // six share encounterIndex 0 so they sort before Jammal'an
+                    // (bit 3, the gate they unlock) and are visited as one gate by
+                    // NextDungeonBossValue::PickTarget's same-index-first advance;
+                    // each carries a one-kill event (1/12/13/14/15/16). Coords are
+                    // each defender's own spawn (Z ≈ −66.8). Ring-sweep order
+                    // (≈30°→90°→…→330° around centre −467,95).
+                    MakeObjective(OBJ(11), /*orderIndex*/ 0, 109, "Atal'ai Defender (Mijan)",
                                   -406.2f, 131.1f, -66.9f, /*arriveRadius*/ 15.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
-                    MakeObjective(OBJ(12), /*orderIndex*/ 1, 109, "Atal'ai Defenders (Zolo & Gasher)",
-                                  -528.6f, 130.2f, -66.8f, /*arriveRadius*/ 15.0f,
+                    MakeObjective(OBJ(12), /*orderIndex*/ 0, 109, "Atal'ai Defender (Zul'Lor)",
+                                  -467.4f, 166.0f, -66.7f, /*arriveRadius*/ 15.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 12),
-                    MakeObjective(OBJ(13), /*orderIndex*/ 2, 109, "Atal'ai Defenders (Loro & Hukku)",
-                                  -466.7f, 24.4f, -66.8f, /*arriveRadius*/ 15.0f,
+                    MakeObjective(OBJ(13), /*orderIndex*/ 0, 109, "Atal'ai Defender (Zolo)",
+                                  -528.6f, 130.2f, -66.8f, /*arriveRadius*/ 15.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 13),
+                    MakeObjective(OBJ(14), /*orderIndex*/ 0, 109, "Atal'ai Defender (Gasher)",
+                                  -528.0f, 59.5f, -66.7f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 14),
+                    MakeObjective(OBJ(15), /*orderIndex*/ 0, 109, "Atal'ai Defender (Loro)",
+                                  -466.7f, 24.4f, -66.8f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 15),
+                    MakeObjective(OBJ(16), /*orderIndex*/ 0, 109, "Atal'ai Defender (Hukku)",
+                                  -405.5f, 60.5f, -67.1f, /*arriveRadius*/ 15.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 16),
+
+                    // Central circle PRE-CLEAR (orderIndex 1: after the six
+                    // defenders at 0, before Jammal'an at 3). The big circular
+                    // floor around the central pit is patrolled by dangerous packs
+                    // (whelps/wanderers/scalebanes); Weaver & Dreamscythe un-phase
+                    // and circle this floor AFTER Jammal'an dies, so it must be
+                    // swept FIRST. A ClearRadius event (17) clears every reachable
+                    // hostile within 60yd (2D) and a 20yd floor band of the pit
+                    // centre — z-banded so the upper defender balconies and the
+                    // deep statue/Atal'alarion pit are excluded. arriveRadius 20
+                    // puts the tank in the circle before the clear gate evaluates.
+                    MakeObjective(OBJ(17), /*orderIndex*/ 1, 109, "Central Circle (pre-clear)",
+                                  -467.0f, 95.0f, -91.0f, /*arriveRadius*/ 20.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 17),
 
                     // Required spine: Weaver + Dreamscythe (un-phased by Jammal'an).
                     // One objective at their midpoint kills both via event 10.
@@ -180,9 +221,13 @@ namespace
                     // Atal'alarion un-phases at statuePhase 6; killed via event 11.
                     MakeObjective(OBJ(8), 16, 109, "Atal'alarion",
                                   -480.4f, 96.6f, -189.7f, 30.0f, 0, 0, /*eventId*/ 11),
-                    // Idol usable after Atal'alarion dies; click it (event 8).
-                    MakeObjective(OBJ(9), 17, 109, "Idol of Hakkar",
-                                  -476.3f, 94.4f, -189.7f, 12.0f, 0, 0, /*eventId*/ 8),
+                    // Start the Avatar encounter: USE the Egg of Hakkar at the
+                    // CENTRE of the Sanctum of the Fallen (the Shade-spawn spot),
+                    // not down at the pit idol (a QUESTGIVER no-op). Anchored at
+                    // the room centre so boss-nav stands the tank there before the
+                    // egg fires (event 8). Same spot as the Avatar anchor below.
+                    MakeObjective(OBJ(9), 17, 109, "Awaken the Soulflayer",
+                                  -466.8f, 272.9f, -90.4f, 8.0f, 0, 0, /*eventId*/ 8),
                     // Avatar manifests in the north flame room (event 9). NO
                     // gateEntry: a gate firing the Persistent event from afar (the
                     // tank still in the pit) would run its KillCreature gates with

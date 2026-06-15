@@ -14,6 +14,7 @@
 
 class Player;
 class Unit;
+class Creature;
 class GameObject;
 class WorldObject;
 class AiObjectContext;
@@ -59,6 +60,21 @@ public:
     static float PullCommitRange(Player* bot, Unit* target, float staticRange);
 
     // --- Room-aggro clear: skirt the boss's aggro sphere -------------------
+    // SINGLE SOURCE OF TRUTH for the room-aggro "avoid sphere": the radius around
+    // a flagged boss the tank/party must stay OUTSIDE while pre-clearing its room,
+    // so clearing never wakes the boss. EVERY room-aggro radius derives from this
+    // one value — the room-trash exclusion (DungeonClearRoomTrashValue), the skirt
+    // avoid-ring (AggroSafeApproachPoint's safeRadius), the follower skirt
+    // (DcLeaderSignal), and the tank's boss-engage standoff (BossEngageRange).
+    // Sized off `bot`'s OWN notice distance against the boss (a low-level follower
+    // differs from the tank) + both combat reaches + the aggro margin + path
+    // padding: a melee unit standing within a combat reach of the nearest still-
+    // clearable pack (just outside this sphere) is still kept clear of the boss's
+    // real aggro. Centralising it is what ends the recurring "two radii drifted
+    // apart -> dead band / aggro leak" class of bug — callers MUST use this rather
+    // than re-deriving the formula. Returns 0 when either input is missing.
+    static float RoomAggroSphereRadius(Player* bot, Creature* boss);
+
     // When clearing a room before a boss whose engage drags the WHOLE room into
     // combat (RoomAggroRegistry), the tank must reach each trash pack WITHOUT its
     // approach path crossing the boss's aggro sphere — otherwise it wakes the boss
@@ -78,8 +94,16 @@ public:
     // once the direct approach is clear (engage the target straight) or when no
     // walkable detour can be snapped (fall back to the direct approach rather than
     // freeze the clear).
+    //
+    // `orbitDir` (optional, in/out) latches the rotation direction once the skirt
+    // commits to rounding the LONG way around a wall-blocked short arc, so the
+    // tank rounds the whole long way (going "backward" past the boss) instead of
+    // flipping back toward the target every tick and bouncing between two ring
+    // points forever. Pass nullptr for a one-shot, latch-free skirt (followers).
+    // Reset to 0 by this function the instant the straight approach clears.
     static std::optional<Position> AggroSafeApproachPoint(
-        Player* bot, float bx, float by, float bz, float safeRadius, Unit* target);
+        Player* bot, float bx, float by, float bz, float safeRadius, Unit* target,
+        int8* orbitDir = nullptr);
 
     // The chooser behind AggroSafeApproachPoint, factored out as pure geometry so
     // it can be unit-tested without a live map: true when the straight 2D line
@@ -103,6 +127,18 @@ public:
     // all gate on this so they agree on "are we at the boss".
     static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                DungeonBossInfo const& boss, float staticRange);
+
+    // True when the tank is inside the room-clear ENVELOPE of a room-aggro boss —
+    // the whole region the deliberate room-clear roams: max(room radius, skirt
+    // orbit ring) + a buffer, on the boss's own floor. WIDER than IsAtBossEngage
+    // (the engage standoff), which sat INSIDE the orbit ring and so dropped the
+    // bot out of the room-clear window the moment it ran back onto the ring to
+    // round the sphere (handing it to the boss-bound Advance — the live Jammal'an
+    // failure). This is the DRIVER's window (DcTargeting::IsRoomClearActive + the
+    // no-progress valve); the governor enforces a separate, narrower keep-out ring.
+    // Returns false for a non-room-aggro boss (no envelope).
+    static bool WithinRoomClearWindow(Player* bot, AiObjectContext* ctx,
+                                      DungeonBossInfo const& boss);
 
     // True when `u` is a creature that fights at RANGE — a caster or a physical
     // ranged attacker — and will therefore stand and shoot/cast from afar instead
