@@ -323,6 +323,29 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- The Deadmines (map 36) — Defias Cannon door ------------------
+            // The Iron Clad Door (GO 16397, lock 202 — rogue-pick only) seals the
+            // foundry from the pirate ship; a bot party can never click it open.
+            // Add the Defias Cannon (GO 16398) as an OBJECTIVE anchor so boss-nav
+            // drives the tank to it between Gilnid (bit 2, last foundry boss) and
+            // Mr. Smite (bit 3, first ship boss); the event (eventId 1) fires the
+            // cannon, opening the door to the whole ship (Smite 3, Cookie 4,
+            // Greenskin 5, VanCleef 6). encounterIndex 3 is shared with Mr. Smite:
+            // the objective-before-boss tie-break + the picker's strictly-greater
+            // advance hand the objective over first, then the boss. No gateEntry
+            // (the event owns completion via the door-open gate; see
+            // DeadminesEvents).
+            {
+                BossRosterPatch p;
+                p.mapId = 36;
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 3, 36, "Iron Clad Door",
+                                  -107.56f, -659.67f, 7.21f, /*arriveRadius*/ 10.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;

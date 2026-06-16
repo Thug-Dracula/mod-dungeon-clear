@@ -391,6 +391,34 @@ TEST(DungeonEventRegistryTest, BlackrockRingOfLawEventShape)
     EXPECT_EQ(e->steps[2].timeoutMs, 600000u);
 }
 
+// Deadmines Defias Cannon: walk to the cannon, fire it (Custom hook 2 casts the
+// gunpowder spell at GO 16398), then hold until the Iron Clad Door (16397) opens.
+TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 3u);  // between Gilnid (2) and Mr. Smite (3)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 3u);
+
+    // 1. step onto the cannon.
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, -107.56f);
+
+    // 2. fire it (Custom -> FireDefiasCannon hook id 2).
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
+    EXPECT_EQ(e->steps[1].hookId, 2u);
+
+    // 3. hold until the Iron Clad Door opens (GO_STATE_ACTIVE_ALTERNATIVE).
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[2].goEntry, 16397u);
+    EXPECT_EQ(e->steps[2].wantState, 2u);
+    EXPECT_EQ(e->steps[2].timeoutMs, 30000u);
+}
+
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate
 // creature, so the executor holds at the point until that creature is up.
 TEST(DungeonEventBuilderTest, MoveToHoldUntilSpawn)

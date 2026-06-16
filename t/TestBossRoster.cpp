@@ -39,6 +39,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(109));   // Sunken Temple
     EXPECT_TRUE(BossRosterRegistry::HasPatch(209));   // ZulFarrak
     EXPECT_TRUE(BossRosterRegistry::HasPatch(230));   // Blackrock Depths
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(36));    // Deadmines
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -95,6 +96,36 @@ TEST(BossRosterRegistryTest, RingOfLawObjectiveSortsBetweenGrebmarAndLoregrain)
     EXPECT_LT(ringIdx, loregrainIdx) << "Ring of Law must precede Loregrain";
     EXPECT_EQ(out[ringIdx].encounterIndex, 3u);
     EXPECT_EQ(out[ringIdx].eventId, 1u);
+}
+
+// Deadmines: the Defias Cannon objective shares Mr. Smite's bit (3); the
+// objective-before-boss tie-break must order it after Gilnid (bit 2) and before
+// Mr. Smite, so the tank opens the Iron Clad Door before heading to the ship.
+TEST(BossRosterRegistryTest, IronCladDoorSortsBetweenGilnidAndMrSmite)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(1763, 2, "Gilnid", 36),
+        Boss(646, 3, "Mr. Smite", 36),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(36, base);
+
+    int gilnidIdx = -1, doorIdx = -1, smiteIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 1763)
+            gilnidIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective)
+            doorIdx = i;
+        if (out[i].entry == 646)
+            smiteIdx = i;
+    }
+    ASSERT_GE(doorIdx, 0) << "Iron Clad Door objective missing";
+    ASSERT_GE(gilnidIdx, 0);
+    ASSERT_GE(smiteIdx, 0);
+    EXPECT_LT(gilnidIdx, doorIdx) << "cannon must follow Gilnid";
+    EXPECT_LT(doorIdx, smiteIdx) << "cannon must precede Mr. Smite";
+    EXPECT_EQ(out[doorIdx].encounterIndex, 3u);
+    EXPECT_EQ(out[doorIdx].eventId, 1u);
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes

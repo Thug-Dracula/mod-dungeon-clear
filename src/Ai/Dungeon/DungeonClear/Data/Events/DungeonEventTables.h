@@ -52,6 +52,7 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out);
 void RegisterScarletMonasteryEvents(std::vector<DungeonEvent>& out);
 void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out);
 void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out);
+void RegisterDeadminesEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);
