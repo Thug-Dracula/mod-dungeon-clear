@@ -151,6 +151,7 @@ TEST(DungeonEventRegistryTest, FindAndHasEvents)
 {
     EXPECT_NE(DungeonEventRegistry::Find(109, 1), nullptr);  // Sunken Temple forcefield
     EXPECT_NE(DungeonEventRegistry::Find(209, 1), nullptr);  // ZulFarrak summit
+    EXPECT_NE(DungeonEventRegistry::Find(230, 1), nullptr);  // BRD Ring of Law
     EXPECT_NE(DungeonEventRegistry::Find(109, 11), nullptr);  // ST Atal'alarion
     EXPECT_EQ(DungeonEventRegistry::Find(109, 99), nullptr);  // no such event
     EXPECT_EQ(DungeonEventRegistry::Find(0, 1), nullptr);    // no such map
@@ -355,6 +356,39 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[8].kind, EventStepKind::KillCreature);
     EXPECT_EQ(e->steps[8].creatureEntry, 7604u);
     EXPECT_TRUE(e->steps[8].engage);
+}
+
+// Blackrock Depths Ring of Law (map 230): a PERSISTENT anchored event that walks
+// the tank onto the centre trigger, ensures the encounter started (Custom
+// fallback), then holds dead-centre until TYPE_RING_OF_LAW (1) reaches DONE (3)
+// while the random waves + boss are fought reactively. NOT a ClearRadius/count
+// gate (those would false-complete in the empty-floor windows).
+TEST(DungeonEventRegistryTest, BlackrockRingOfLawEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(230, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 3u);  // between Grebmar (2) and Loregrain (4)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 3u);
+
+    // 1. settle on the arena centre (area trigger 1526 spot).
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, 596.432f);
+    EXPECT_EQ(e->steps[0].instanceDataId, -1);  // plain MoveTo, no gate
+
+    // 2. ensure the encounter started (Custom -> EnsureRingStarted hook id 1).
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
+    EXPECT_EQ(e->steps[1].hookId, 1u);
+
+    // 3. garrison the centre until TYPE_RING_OF_LAW (1) reaches DONE (3); long
+    //    timeout for the boss fight.
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e->steps[2].instanceDataId, 1);    // TYPE_RING_OF_LAW
+    EXPECT_EQ(e->steps[2].instanceDataMin, 3u);  // EncounterState::DONE
+    EXPECT_EQ(e->steps[2].timeoutMs, 600000u);
 }
 
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate

@@ -247,6 +247,7 @@ namespace
             RegisterRazorfenDownsEvents(t);
             RegisterSunkenTempleEvents(t);
             RegisterZulFarrakEvents(t);
+            RegisterBlackrockDepthsEvents(t);
             return t;
         }();
         return kEvents;

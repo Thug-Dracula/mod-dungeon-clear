@@ -38,6 +38,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(189));   // SM Cathedral
     EXPECT_TRUE(BossRosterRegistry::HasPatch(109));   // Sunken Temple
     EXPECT_TRUE(BossRosterRegistry::HasPatch(209));   // ZulFarrak
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(230));   // Blackrock Depths
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -64,6 +65,36 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
     ASSERT_GE(ukorzIdx, 0);
     EXPECT_LT(objIdx, ukorzIdx) << "objective must precede Ukorz despite equal bit";
     EXPECT_EQ(out[objIdx].encounterIndex, 7u);
+}
+
+// Blackrock Depths: the Ring of Law objective (its own DungeonEncounter bit 3,
+// credited to the spawn-less Grimstone) is injected between Houndmaster Grebmar
+// (bit 2) and Pyromancer Loregrain (bit 4), carrying the arena event.
+TEST(BossRosterRegistryTest, RingOfLawObjectiveSortsBetweenGrebmarAndLoregrain)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(9319, 2, "Houndmaster Grebmar", 230),
+        Boss(9024, 4, "Pyromancer Loregrain", 230),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, base);
+
+    int grebmarIdx = -1, ringIdx = -1, loregrainIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 9319)
+            grebmarIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective)
+            ringIdx = i;
+        if (out[i].entry == 9024)
+            loregrainIdx = i;
+    }
+    ASSERT_GE(ringIdx, 0) << "Ring of Law objective missing";
+    ASSERT_GE(grebmarIdx, 0);
+    ASSERT_GE(loregrainIdx, 0);
+    EXPECT_LT(grebmarIdx, ringIdx) << "Ring of Law must follow Grebmar";
+    EXPECT_LT(ringIdx, loregrainIdx) << "Ring of Law must precede Loregrain";
+    EXPECT_EQ(out[ringIdx].encounterIndex, 3u);
+    EXPECT_EQ(out[ringIdx].eventId, 1u);
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
