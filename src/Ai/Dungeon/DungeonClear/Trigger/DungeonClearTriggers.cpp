@@ -510,6 +510,20 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
+    // Stand down when a CONDITIONAL event is due for this map: the event owns the
+    // way forward (e.g. Uldaman's keystone opens the Seal of Khaz'Mul, SFK's freed
+    // prisoner opens the courtyard door), and DcRunEventAction (relevance 31) must
+    // be the one to drive it. Parking + auto-pausing here would otherwise race
+    // ahead of the event and DEADLOCK an event whose door the bot must ACTIVELY
+    // open (a paused run can't drive the keystone). FindDueConditionalEvent reads
+    // false again the moment the event latches / the door opens, so this only
+    // yields for the narrow window the event is actually live. Same answer the
+    // event-due trigger uses, so the two never disagree.
+    if (DungeonEventRegistry::HasEvents(map->GetId()) &&
+        DcLeaderSignal::IsDungeonClearLeader(bot) &&
+        DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()) != nullptr)
+        return false;
+
     // Non-empty GUID means the blocking-door value found a closed door
     // within the corridor. Empty means clear path. Polled at 500ms by the
     // value itself, so this trigger is cheap.
