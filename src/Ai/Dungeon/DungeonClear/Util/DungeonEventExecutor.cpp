@@ -5,6 +5,7 @@
 
 #include "DungeonEventExecutor.h"
 
+#include <cmath>
 #include <optional>
 #include <unordered_set>
 
@@ -12,6 +13,7 @@
 #include "GameObject.h"
 #include "GameObjectData.h"
 #include "GossipDef.h"
+#include "Group.h"
 #include "InstanceScript.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
@@ -54,6 +56,55 @@ namespace
             return;
         bot->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
                                           /*generatePath*/ true, false);
+    }
+
+    // A Jump step bridges an OFF-MESH gap (a drop-down ledge): the leader leaps
+    // it, but the followers' path-follow has no navmesh across the gap and they
+    // strand on the lip. Once the leader has landed, relocate any party BOT still
+    // stuck on the far side to the tank. (A follower jump would hit the same
+    // missing mesh; the teleport is the robust fix and is user-sanctioned.)
+    void PullStrandedFollowersAcross(Player* leader, float lx, float ly, float lz)
+    {
+        Group* group = leader->GetGroup();
+        if (!group)
+            return;
+
+        // Past this from the landing => "didn't make the drop". Comfortably wider
+        // than the jump span so a follower that DID land is never yanked back.
+        constexpr float DC_JUMP_STRANDED_DIST = 15.0f;
+
+        uint32 idx = 0;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == leader)
+                continue;
+            if (!member->IsInWorld() || !member->IsAlive())
+                continue;
+            if (member->GetMapId() != leader->GetMapId())
+                continue;
+            if (!GET_PLAYERBOT_AI(member))  // only relocate bots, never a human
+                continue;
+            if (member->GetExactDist(lx, ly, lz) <= DC_JUMP_STRANDED_DIST)
+                continue;                   // already across
+
+            // Land them ON the tank (solid ground it just reached), fanned out a
+            // little so they don't stack on one point. Drop any stale follow
+            // spline first so it can't drag them back toward the lip.
+            float const angle = leader->GetOrientation() + static_cast<float>(idx) * 0.7f;
+            float const off = 1.5f + 0.5f * static_cast<float>(idx);
+            float const tx = leader->GetPositionX() + std::cos(angle) * off;
+            float const ty = leader->GetPositionY() + std::sin(angle) * off;
+
+            member->GetMotionMaster()->Clear();
+            member->NearTeleportTo(tx, ty, leader->GetPositionZ(), member->GetOrientation(),
+                                   /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+            ++idx;
+
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[dungeon-clear] {} pulled stranded follower {} across the jump gap",
+                      leader->GetName(), member->GetName());
+        }
     }
 }
 
@@ -101,6 +152,33 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                                                           : StepResult::Running;
             }
             return StepResult::Done;
+        }
+
+        case EventStepKind::Jump:
+        {
+            float const radius = step.radius > 0.0f ? step.radius : DC_EVENT_MOVE_RADIUS;
+            if (bot->GetExactDist(step.x, step.y, step.z) <= radius)
+            {
+                // Landed. The followers can't path across the off-mesh gap, so
+                // pull any stranded on the far side over to the tank. Idempotent:
+                // a follower already across is skipped, so a restart is a no-op.
+                PullStrandedFollowersAcross(bot, step.x, step.y, step.z);
+                return StepResult::Done;
+            }
+            // While the jump spline is in flight the bot reads as moving — don't
+            // re-issue (MoveJump would restart the arc and never land). Only fire
+            // a fresh jump once the bot is settled on the lip.
+            if (!bot->isMoving())
+            {
+                float const speed = bot->GetSpeed(MOVE_RUN);
+                MotionMaster* mm = bot->GetMotionMaster();
+                mm->Clear();
+                mm->MoveJump(step.x, step.y, step.z, speed, speed, 1);
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step Jump -> ({:.1f},{:.1f},{:.1f})",
+                          bot->GetName(), step.x, step.y, step.z);
+            }
+            return StepResult::Running;
         }
 
         case EventStepKind::UseGameObject:

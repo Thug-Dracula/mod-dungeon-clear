@@ -52,6 +52,35 @@ TEST(EventBuilderTest, BuildsTypedStepsInOrder)
     EXPECT_EQ(e.steps[2].timeoutMs, 8000u);
 }
 
+TEST(EventBuilderTest, JumpStepCarriesLandingAndRadius)
+{
+    // A drop-down event: walk onto the lip, then jump the off-mesh gap onto the
+    // landing shelf (Wailing Caverns → Lord Serpentis).
+    DungeonEvent e = EventBuilder(43, 1, "Drop to Lord Serpentis")
+                         .Anchored(3)
+                         .MoveTo(-100.0f, 10.0f, -20.0f, 3.0f)
+                         .Jump(-120.0f, -24.0f, -28.0f, 5.0f)
+                         .Build();
+
+    ASSERT_EQ(e.steps.size(), 2u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::MoveTo);
+
+    EventStep const& j = e.steps[1];
+    EXPECT_EQ(j.kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(j.x, -120.0f);
+    EXPECT_FLOAT_EQ(j.y, -24.0f);
+    EXPECT_FLOAT_EQ(j.z, -28.0f);
+    EXPECT_FLOAT_EQ(j.radius, 5.0f);
+}
+
+TEST(EventBuilderTest, JumpStepDefaultRadius)
+{
+    DungeonEvent e = EventBuilder(43, 2, "j").Jump(1.0f, 2.0f, 3.0f).Build();
+    ASSERT_EQ(e.steps.size(), 1u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(e.steps[0].radius, 4.0f);
+}
+
 TEST(EventBuilderTest, OptionalAndConditionalFlags)
 {
     DungeonEvent e = EventBuilder(1, 1, "c").Conditional(42).Wait(500).Optional().Build();
@@ -448,6 +477,33 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     EXPECT_EQ(e->steps[2].goEntry, 16397u);
     EXPECT_EQ(e->steps[2].wantState, 2u);
     EXPECT_EQ(e->steps[2].timeoutMs, 30000u);
+}
+
+// Wailing Caverns drop to Lord Serpentis: settle on the lip, then jump the
+// off-mesh gap onto Serpentis's shelf. Persistent (the drop is one-way; a rewind
+// would walk back to the now-unreachable lip).
+TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(43, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 5u);  // shared with Serpentis (bit 5)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 2u);
+
+    // 1. settle on the jump lip.
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, -290.65567f);
+    EXPECT_FLOAT_EQ(e->steps[0].radius, 3.0f);
+
+    // 2. leap onto the landing shelf.
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(e->steps[1].x, -285.45773f);
+    EXPECT_FLOAT_EQ(e->steps[1].y, 4.021016f);
+    EXPECT_FLOAT_EQ(e->steps[1].z, -63.919395f);
+    EXPECT_FLOAT_EQ(e->steps[1].radius, 5.0f);
 }
 
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate
