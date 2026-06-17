@@ -45,7 +45,9 @@
 //   6  Stratholme       — ziggurat 2 acolytes (Nerub'enkan, door open)
 //   7  Stratholme       — ziggurat 3 acolytes (Maleki, door open)
 //   8  Uldaman          — Ironaya seal (clear room + keystone)
-//   -- next free: 9
+//   9  Uldaman          — Altar of the Keepers (clear hall + awaken/kill 4 keepers)
+//  10  Uldaman          — Altar of Archaedas (summon the final boss)
+//   -- next free: 11
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 

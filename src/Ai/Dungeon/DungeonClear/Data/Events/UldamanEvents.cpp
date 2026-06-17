@@ -8,6 +8,7 @@
 #include "Creature.h"
 #include "GameObject.h"
 #include "GameObjectData.h"
+#include "InstanceScript.h"
 #include "Log.h"
 #include "Player.h"
 #include "Playerbots.h"
@@ -59,6 +60,38 @@ namespace
     constexpr float  ULD_ROOM_ZBAND  = 20.0f;
     constexpr uint32 ULD_ROOM_TIMEOUT = 120000;  // give-up valve on the pre-clear
 
+    // --- Altar of the Keepers + Altar of Archaedas (both summoning rituals) --
+    // Both altars are GAMEOBJECT_TYPE_SUMMONING_RITUAL whose completion casts a
+    // SEND_EVENT spell (gameobject_template Data1) on the ritual owner. The
+    // single-participant ritual would otherwise have the bot channel an anim
+    // spell for ~5s; instead each event CASTS that same SEND_EVENT spell on self
+    // (triggered), reproducing the ritual's own completion cast verbatim
+    // (GameObject::Use -> Update: spellCaster->CastSpell(spellCaster, spellId,
+    // true)). Both SEND_EVENT scripts are idempotent and only read the caster's
+    // proximity to the target / the instance state, so the direct cast is safe.
+    constexpr uint32 ULD_STONE_KEEPER       = 4857;    // 4 ring the Keepers altar
+    constexpr uint32 ULD_TEMPLE_DOOR        = 124367;  // Hall of the Keepers exit
+    constexpr uint32 ULD_ARCHAEDAS          = 2748;    // final boss (roster encounter)
+    constexpr uint32 ULD_DATA_ARCHAEDAS     = 2;       // instance_uldaman DATA_ARCHAEDAS
+    constexpr uint32 SPELL_AWAKEN_KEEPERS   = 11568;   // Altar of The Keepers (GO 130511)
+    constexpr uint32 SPELL_AWAKEN_ARCHAEDAS = 10340;   // Altar of Archaedas  (GO 133234)
+
+    // Hall of the Keepers. The 4 Stone Keeper statues ring the Altar of The
+    // Keepers (GO 130511) at room centre; the room pre-clear is centred on the
+    // altar. Radius spans the keeper ring (~18yd) plus trash up to the temple
+    // door (~36yd); zBand keeps the lower Archaedas level (z ~-52) out.
+    constexpr float  ULD_KEEPER_X      = 104.85f;
+    constexpr float  ULD_KEEPER_Y      = 272.45f;
+    constexpr float  ULD_KEEPER_Z      = -26.53f;
+    constexpr float  ULD_KEEPER_RADIUS = 40.0f;
+    constexpr float  ULD_KEEPER_ZBAND  = 15.0f;
+    constexpr uint32 ULD_KEEPER_TIMEOUT = 120000;
+
+    // Altar of Archaedas (GO 133234), in the Temple of the Stars below the hall.
+    constexpr float  ULD_ARCH_ALTAR_X = 96.48f;
+    constexpr float  ULD_ARCH_ALTAR_Y = 269.05f;
+    constexpr float  ULD_ARCH_ALTAR_Z = -52.15f;
+
     // Activation: due while the party is near the still-shut seal and Ironaya is
     // present (always spawned, just sealed). Latches DONE on completion, and also
     // reads false the instant the seal opens, so it fires exactly once.
@@ -87,6 +120,64 @@ namespace
             return false;                            // already open -> done
         return ironaya != nullptr;
     }
+
+    // --- Altar of the Keepers gate, CONDITIONAL -----------------------------
+    // Due once the party reaches the Hall of the Keepers with the temple-door
+    // exit (124367) still shut and Stone Keepers present. Reads false the instant
+    // the door opens (the keepers' death SmartAI sets it ACTIVE), so it fires once
+    // and ends naturally — no explicit latch needed (like the Ironaya seal).
+    bool UldamanStoneKeepers(Player* bot, AiObjectContext* /*context*/)
+    {
+        GameObject* door = bot->FindNearestGameObject(ULD_TEMPLE_DOOR, ULD_SCAN);
+        Creature* keeper = bot->FindNearestCreature(ULD_STONE_KEEPER, ULD_SCAN, /*alive*/ true);
+
+        static uint32 lastLog = 0;
+        uint32 const now = getMSTime();
+        if (getMSTimeDiff(lastLog, now) >= 5000)
+        {
+            lastLog = now;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] Uldaman Keepers cond: door={} state={} keeper={}",
+                      bot->GetName(), door ? "found" : "MISSING",
+                      door ? static_cast<int>(door->GetGoState()) : -1,
+                      keeper ? "present" : "no");
+        }
+
+        if (!door)
+            return false;                            // not at the hall yet
+        if (door->GetGoState() != GO_STATE_READY)
+            return false;                            // already open -> done
+        return keeper != nullptr;
+    }
+
+    // --- Altar of Archaedas gate, CONDITIONAL -------------------------------
+    // Archaedas (2748) sits STONED and non-attackable until the Altar of Archaedas
+    // (GO 133234) is used — its ritual fires SEND_EVENT spell 10340, which sets
+    // DATA_ARCHAEDAS=IN_PROGRESS and wakes him. Like the Ironaya seal this must
+    // preempt the (futile) boss pull on the still-stoned final boss. Due while he
+    // is present and his encounter has not started; reads false the instant the
+    // altar fires (state leaves NOT_STARTED), so it fires exactly once.
+    bool UldamanArchaedasAltar(Player* bot, AiObjectContext* /*context*/)
+    {
+        Creature* arch = bot->FindNearestCreature(ULD_ARCHAEDAS, ULD_SCAN, /*alive*/ true);
+        InstanceScript* instance = bot->GetInstanceScript();
+        uint32 const state = instance ? instance->GetData(ULD_DATA_ARCHAEDAS) : 0;
+
+        static uint32 lastLog = 0;
+        uint32 const now = getMSTime();
+        if (getMSTimeDiff(lastLog, now) >= 5000)
+        {
+            lastLog = now;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] Uldaman Archaedas cond: boss={} encounterState={}",
+                      bot->GetName(), arch ? "present" : "no", state);
+        }
+
+        if (!arch)
+            return false;                            // not in the Temple of the Stars
+        // NOT_STARTED (0) => due; IN_PROGRESS / DONE => the altar already fired.
+        return state == 0;
+    }
 }
 
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
@@ -114,9 +205,56 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
                       .WaitForGOState(ULD_SEAL_DOOR, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 45000)
                       .Build());
+
+    // --- Altar of the Keepers (Stone Keepers) — gate, CONDITIONAL ----------
+    // Clear the hall, fire the altar to awaken the keepers, kill all four; their
+    // deaths open the temple door (124367) onward to the Archaedas descent.
+    out.push_back(EventBuilder(70, 2, "Awaken the Stone Keepers (Altar of the Keepers)")
+                      .Conditional(9)
+                      .PanelBeforeBoss(ULD_ARCHAEDAS)
+                      // 1) clear the hall trash. The stoned keepers are immune /
+                      //    passive, so the point pre-clear ignores them.
+                      .ClearRadius(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z,
+                                   ULD_KEEPER_RADIUS, ULD_KEEPER_ZBAND)
+                      .Timeout(ULD_KEEPER_TIMEOUT)
+                      // 2) stand on the altar at room centre.
+                      .MoveTo(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z, /*radius*/ 6.0f)
+                      // 3) fire the altar's ritual SEND_EVENT (11568): wakes the
+                      //    nearest keeper, which "enters combat with the zone" and
+                      //    pulls the party (see the altar comment above for why a
+                      //    direct CastSpell is used instead of UseGO on the ritual).
+                      .CastSpell(SPELL_AWAKEN_KEEPERS)
+                      // 4) kill all four. Each keeper's death chain-wakes the next
+                      //    (SmartAI SetData) and re-pulls the zone, so a plain-gate
+                      //    KillCreature (party auto-aggros; no .engage onto the
+                      //    still-stoned/immune statues) holds the party here until
+                      //    none remain alive.
+                      .KillCreature(ULD_STONE_KEEPER, /*count*/ 4, /*searchRadius*/ 50.0f)
+                      // 5) confirm the temple door has rumbled open before the
+                      //    clear advances (search wide — it sits ~36yd off centre).
+                      .WaitForGOState(ULD_TEMPLE_DOOR, /*GO_STATE_ACTIVE*/ 0,
+                                      /*timeout*/ 60000, /*searchRadius*/ 70.0f)
+                      .Build());
+
+    // --- Altar of Archaedas (final-boss summon) — CONDITIONAL --------------
+    // Archaedas is a roster encounter but spawns stoned/non-attackable; the altar
+    // must be fired before the boss pull can land. This event approaches the altar
+    // and wakes him, then latches — the normal boss pull fights and kills him.
+    out.push_back(EventBuilder(70, 3, "Summon Archaedas (Altar of Archaedas)")
+                      .Conditional(10)
+                      .PanelBeforeBoss(ULD_ARCHAEDAS)
+                      // 1) step onto the Altar of Archaedas in his chamber.
+                      .MoveTo(ULD_ARCH_ALTAR_X, ULD_ARCH_ALTAR_Y, ULD_ARCH_ALTAR_Z,
+                              /*radius*/ 6.0f)
+                      // 2) fire the altar's ritual SEND_EVENT (10340): sets
+                      //    DATA_ARCHAEDAS=IN_PROGRESS and wakes the stoned boss.
+                      .CastSpell(SPELL_AWAKEN_ARCHAEDAS)
+                      .Build());
 }
 
 void RegisterUldamanConditions(EventConditionMap& out)
 {
-    out[8] = &UldamanIronayaSeal;
+    out[8]  = &UldamanIronayaSeal;
+    out[9]  = &UldamanStoneKeepers;
+    out[10] = &UldamanArchaedasAltar;
 }
