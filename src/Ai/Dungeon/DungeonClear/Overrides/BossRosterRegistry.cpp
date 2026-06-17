@@ -8,14 +8,16 @@
 #include <algorithm>
 #include <unordered_set>
 
+static_assert(BossRosterRegistry::ObjectiveEntry(0) == 0x4F000000u,
+              "objective entry base must stay in the synthetic range");
+
 namespace
 {
-    // Synthetic entry base for non-creature objectives. Real creature entries
-    // never reach this range, so objective anchors get a unique nonzero entry
-    // that flows through the existing entry-keyed machinery (skip / sticky /
-    // cleared-anchor latch) without colliding with any spawn.
-    constexpr uint32 OBJECTIVE_ENTRY_BASE = 0x4F000000u;
-    constexpr uint32 OBJ(uint32 seq) { return OBJECTIVE_ENTRY_BASE | seq; }
+    // Synthetic entry for the seq-th non-creature objective on a map. The shared
+    // definition lives in the header (BossRosterRegistry::ObjectiveEntry) so an
+    // event file can name the objective it sorts relative to in the status panel
+    // (panelGatesBossEntry); OBJ is the local shorthand used by the table below.
+    constexpr uint32 OBJ(uint32 seq) { return BossRosterRegistry::ObjectiveEntry(seq); }
 
     // Build a boss anchor with an inherited completion bit. `completionFrom` is
     // the auto-derived entry whose encounterIndex (kill-bit) this boss borrows

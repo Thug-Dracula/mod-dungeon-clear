@@ -7,6 +7,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 namespace
@@ -573,6 +574,15 @@ TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
         EXPECT_EQ(e->conditionId, id + 4u);
         EXPECT_TRUE(EventConditionRegistry::Has(id + 4u));
     }
+
+    // Each acolyte clear sorts in the panel just before the next anchor (so it
+    // renders right after the boss whose door it follows, not dumped at the end):
+    // zig1 -> before Nerub'enkan, zig2 -> before Maleki, zig3 -> before the
+    // Slaughterhouse objective.
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 1)->panelGatesBossEntry, 10437u);
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 2)->panelGatesBossEntry, 10438u);
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 3)->panelGatesBossEntry,
+              BossRosterRegistry::ObjectiveEntry(1));
 
     // These are NOT room-aggro pre-clears (ClearRadius, not KillCreature(0)).
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(329));

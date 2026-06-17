@@ -38,6 +38,14 @@ struct BossRosterPatch
 class BossRosterRegistry
 {
 public:
+    // Synthetic entry for the seq-th non-creature objective anchor on a map.
+    // Real creature entries never reach this range, so an objective gets a
+    // unique nonzero entry that flows through the entry-keyed machinery (skip /
+    // sticky / cleared-anchor latch / panel) without colliding with a spawn.
+    // Exposed so an event file can name the objective it sorts relative to
+    // in the `dc bosses` panel (DungeonEvent::panelGatesBossEntry).
+    static constexpr uint32 ObjectiveEntry(uint32 seq) { return 0x4F000000u | seq; }
+
     // Returns the patched boss list for `mapId`. If no patch is registered the
     // base list is returned unchanged. Patches are difficulty-agnostic (5-man
     // rosters match across normal/heroic), so the lookup keys on mapId only.

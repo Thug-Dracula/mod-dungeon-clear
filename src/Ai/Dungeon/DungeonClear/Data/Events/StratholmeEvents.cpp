@@ -8,6 +8,7 @@
 #include "InstanceScript.h"
 #include "Player.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
 // --- Stratholme (map 329) — the dead side / "Baron run" --------------------
@@ -52,6 +53,13 @@ namespace
 {
     // --- ziggurat acolyte chambers ---------------------------------------
     constexpr uint32 STR_ACOLYTE = 10399;  // Thuzadin Acolyte (inside, documentary)
+
+    // Ziggurat boss entries — used only for panel placement: each acolyte clear
+    // sorts in the `dc bosses` panel just BEFORE the NEXT anchor in clear order
+    // (PanelBeforeBoss), so it renders right after the boss whose death opened
+    // its door instead of being dumped at the end as a generic off-path event.
+    constexpr uint32 STR_NERUBENKAN = 10437;  // after Baroness's clear
+    constexpr uint32 STR_MALEKI = 10438;      // after Nerub'enkan's clear
 
     // Mirror of instance_stratholme.cpp DataTypes (TYPE_ZIGGURAT1/2/3). The core
     // script header isn't reachable from the module, so the values are duplicated
@@ -125,18 +133,24 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
 
     out.push_back(EventBuilder(329, 1, "Ziggurat 1 acolytes (Baroness)")
                       .Conditional(5)
+                      .PanelBeforeBoss(STR_NERUBENKAN)
                       .ClearRadius(STR_ZIG1_X, STR_ZIG1_Y, STR_ZIG1_Z,
                                    STR_ZIG_RADIUS, STR_ZIG_ZBAND)
                       .Build());
 
     out.push_back(EventBuilder(329, 2, "Ziggurat 2 acolytes (Nerub'enkan)")
                       .Conditional(6)
+                      .PanelBeforeBoss(STR_MALEKI)
                       .ClearRadius(STR_ZIG2_X, STR_ZIG2_Y, STR_ZIG2_Z,
                                    STR_ZIG_RADIUS, STR_ZIG_ZBAND)
                       .Build());
 
     out.push_back(EventBuilder(329, 3, "Ziggurat 3 acolytes (Maleki)")
                       .Conditional(7)
+                      // After Maleki's clear the next anchor is the Slaughterhouse
+                      // objective; sort just before it (all three ziggurats must be
+                      // cleared before that gate opens).
+                      .PanelBeforeBoss(BossRosterRegistry::ObjectiveEntry(1))
                       .ClearRadius(STR_ZIG3_X, STR_ZIG3_Y, STR_ZIG3_Z,
                                    STR_ZIG_RADIUS, STR_ZIG_ZBAND)
                       .Build());

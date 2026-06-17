@@ -533,8 +533,11 @@ bool DcBossesAction::Execute(Event event)
                                             : "alive";
             std::string const objName = "Objective: " + info.name;
 
+            // The panel sort key is BossOrderKey (the orderOverride when set,
+            // else encounterIndex), so a reordered anchor lands in its clear-path
+            // slot — e.g. Stratholme's Barthilas ahead of the ziggurats.
             std::ostringstream objMsg;
-            objMsg << "BOSS\t" << info.entry << "\t" << info.encounterIndex << "\t"
+            objMsg << "BOSS\t" << info.entry << "\t" << BossOrderKey(info) << "\t"
                    << objName << "\t" << objStatus << "\t"
                    << static_cast<int>(info.x) << "\t" << static_cast<int>(info.y) << "\t"
                    << static_cast<int>(info.z) << "\t";
@@ -543,7 +546,7 @@ bool DcBossesAction::Execute(Event event)
             if (!silent)
             {
                 std::ostringstream line;
-                line << info.encounterIndex << ". " << objName << " @ ("
+                line << BossOrderKey(info) << ". " << objName << " @ ("
                      << static_cast<int>(info.x) << ", " << static_cast<int>(info.y) << ", "
                      << static_cast<int>(info.z) << ") [" << objStatus << "]";
                 DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + line.str());
@@ -591,7 +594,7 @@ bool DcBossesAction::Execute(Event event)
         std::ostringstream addonMsg;
         addonMsg << "BOSS\t"
                  << info.entry << "\t"
-                 << info.encounterIndex << "\t"
+                 << BossOrderKey(info) << "\t"
                  << info.name << "\t"
                  << statusStr << "\t"
                  << static_cast<int>(info.x) << "\t"
@@ -604,7 +607,7 @@ bool DcBossesAction::Execute(Event event)
         if (!silent)
         {
             std::ostringstream line;
-            line << info.encounterIndex << ". " << info.name;
+            line << BossOrderKey(info) << ". " << info.name;
             if (!wing.empty())
                 line << " [" << wing << "]";
             line << " @ (" << static_cast<int>(info.x) << ", "
@@ -631,9 +634,9 @@ bool DcBossesAction::Execute(Event event)
             continue;
         if (!RoomAggroRegistry::Find(bot->GetMapId(), info.entry))
             continue;
-        if (!haveRoomAggroIndex || info.encounterIndex < roomAggroBossIndex)
+        if (!haveRoomAggroIndex || BossOrderKey(info) < roomAggroBossIndex)
         {
-            roomAggroBossIndex = info.encounterIndex;
+            roomAggroBossIndex = BossOrderKey(info);
             haveRoomAggroIndex = true;
         }
     }
@@ -678,9 +681,8 @@ bool DcBossesAction::Execute(Event event)
             for (DungeonBossInfo const& info : bosses)
                 if (info.entry == ev->panelGatesBossEntry)
                 {
-                    idxField = info.encounterIndex == 0
-                                   ? "-0.5"
-                                   : std::to_string(info.encounterIndex - 1) + ".5";
+                    uint32 const k = BossOrderKey(info);
+                    idxField = k == 0 ? "-0.5" : std::to_string(k - 1) + ".5";
                     break;
                 }
         }
