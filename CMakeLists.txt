@@ -76,7 +76,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Data/Events/DungeonEventTables.h + Data/Events/*.cpp
 #   (the event ROWS + activation conditions split one-file-per-dungeon:
 #    SunkenTemple / ZulFarrak / ShadowfangKeep / ScarletMonastery /
-#    RazorfenDowns Events.cpp + SharedConditions.cpp. DungeonEventRegistry.cpp /
+#    RazorfenDowns / Stratholme Events.cpp + SharedConditions.cpp. Stratholme =
+#    the dead-side "Baron run": 3 conditional ziggurat acolyte clears (conditions
+#    5/6/7) + a persistent Slaughterhouse chain (abominations -> Ramstein -> 2
+#    add waves -> Baron). DungeonEventRegistry.cpp /
 #    EventConditionRegistry.cpp keep only the builder/lookup machinery and call
 #    each file's Register<Dungeon>Events/Conditions appender — explicit calls so
 #    every per-dungeon TU stays linked into the module static lib. Add a dungeon

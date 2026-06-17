@@ -382,6 +382,38 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- Stratholme (map 329) — the Slaughterhouse / Baron run --------
+            // Ramstein the Gorger (DBC bit 11) is SUMMONED once the Slaughter
+            // Square abominations die — he has no creature.sql spawn, so
+            // BossSpawnIndex (which walks spawns) never lists him and the tank
+            // can't anchor on him. Add ONE objective at the Slaughter Square
+            // (SlaughterPos from instance_stratholme.cpp), ordered at Ramstein's
+            // bit 11 (after the ziggurats 7/8/9 + Barthilas 10, before Baron 12),
+            // carrying the persistent slaughter event (eventId 4): clear the
+            // abominations -> Ramstein -> 33 Mindless Undead -> 5 Black Guards,
+            // which opens Baron's door. The event's KillCreatureEngage(Ramstein)
+            // flips his real bit when he dies (objectives skip the completion-mask
+            // check, so the orderIndex is a pure ordering hint that can't collide).
+            //
+            // The three ziggurat bosses and Baron need NO roster change — they
+            // have static spawns and real bits and are pulled normally; their
+            // in-ziggurat acolyte follow-ups are conditional events (5/6/7). Both
+            // the live (Scarlet) and dead (Undead) sides stay in the boss list:
+            // the DBC order interleaves them (Unforgiven 0, live side 1-6, then
+            // ziggurats/Barthilas/slaughterhouse/Baron 7-12) so one run does both,
+            // as intended. See StratholmeEvents.
+            {
+                BossRosterPatch p;
+                p.mapId = 329;
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 11, 329,
+                                  "Slaughterhouse (Baron run)",
+                                  4032.20f, -3378.06f, 119.75f, /*arriveRadius*/ 25.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 4),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;

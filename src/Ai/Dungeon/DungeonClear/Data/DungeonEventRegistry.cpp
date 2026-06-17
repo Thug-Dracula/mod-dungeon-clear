@@ -260,6 +260,7 @@ namespace
             RegisterBlackrockDepthsEvents(t);
             RegisterDeadminesEvents(t);
             RegisterWailingCavernsEvents(t);
+            RegisterStratholmeEvents(t);
             return t;
         }();
         return kEvents;

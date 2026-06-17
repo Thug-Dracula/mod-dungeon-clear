@@ -25,6 +25,7 @@ namespace
             RegisterSharedEventConditions(m);
             RegisterShadowfangKeepConditions(m);
             RegisterRazorfenDownsConditions(m);
+            RegisterStratholmeConditions(m);
             return m;
         }();
         return kConditions;
