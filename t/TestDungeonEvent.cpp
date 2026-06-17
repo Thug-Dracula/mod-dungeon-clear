@@ -509,10 +509,11 @@ TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
 
 // Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
 // (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
-// before Baron 12). ClearRadius the abominations -> wait + engage Ramstein ->
-// wait + ClearRadius wave 1 (mindless undead) -> wait + KillCreature wave 2
-// (black guards). No instance-data gate (slaughter progress isn't exposed via
-// GetData), so every gate is a live creature read.
+// before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead
+// wave -> wait+clear guard wave -> gate on the Baron door opening. Slaughter
+// progress isn't exposed via GetData, so the phase barriers are the monotonic
+// doors (combat-gap proof), not transient creature checks; the waves are cleared
+// by ClearRadius (a hall centre well south of the closed Baron door).
 TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(329, 4);
@@ -522,32 +523,31 @@ TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
     EXPECT_TRUE(e->persistent);
     EXPECT_TRUE(e->required);
 
-    ASSERT_EQ(e->steps.size(), 7u);
+    ASSERT_EQ(e->steps.size(), 6u);
 
-    // 1. clear the pre-spawned abominations -> summons Ramstein.
+    // 1. clear the hall: abominations + the synchronously-summoned Ramstein.
     EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
     EXPECT_TRUE(e->steps[0].engage);
-    EXPECT_FLOAT_EQ(e->steps[0].x, 4032.20f);
+    EXPECT_FLOAT_EQ(e->steps[0].x, 4032.0f);
+    EXPECT_FLOAT_EQ(e->steps[0].y, -3415.0f);
 
-    // 2. wait for Ramstein, then seek + kill him.
+    // 2. wave 1: wait for the mindless undead, then ClearRadius them.
     EXPECT_EQ(e->steps[1].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[1].creatureEntry, 10439u);
+    EXPECT_EQ(e->steps[1].creatureEntry, 11030u);
     EXPECT_TRUE(e->steps[1].wantAlive);
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[2].creatureEntry, 10439u);
-    EXPECT_TRUE(e->steps[2].engage);
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::ClearRadius);
 
-    // 3. wave 1: wait for the mindless undead, ClearRadius until the square empties.
+    // 3. wave 2: wait for the black guards, then ClearRadius them.
     EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[3].creatureEntry, 11030u);
+    EXPECT_EQ(e->steps[3].creatureEntry, 10394u);
     EXPECT_EQ(e->steps[4].kind, EventStepKind::ClearRadius);
 
-    // 4. wave 2: wait for the black guards, kill them -> opens Baron's door.
-    EXPECT_EQ(e->steps[5].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[5].creatureEntry, 10394u);
-    EXPECT_EQ(e->steps[6].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[6].creatureEntry, 10394u);
-    EXPECT_FALSE(e->steps[6].engage);  // plain gate; ClearRadius/engage not needed for the 5 guards
+    // 4. monotonic completion gate: the Baron door (175796) opens when the guards
+    //    die. GO_STATE_ACTIVE (0) = open.
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[5].goEntry, 175796u);
+    EXPECT_EQ(e->steps[5].wantState, 0u);
+    EXPECT_GT(e->steps[5].radius, 100.0f);  // reaches the door from across the hall
 }
 
 // The three ziggurat acolyte clears (eventIds 1/2/3) are conditional events

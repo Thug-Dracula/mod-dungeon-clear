@@ -429,9 +429,15 @@ namespace
                     MakeBoss(10435, 329, "Magistrate Barthilas",
                              3663.23f, -3619.14f, 137.98f,
                              /*completionFrom*/ 10435, /*orderOverride*/ 6),
+                    // Anchor pulled ~37yd SOUTH of SlaughterPos into the abomination
+                    // hall: SlaughterPos (4032,-3378) sits at the still-closed Baron
+                    // door (175796 @ -3364), so the approach hit the door and stalled
+                    // ("closed door blocking path"). This spot is in the open hall,
+                    // reachable from the south entrance gate without crossing a closed
+                    // door; the event's ClearRadius (r70) covers the whole hall.
                     MakeObjective(OBJ(1), /*encounterIndex*/ 11, 329,
                                   "Slaughterhouse (Baron run)",
-                                  4032.20f, -3378.06f, 119.75f, /*arriveRadius*/ 25.0f,
+                                  4032.0f, -3415.0f, 118.0f, /*arriveRadius*/ 30.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 4),
                 };
                 t.push_back(std::move(p));

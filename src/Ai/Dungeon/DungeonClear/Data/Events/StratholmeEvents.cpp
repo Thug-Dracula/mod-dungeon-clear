@@ -83,17 +83,43 @@ namespace
     constexpr uint32 STR_MINDLESS = 11030;     // wave 1 (33x mindless undead)
     constexpr uint32 STR_BLACK_GUARD = 10394;  // wave 2 (5x black guard)
 
-    // Slaughter Square centre — SlaughterPos from instance_stratholme.cpp, where
-    // the abominations stand and Ramstein is summoned. The radius covers the
-    // whole square; the zBand keeps the surrounding ramps/floors out.
-    constexpr float STR_SLAUGHTER_X = 4032.20f;
-    constexpr float STR_SLAUGHTER_Y = -3378.06f;
-    constexpr float STR_SLAUGHTER_Z = 119.75f;
-    constexpr float STR_SLAUGHTER_RADIUS = 45.0f;
+    // Monotonic phase doors (instance_stratholme.cpp). _slaughterProgress is NOT
+    // exposed via GetData, but these doors are: each opens once and stays open, so
+    // they are the bulletproof phase signal that survives the long continuous
+    // combat (the event engine is dormant in combat) and bridges the multi-second
+    // inter-wave lulls that would otherwise let a creature gate complete early.
+    constexpr uint32 STR_GO_BARON_DOOR = 175796;   // opens when the 5 guards die
+    constexpr uint32 STR_GO_OPEN = 0;              // GO_STATE_ACTIVE (open)
+    // The Baron door sits ~51yd north of the hall centre; the default GO search is
+    // only 20yd, so the wait needs an explicit reach that finds it from anywhere
+    // in the hall.
+    constexpr float STR_DOOR_SEARCH = 120.0f;
+
+    // Slaughterhouse-hall centre. NOT the old SlaughterPos (4032,-3378): that sits
+    // at the north end RIGHT AT the still-closed Baron door (175796 @ -3364) and
+    // doors4 (175405 @ -3389), so the approach hit the door and the tank deadlocked
+    // ("closed door blocking path"). This centre is pulled ~37yd SOUTH into the
+    // abomination field (they span Y -3380..-3444), reachable from the south
+    // entrance gate (175373 @ -3469) without crossing any closed door. The radius
+    // covers the whole hall; the zBand keeps the ramps/Baron landing out.
+    constexpr float STR_SLAUGHTER_X = 4032.0f;
+    constexpr float STR_SLAUGHTER_Y = -3415.0f;
+    constexpr float STR_SLAUGHTER_Z = 118.0f;
+    // Covers the whole hall with margin (farthest abomination spawn ~68yd) so a
+    // patrolling straggler can't drift outside and false-complete the gate while
+    // it's still alive (the undead wave spawns only once EVERY abomination dies,
+    // so a missed one would deadlock the next step). Bosses (Baron) are excluded
+    // from ClearRadius, and the gauntlet behind is already cleared, so a wide
+    // radius is safe.
+    constexpr float STR_SLAUGHTER_RADIUS = 80.0f;
     constexpr float STR_SLAUGHTER_ZBAND = 15.0f;
 
-    constexpr uint32 STR_RAMSTEIN_SPAWN_TIMEOUT = 60000;   // 1 min — emerge delay
-    constexpr uint32 STR_WAVE_TIMEOUT = 300000;            // 5 min per wave
+    // The whole slaughter chain runs minutes through continuous combat, so every
+    // step gets a generous wall-clock timeout (the step timer is not paused in
+    // combat — cf. ZulFarrak's 15-min wave step) to keep a long fight from
+    // escalating to a stall.
+    constexpr uint32 STR_PHASE_TIMEOUT = 300000;   // 5 min per phase
+    constexpr uint32 STR_WAVE_GAP_TIMEOUT = 120000;  // 2 min to bridge a wave gap
 
     // DUE while a ziggurat boss is dead (door open, GetData==1) but the chamber
     // is not yet cleared (GetData==2). Reads false at 0 (boss still alive, door
@@ -130,6 +156,9 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
     // depending on the exact acolyte count, and the zBand keeps the chamber's
     // adjacent levels out of the clear. (void STR_ACOLYTE — documentary entry.)
     (void) STR_ACOLYTE;
+    // STR_RAMSTEIN is documentary too: the slaughter event folds him into step 1's
+    // ClearRadius (he is summoned synchronously) rather than naming him in a step.
+    (void) STR_RAMSTEIN;
 
     out.push_back(EventBuilder(329, 1, "Ziggurat 1 acolytes (Baroness)")
                       .Conditional(5)
@@ -163,30 +192,39 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
     out.push_back(EventBuilder(329, 4, "Slaughterhouse (Baron run)")
                       .Anchored(11)
                       .Persistent()
-                      // 1. Clear the pre-spawned abominations -> summons Ramstein.
-                      //    ClearRadius engages every hostile in the square (both
-                      //    abomination entries) without a fixed count.
+                      // 1. Clear the hall of the pre-spawned abominations. The last
+                      //    one's death SYNCHRONOUSLY summons Ramstein the Gorger
+                      //    (10439) right here, so the same ClearRadius rolls straight
+                      //    onto him (he is not in the boss list, so it treats him as
+                      //    clearable) — no empty-hall gap, no separate wait that could
+                      //    false-complete. Done once abominations AND Ramstein die.
                       .ClearRadius(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
                                    STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
-                      // 2. Wait for Ramstein to materialise, then seek + kill him.
-                      //    WaitForSpawn is essential or KillCreatureEngage would
-                      //    read "no live Ramstein" before the summon and complete.
-                      .WaitForSpawn(STR_RAMSTEIN, /*alive*/ true)
-                          .Timeout(STR_RAMSTEIN_SPAWN_TIMEOUT)
-                      .KillCreatureEngage(STR_RAMSTEIN, /*count*/ 1, /*searchRadius*/ 100.0f)
-                      // 3. Wave 1: 33 Mindless Undead spawn over ~7s. Wait for the
-                      //    first, then ClearRadius until the square is empty
-                      //    (count-tolerant; they are TEMPSUMMON and despawn dead).
+                          .Timeout(STR_PHASE_TIMEOUT)
+                      // 2. Wave 1: Ramstein's death spawns 33 Mindless Undead (11030)
+                      //    after a ~5s lull. Wait for the first to appear (a genuine
+                      //    out-of-combat lull, so the spawn can't be missed), then
+                      //    ClearRadius them — they charge the hall, so the radius +
+                      //    reactive combat reap them; count-tolerant (TEMPSUMMON).
                       .WaitForSpawn(STR_MINDLESS, /*alive*/ true)
-                          .Timeout(STR_WAVE_TIMEOUT)
+                          .Timeout(STR_WAVE_GAP_TIMEOUT)
                       .ClearRadius(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
                                    STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
-                      // 4. Wave 2: 5 Black Guards spawn ~20s after wave 1 clears.
-                      //    Their death opens the door to Baron, who is then a
-                      //    normal boss anchor (DBC bit 12) reached next.
+                          .Timeout(STR_PHASE_TIMEOUT)
+                      // 3. Wave 2: ~20s after the undead die, 5 Black Guards (10394)
+                      //    spawn and walk into the hall. Wait for them, then clear.
                       .WaitForSpawn(STR_BLACK_GUARD, /*alive*/ true)
-                          .Timeout(STR_WAVE_TIMEOUT)
-                      .KillCreature(STR_BLACK_GUARD, /*count*/ 1, /*searchRadius*/ 60.0f)
+                          .Timeout(STR_WAVE_GAP_TIMEOUT)
+                      .ClearRadius(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
+                                   STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
+                          .Timeout(STR_PHASE_TIMEOUT)
+                      // 4. The guards' death opens the Baron door (175796). Gate on
+                      //    that monotonic, combat-gap-proof signal — the authoritative
+                      //    "slaughterhouse done" — not a transient creature check.
+                      //    Baron (DBC bit 12) is then a normal boss anchor.
+                      .WaitForGOState(STR_GO_BARON_DOOR, STR_GO_OPEN,
+                                      /*timeoutMs*/ STR_WAVE_GAP_TIMEOUT,
+                                      /*searchRadius*/ STR_DOOR_SEARCH)
                       .Build());
 }
 
