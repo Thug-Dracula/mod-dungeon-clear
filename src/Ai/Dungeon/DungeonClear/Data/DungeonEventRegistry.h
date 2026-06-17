@@ -34,6 +34,13 @@ enum class EventStepKind : uint8
                              // must be done by a BOSS/OBJECTIVE anchor so the boss
                              // navigation + dynamic-pull machinery drives it (an
                              // event step driving a long move fights the pull camp).
+    Jump,                    // ballistic MoveJump to (x,y,z) within `radius` — bridge
+                             // a navmesh gap a ground move can't (a drop-down ledge
+                             // onto a disconnected mesh island). Same SHORT-hop rule
+                             // as MoveTo: the anchor navigation gets the bot to the
+                             // lip; this clears the one off-mesh leg. Idempotent —
+                             // Done once landed (within radius), so a Drive restart
+                             // after a combat tick-gap re-runs it safely.
     UseGameObject,           // approach + GameObject::Use(bot) the nearest goEntry
     Gossip,                  // talk creatureEntry + select gossipOption (milestone 2)
     WaitForSpawn,            // hold until creatureEntry is alive (wantAlive) / gone
@@ -210,6 +217,11 @@ public:
     EventBuilder& WaitTargetStill();
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
+    // Ballistic jump to (x,y,z): MotionMaster::MoveJump at run speed. Bridges a
+    // navmesh gap a ground move can't (drop-down ledge / off-mesh island). The
+    // preceding anchor/MoveTo must place the bot on the jump LIP; this clears the
+    // gap. Done once the bot is within `radius` of the landing.
+    EventBuilder& Jump(float x, float y, float z, float radius = 4.0f);
     // MoveTo that GARRISONS: walk to (x,y,z) and HOLD there — re-moving back if a
     // later tick finds the bot displaced (combat pushed it off the spot) — until
     // `creatureEntry` matches `wantAlive`. Keeps the tank anchored at a staging

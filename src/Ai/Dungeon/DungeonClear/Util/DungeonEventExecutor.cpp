@@ -103,6 +103,27 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             return StepResult::Done;
         }
 
+        case EventStepKind::Jump:
+        {
+            float const radius = step.radius > 0.0f ? step.radius : DC_EVENT_MOVE_RADIUS;
+            if (bot->GetExactDist(step.x, step.y, step.z) <= radius)
+                return StepResult::Done;  // landed (idempotent across a restart)
+            // While the jump spline is in flight the bot reads as moving — don't
+            // re-issue (MoveJump would restart the arc and never land). Only fire
+            // a fresh jump once the bot is settled on the lip.
+            if (!bot->isMoving())
+            {
+                float const speed = bot->GetSpeed(MOVE_RUN);
+                MotionMaster* mm = bot->GetMotionMaster();
+                mm->Clear();
+                mm->MoveJump(step.x, step.y, step.z, speed, speed, 1);
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step Jump -> ({:.1f},{:.1f},{:.1f})",
+                          bot->GetName(), step.x, step.y, step.z);
+            }
+            return StepResult::Running;
+        }
+
         case EventStepKind::UseGameObject:
         {
             float const search = step.radius > 0.0f ? step.radius : DC_EVENT_GO_SEARCH;

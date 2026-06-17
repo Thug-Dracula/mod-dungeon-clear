@@ -52,6 +52,35 @@ TEST(EventBuilderTest, BuildsTypedStepsInOrder)
     EXPECT_EQ(e.steps[2].timeoutMs, 8000u);
 }
 
+TEST(EventBuilderTest, JumpStepCarriesLandingAndRadius)
+{
+    // A drop-down event: walk onto the lip, then jump the off-mesh gap onto the
+    // landing shelf (Wailing Caverns → Lord Serpentis).
+    DungeonEvent e = EventBuilder(43, 1, "Drop to Lord Serpentis")
+                         .Anchored(3)
+                         .MoveTo(-100.0f, 10.0f, -20.0f, 3.0f)
+                         .Jump(-120.0f, -24.0f, -28.0f, 5.0f)
+                         .Build();
+
+    ASSERT_EQ(e.steps.size(), 2u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::MoveTo);
+
+    EventStep const& j = e.steps[1];
+    EXPECT_EQ(j.kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(j.x, -120.0f);
+    EXPECT_FLOAT_EQ(j.y, -24.0f);
+    EXPECT_FLOAT_EQ(j.z, -28.0f);
+    EXPECT_FLOAT_EQ(j.radius, 5.0f);
+}
+
+TEST(EventBuilderTest, JumpStepDefaultRadius)
+{
+    DungeonEvent e = EventBuilder(43, 2, "j").Jump(1.0f, 2.0f, 3.0f).Build();
+    ASSERT_EQ(e.steps.size(), 1u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(e.steps[0].radius, 4.0f);
+}
+
 TEST(EventBuilderTest, OptionalAndConditionalFlags)
 {
     DungeonEvent e = EventBuilder(1, 1, "c").Conditional(42).Wait(500).Optional().Build();

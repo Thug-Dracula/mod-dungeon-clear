@@ -95,6 +95,16 @@ EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
     return *this;
 }
 
+EventBuilder& EventBuilder::Jump(float x, float y, float z, float radius)
+{
+    EventStep& s = Add(EventStepKind::Jump);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveToHoldUntilSpawn(float x, float y, float z, float radius,
                                                  uint32 creatureEntry, bool wantAlive)
 {
