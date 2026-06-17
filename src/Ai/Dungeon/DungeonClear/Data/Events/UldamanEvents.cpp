@@ -93,6 +93,9 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(70, 1, "Unseal Ironaya (Seal of Khaz'Mul)")
                       .Conditional(8)
+                      // Render in the panel just before Ironaya (cosmetic; does not
+                      // affect engine ordering — the seal is opened on her gate).
+                      .PanelBeforeBoss(ULD_IRONAYA)
                       // 1) clear the antechamber (sealed Ironaya is out of range).
                       .ClearRadius(ULD_ROOM_X, ULD_ROOM_Y, ULD_ROOM_Z,
                                    ULD_ROOM_RADIUS, ULD_ROOM_ZBAND)
@@ -103,11 +106,13 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
                       //    Ironaya. UseGO is idempotent (skips an already-used GO),
                       //    so a combat tick-gap re-running the step list is safe.
                       .UseGO(ULD_KEYSTONE, /*searchRadius*/ 10.0f)
-                      // 4) confirm the seal actually opened. The SmartAI sets the
-                      //    state synchronously; 10s covers the grid load and a miss
-                      //    Stalls (Required) for the human.
+                      // 4) wait for the seal to open. The keystone's SmartAI opens
+                      //    it on a 27s CREATE_TIMED_EVENT (the door "rumbles open"
+                      //    delay), NOT synchronously on the click — so the timeout
+                      //    must clear 27s with margin (live-verified: a 10s timeout
+                      //    spuriously "stalled" until Ironaya unsealed at +27s).
                       .WaitForGOState(ULD_SEAL_DOOR, /*GO_STATE_ACTIVE*/ 0,
-                                      /*timeout*/ 10000)
+                                      /*timeout*/ 45000)
                       .Build());
 }
 
