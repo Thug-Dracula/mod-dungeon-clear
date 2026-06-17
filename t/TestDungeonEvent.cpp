@@ -588,6 +588,35 @@ TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(329));
 }
 
+// Uldaman (70): the Ironaya seal — a conditional event that clears the
+// antechamber, uses the keystone, then waits for the Seal of Khaz'Mul to open.
+TEST(DungeonEventConditional, UldamanIronayaSeal)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(70, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_EQ(e->conditionId, 8u);
+    EXPECT_TRUE(EventConditionRegistry::Has(8u));
+    EXPECT_TRUE(e->required);
+    EXPECT_FALSE(e->repeatable);
+
+    ASSERT_EQ(e->steps.size(), 4u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_TRUE(e->steps[0].engage);
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(e->steps[2].goEntry, 124371u);            // the Keystone
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[3].goEntry, 124372u);            // the Seal of Khaz'Mul
+    EXPECT_EQ(e->steps[3].wantState, 0u);               // GO_STATE_ACTIVE (open)
+
+    // It is a single conditional event for the map, and NOT a room-aggro
+    // pre-clear (multi-step ClearRadius, not the lone KillCreature(0) shape).
+    EXPECT_EQ(DungeonEventRegistry::Conditional(70).size(), 1u);
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*e));
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(70));
+}
+
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate
 // creature, so the executor holds at the point until that creature is up.
 TEST(DungeonEventBuilderTest, MoveToHoldUntilSpawn)

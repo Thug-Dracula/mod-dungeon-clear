@@ -26,6 +26,7 @@ namespace
             RegisterShadowfangKeepConditions(m);
             RegisterRazorfenDownsConditions(m);
             RegisterStratholmeConditions(m);
+            RegisterUldamanConditions(m);
             return m;
         }();
         return kConditions;

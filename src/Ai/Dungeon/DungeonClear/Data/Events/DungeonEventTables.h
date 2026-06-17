@@ -44,7 +44,8 @@
 //   5  Stratholme       — ziggurat 1 acolytes (Baroness, door open)
 //   6  Stratholme       — ziggurat 2 acolytes (Nerub'enkan, door open)
 //   7  Stratholme       — ziggurat 3 acolytes (Maleki, door open)
-//   -- next free: 8
+//   8  Uldaman          — Ironaya seal (clear room + keystone)
+//   -- next free: 9
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 
@@ -58,11 +59,13 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out);
 void RegisterDeadminesEvents(std::vector<DungeonEvent>& out);
 void RegisterWailingCavernsEvents(std::vector<DungeonEvent>& out);
 void RegisterStratholmeEvents(std::vector<DungeonEvent>& out);
+void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);
 void RegisterShadowfangKeepConditions(EventConditionMap& out);
 void RegisterRazorfenDownsConditions(EventConditionMap& out);
 void RegisterStratholmeConditions(EventConditionMap& out);
+void RegisterUldamanConditions(EventConditionMap& out);
 
 #endif
