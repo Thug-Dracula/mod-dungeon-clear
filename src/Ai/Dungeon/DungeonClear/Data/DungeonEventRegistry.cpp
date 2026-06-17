@@ -259,6 +259,7 @@ namespace
             RegisterZulFarrakEvents(t);
             RegisterBlackrockDepthsEvents(t);
             RegisterDeadminesEvents(t);
+            RegisterWailingCavernsEvents(t);
             return t;
         }();
         return kEvents;

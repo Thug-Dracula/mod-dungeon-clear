@@ -479,6 +479,33 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     EXPECT_EQ(e->steps[2].timeoutMs, 30000u);
 }
 
+// Wailing Caverns drop to Lord Serpentis: settle on the lip, then jump the
+// off-mesh gap onto Serpentis's shelf. Persistent (the drop is one-way; a rewind
+// would walk back to the now-unreachable lip).
+TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(43, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 5u);  // shared with Serpentis (bit 5)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 2u);
+
+    // 1. settle on the jump lip.
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, -290.65567f);
+    EXPECT_FLOAT_EQ(e->steps[0].radius, 3.0f);
+
+    // 2. leap onto the landing shelf.
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::Jump);
+    EXPECT_FLOAT_EQ(e->steps[1].x, -285.45773f);
+    EXPECT_FLOAT_EQ(e->steps[1].y, 4.021016f);
+    EXPECT_FLOAT_EQ(e->steps[1].z, -63.919395f);
+    EXPECT_FLOAT_EQ(e->steps[1].radius, 5.0f);
+}
+
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate
 // creature, so the executor holds at the point until that creature is up.
 TEST(DungeonEventBuilderTest, MoveToHoldUntilSpawn)

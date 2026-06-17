@@ -361,6 +361,27 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- Wailing Caverns (map 43) — drop down to Lord Serpentis -------
+            // Lord Serpentis (3673, encounterIndex 5) sits on an upper-ground
+            // navmesh island the party reaches only by running to a ledge and
+            // DROPPING onto it; Recast bakes no off-mesh link across the gap, so
+            // stock boss-nav calls him unreachable. Add an OBJECTIVE anchor at the
+            // LIP (approach-side mesh -> reachable) sharing Serpentis's bit 5; the
+            // objective-before-boss tie-break drives the tank there first, the
+            // event (eventId 1) jumps the gap, then the clear advances to
+            // Serpentis (now on the same island). No gateEntry: the event owns
+            // completion via the Jump landing. See WailingCavernsEvents.
+            {
+                BossRosterPatch p;
+                p.mapId = 43;
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 5, 43, "Drop to Lord Serpentis",
+                                  -290.65567f, -3.8297224f, -58.30473f, /*arriveRadius*/ 6.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;
