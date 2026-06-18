@@ -140,6 +140,21 @@ public:
     static bool WithinRoomClearWindow(Player* bot, AiObjectContext* ctx,
                                       DungeonBossInfo const& boss);
 
+    // True when the tank has actually REACHED the room-clear envelope BY PATH —
+    // the same window as WithinRoomClearWindow, but measured along the navmesh
+    // route to the live boss instead of straight-line. WithinRoomClearWindow (and
+    // its WithinBossRangeOnFloor core) takes a same-floor straight-line shortcut,
+    // so a room one WALL over reads as "in the window" even though it is a long
+    // detour away by foot (Scholomance: the chamber east of Marduk & Vectus is
+    // ~55yd straight-line but a 170yd+ walk around). Gating room-clear ACTIVATION
+    // on that lie let the conditional room-clear event — which outranks
+    // boss-travel — hijack the approach from across the map and fixate on a single
+    // barely-reachable straggler. This forces the navmesh probe so room-clear only
+    // engages once the tank is genuinely in the room; until then boss-travel
+    // (Advance) routes it in. Returns false for a non-room-aggro boss.
+    static bool TankReachedRoomByPath(Player* bot, AiObjectContext* ctx,
+                                      DungeonBossInfo const& boss);
+
     // True when `u` is a creature that fights at RANGE — a caster or a physical
     // ranged attacker — and will therefore stand and shoot/cast from afar instead
     // of running to melee. Used by the advanced-pull camp placer to decide whether

@@ -86,6 +86,25 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     if (!liveBoss)
         return out;  // not loaded/alive yet — nothing to measure or clear
 
+    // Only CLEAR once the tank has actually REACHED the room. The set below is
+    // built purely from boss<->trash proximity, with no regard for where the TANK
+    // is — so without this gate the conditional room-clear event (relevance 31,
+    // above boss-travel at 15) hijacks the approach from across the dungeon and
+    // fixates the tank on a single barely-reachable straggler instead of letting
+    // Advance route it into the room. The room-clear window is straight-line-blind
+    // to walls (a chamber one wall over is "close"), so gate on the PATH distance
+    // to the live boss. While the tank is still pathing in — or the room is only
+    // reachable the long way around (Scholomance: the room east of Marduk & Vectus
+    // is ~55yd straight-line but a 170yd+ walk) — stand down with an empty set so
+    // boss-travel drives, and re-arm the no-progress clock so the give-up timer
+    // starts when clearing actually begins, not during the walk in.
+    if (!DcEngageGeometry::TankReachedRoomByPath(bot, context, *next))
+    {
+        lastRemaining = 0;
+        lastProgressMs = getMSTime();
+        return out;
+    }
+
     // Units inside the boss's own aggro sphere come with the boss and are
     // excluded (IsRoomTrash). Sized from the LIVE boss's real aggro range, PLUS
     // both combat reaches and the run's aggro margin: a melee tank that walks up

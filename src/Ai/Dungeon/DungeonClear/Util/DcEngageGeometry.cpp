@@ -455,6 +455,45 @@ bool DcEngageGeometry::WithinRoomClearWindow(Player* bot, AiObjectContext* ctx,
     float const window = std::max(room->radius, orbit) + DC_ROOM_AGGRO_STANDOFF_BUFFER;
     return WithinBossRangeOnFloor(bot, live, bx, by, bz, window);
 }
+
+bool DcEngageGeometry::TankReachedRoomByPath(Player* bot, AiObjectContext* ctx,
+                                             DungeonBossInfo const& boss)
+{
+    if (!bot || !ctx)
+        return false;
+
+    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), boss.entry);
+    if (!room)
+        return false;   // not a room-aggro boss — no room-clear envelope
+
+    Creature* live = DcTargeting::GetLiveBoss(bot, ctx, boss.entry);
+    float const bx = live ? live->GetPositionX() : boss.x;
+    float const by = live ? live->GetPositionY() : boss.y;
+    float const bz = live ? live->GetPositionZ() : boss.z;
+
+    // Same envelope as WithinRoomClearWindow so the gate and the driver agree on
+    // "in the room".
+    float const sphere = RoomAggroSphereRadius(bot, live);
+    float const orbit = sphere + DcSettings::GetFloat(bot, "RoomAggroPartyMargin");
+    float const window = std::max(room->radius, orbit) + DC_ROOM_AGGRO_STANDOFF_BUFFER;
+
+    // Cheap straight-line reject first: clearly outside the window either way.
+    if (bot->GetDistance(bx, by, bz) >= window)
+        return false;
+
+    // FORCED navmesh probe (unlike WithinBossRangeOnFloor's same-floor straight-
+    // line shortcut): a chamber one wall over is straight-line-close but a long
+    // detour by foot. Only a PATHFIND_NORMAL route whose LENGTH is within the
+    // window means the tank is genuinely in the room and may begin clearing. A
+    // far tank yields an INCOMPLETE route (the boss is past the node budget) or an
+    // over-window length — both correctly read as "not in the room yet".
+    PathGenerator gen(bot);
+    gen.CalculatePath(bx, by, bz, /*forceDest*/ false);
+    if (gen.GetPathType() != PATHFIND_NORMAL)
+        return false;
+    return gen.getPathLength() <= window;
+}
+
 bool DcEngageGeometry::IsRangedAttacker(Player* bot, Unit* u)
 {
     Creature const* c = u ? u->ToCreature() : nullptr;
