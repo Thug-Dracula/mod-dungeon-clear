@@ -49,6 +49,53 @@ namespace
         return bosses;
     }
 
+    // Some encounters are one-sided in faction: friendly to one team, hostile to
+    // the other. The friendly team can never bring them to combat, so for that
+    // team the entry is reclassified from a kill BOSS to a travel OBJECTIVE — the
+    // party still clears its way to the spot (identical route + trash handling),
+    // but on arrival it latches and advances instead of trying (forever) to
+    // engage. The hostile team keeps the normal combat boss, unchanged.
+    //
+    //   Uldaman (70) — The Lost Dwarves (credit Baelog 6906, faction 122):
+    //   friendly to Alliance, hostile to Horde. Alliance walks up and moves on;
+    //   Horde fights them. (Faction 122: ourMask/friendMask Alliance, enemyMask
+    //   Horde — verified in factiontemplate_dbc.)
+    struct FactionObjectiveRule
+    {
+        uint32 mapId;
+        uint32 entry;
+        TeamId friendlyTeam;  // team that treats the boss as a flyby objective
+    };
+
+    constexpr FactionObjectiveRule kFactionObjectives[] =
+    {
+        { 70, 6906, TEAM_ALLIANCE },  // Uldaman — The Lost Dwarves
+    };
+
+    std::vector<DungeonBossInfo> ApplyFactionObjectives(Player* bot, uint32 mapId,
+                                                        std::vector<DungeonBossInfo> bosses)
+    {
+        TeamId const team = bot->GetTeamId();
+        for (FactionObjectiveRule const& rule : kFactionObjectives)
+        {
+            if (rule.mapId != mapId || rule.friendlyTeam != team)
+                continue;
+            for (DungeonBossInfo& info : bosses)
+            {
+                if (info.entry != rule.entry || info.kind != DungeonAnchorKind::Boss)
+                    continue;
+                // Reach-then-continue: no engage, no kill-bit; the objective
+                // latches into "cleared anchors" on arrival (DcObjectiveArriveAction).
+                info.kind = DungeonAnchorKind::Objective;
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] map {} boss {} '{}' is friendly to this "
+                          "team — treating as a clear-to travel objective (no engage)",
+                          mapId, info.entry, info.name);
+            }
+        }
+        return bosses;
+    }
+
     // For split maps (Dire Maul et al.) keep only the bosses of the wing the
     // bot is in. The wing is identified by proximity: the wings occupy
     // far-apart regions of the map and the bot enters directly into one, so the
@@ -135,6 +182,10 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
     // add real bosses or travel objectives) before wing-filtering and snapping.
     std::vector<DungeonBossInfo> roster =
         BossRosterRegistry::Apply(mapId, BossSpawnIndex::Get(mapId, difficulty));
+
+    // Per-team faction reclassification (friendly-faction bosses -> flyby
+    // objectives) before wing-filtering and snapping.
+    roster = ApplyFactionObjectives(bot, mapId, std::move(roster));
 
     return SnapAll(map, FilterToCurrentWing(bot, mapId, std::move(roster)));
 }
