@@ -86,6 +86,12 @@ namespace DungeonClearMath
     // the patrol-wait gate re-runs the estimate with lone patrollers excluded (see
     // `excludeLonePatrollers` on EstimateAggroCount) to detect that case. Random
     // wanderers are deliberately NOT patrollers — their return is unpredictable.
+    // `elite` marks an elite-tier body (Creature::isElite(): elite / rare-elite /
+    // worldboss rank). It tunes only the WEIGHT a counted mob adds to the pull-
+    // weight tally (see EstimateAggroCount's weightThirdsOut), never seeding,
+    // assist, or pack membership — a normal mob is a third of an elite because the
+    // MaxLeeroyMobs ceiling was set thinking in elites, and a big room of weak
+    // trash should not force cautious one-cluster-at-a-time Advanced pulls.
     struct DynPullMob
     {
         float         x;
@@ -95,6 +101,7 @@ namespace DungeonClearMath
         std::uint32_t packId = 0;
         float         aggroReach = 0.0f;
         bool          patroller = false;
+        bool          elite = false;
     };
 
     // Pure Dynamic-pull estimate: how many mobs aggro if the party Leeroys on top
@@ -122,11 +129,17 @@ namespace DungeonClearMath
     // (`packId != 0`) are unaffected: you cannot wait out half a formation.
     // `countedOut` (optional) receives the indices of every mob the estimate
     // counted, for diagnostic logging at the call site.
+    // `weightThirdsOut` (optional) receives the counted set's PULL WEIGHT, in
+    // thirds of an elite: each counted elite adds 3, each counted normal adds 1.
+    // This is the value the verdict compares to a x3-scaled ceiling so a normal mob
+    // weighs a third of an elite (the ceiling was tuned in elites). The return value
+    // stays the raw body count (what `countedOut` enumerates) for diagnostics.
     std::uint32_t EstimateAggroCount(std::vector<DynPullMob> const& mobs,
                                      std::size_t targetIdx, float combatSpread,
                                      float assistRadius, float zTolerance,
                                      bool excludeLonePatrollers = false,
-                                     std::vector<std::size_t>* countedOut = nullptr);
+                                     std::vector<std::size_t>* countedOut = nullptr,
+                                     std::uint32_t* weightThirdsOut = nullptr);
 
     // Pull CC-assist grace gate (pure). Decides whether a CC-impaired drag-back
     // should be ABORTED so the party drops passive and piles in to help the tank.

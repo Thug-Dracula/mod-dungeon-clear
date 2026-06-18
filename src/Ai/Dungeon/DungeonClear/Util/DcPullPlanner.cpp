@@ -396,15 +396,19 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         // scaled). Players/totems keep 0 — they never form a pull pack.
         float aggroReach = 0.0f;
         bool patroller = false;
+        bool elite = false;
         if (Creature* c = u->ToCreature())
         {
             aggroReach = c->GetAggroRange(lowMember) + c->GetCombatReach();
             // DB-authored waypoint mover: a predictable patrol a human waits out.
             // RANDOM_MOTION wanderers are excluded — their return isn't predictable.
             patroller = c->GetDefaultMovementType() == WAYPOINT_MOTION_TYPE;
+            // Elite-tier (elite / rare-elite / worldboss rank) counts full weight;
+            // a normal mob a third — see the pull-weight tally below.
+            elite = c->isElite();
         }
         mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
-                        chainEligible, packIds[i], aggroReach, patroller});
+                        chainEligible, packIds[i], aggroReach, patroller, elite});
     }
 
     // DC_Z_LEVEL_TOLERANCE: a mob more than this far above/below is on another
@@ -412,16 +416,24 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // assist aggro just because it is near in plan view. Same constant the
     // corridor/boss-arrival floor guards use elsewhere in this file.
     std::vector<std::size_t> counted;
+    uint32 weightThirds = 0;
     uint32 const count = DungeonClearMath::EstimateAggroCount(
         mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
-        /*excludeLonePatrollers*/ false, &counted);
-    bool const advanced = count > maxLeeroy;
+        /*excludeLonePatrollers*/ false, &counted, &weightThirds);
+    // The verdict weighs the counted set, not its raw body count: an elite is a
+    // full unit, a normal a third. The ceiling (MaxLeeroyMobs, set in elites) is
+    // scaled to the same thirds unit, so a room of weak normal trash no longer
+    // forces a cautious Advanced pull while an elite pack still does.
+    uint32 const ceilingThirds = maxLeeroy * 3;
+    bool const advanced = weightThirds > ceilingThirds;
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
     // actually present, so the second O(n^2) pass is skipped otherwise): re-run the
-    // estimate with lone patrollers excluded. If the full count is over the ceiling
+    // estimate with lone patrollers excluded. If the full weight is over the ceiling
     // but the reduced is not, a patrol is the sole reason for the heavy verdict and
-    // the governor can hold for it. Pure math on data already gathered.
+    // the governor can hold for it. Pure math on data already gathered. Carried in
+    // the same thirds unit as the verdict above so the contended condition stays
+    // consistent with it.
     if (out)
     {
         bool lonePatroller = false;
@@ -431,21 +443,22 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                 lonePatroller = true;
                 break;
             }
-        uint32 const reduced = lonePatroller
-            ? DungeonClearMath::EstimateAggroCount(
-                  mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
-                  /*excludeLonePatrollers*/ true)
-            : count;
-        out->fullCount = count;
-        out->reducedCount = reduced;
-        out->ceiling = maxLeeroy;
+        uint32 reducedThirds = weightThirds;
+        if (lonePatroller)
+            DungeonClearMath::EstimateAggroCount(
+                mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
+                /*excludeLonePatrollers*/ true, nullptr, &reducedThirds);
+        out->fullCount = weightThirds;
+        out->reducedCount = reducedThirds;
+        out->ceiling = ceilingThirds;
     }
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
-                  "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, "
-                  "ceiling {}) -> {}",
+                  "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, weight "
+                  "{}/3 vs ceiling {} elites = {}/3) -> {}",
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
-                  assistRadius, maxLeeroy, advanced ? "ADVANCED" : "LEEROY");
+                  assistRadius, weightThirds, maxLeeroy, ceilingThirds,
+                  advanced ? "ADVANCED" : "LEEROY");
     // On the surprising verdict (Advanced), dump every hostile the estimate saw —
     // distance to the camp, its computed aggro reach, the eligibility gate, and
     // whether it was COUNTED — so a wrong count can be traced to the exact mobs and
@@ -457,10 +470,11 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         {
             Unit* u = hostiles[i];
             Creature* cr = u->ToCreature();
-            DC_PULL_DEBUG("[DC:{}]   mob[{}] entry {} lvl {} at {:.1f}yd "
+            DC_PULL_DEBUG("[DC:{}]   mob[{}] entry {} lvl {} {} at {:.1f}yd "
                           "reach {:.1f}+{:.0f}={:.1f} elig {} pack {} -> {}",
                           bot->GetName(), i, u->GetEntry(),
-                          cr ? uint32(cr->GetLevel()) : 0u, target->GetExactDist2d(u),
+                          cr ? uint32(cr->GetLevel()) : 0u,
+                          mobs[i].elite ? "elite" : "normal", target->GetExactDist2d(u),
                           mobs[i].aggroReach, combatSpread,
                           mobs[i].aggroReach + combatSpread,
                           mobs[i].chainEligible ? "Y" : "N", mobs[i].packId,

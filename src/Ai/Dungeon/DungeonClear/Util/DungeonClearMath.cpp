@@ -14,8 +14,11 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
                                                    float assistRadius,
                                                    float zTolerance,
                                                    bool excludeLonePatrollers,
-                                                   std::vector<std::size_t>* countedOut)
+                                                   std::vector<std::size_t>* countedOut,
+                                                   std::uint32_t* weightThirdsOut)
 {
+    if (weightThirdsOut)
+        *weightThirdsOut = 0;
     std::size_t const n = mobs.size();
     if (n == 0 || targetIdx >= n)
         return 0;
@@ -121,13 +124,20 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
     if (countedOut)
         countedOut->clear();
     std::uint32_t count = 0;
+    std::uint32_t weightThirds = 0;
     for (std::size_t i = 0; i < n; ++i)
         if (inSet[i])
         {
             ++count;
+            // Pull weight in thirds of an elite: an elite body is the full unit (3),
+            // a normal body a third (1). Keeps the tally integer for the x3-scaled
+            // ceiling comparison at the call site.
+            weightThirds += mobs[i].elite ? 3u : 1u;
             if (countedOut)
                 countedOut->push_back(i);
         }
+    if (weightThirdsOut)
+        *weightThirdsOut = weightThirds;
     return count;
 }
 

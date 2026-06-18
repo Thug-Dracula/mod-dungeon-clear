@@ -679,6 +679,104 @@ TEST(DungeonClearReleaseTest, NoCombatStampReleases)
     EXPECT_TRUE(ShouldReleaseFollower(false, 0u, 5100u, 1500u, 100.0f, 60.0f));
 }
 
+// --- Elite weighting: pull weight in thirds of an elite -------------------
+//
+// The verdict weighs the counted set instead of its raw body count: an elite is a
+// full unit (3 thirds), a normal a third (1). The DynPullMob `elite` flag is the
+// 8th brace field. Body count (EstimateAggroCount's return) is unchanged — only
+// the weightThirdsOut tally and the verdict that compares it to a x3-scaled
+// ceiling react to it.
+
+namespace
+{
+    // Pull weight, in thirds of an elite, of the counted set.
+    unsigned Weight(std::vector<DynPullMob> const& m, std::size_t t)
+    {
+        std::uint32_t w = 0;
+        DungeonClearMath::EstimateAggroCount(m, t, kSpread, kAssistR, kZTol,
+                                             /*excludeLonePatrollers*/ false,
+                                             /*countedOut*/ nullptr, &w);
+        return w;
+    }
+    // The production verdict: weighted tally vs the x3-scaled ceiling.
+    bool WeightedAdvanced(std::vector<DynPullMob> const& m, std::size_t t)
+    {
+        return Weight(m, t) > kCeil * 3u;
+    }
+}
+
+// All-normal pack: weight == body count (each normal is 1 third).
+TEST(DungeonClearEliteWeightTest, AllNormalWeighsOnePerBody)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach, false, /*elite*/ false},
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach, false, /*elite*/ false},
+        {0.0f, 4.0f, 0.0f, true,  0u, kReach, false, /*elite*/ false}
+    };
+    EXPECT_EQ(Count(mobs, 0), 3u);
+    EXPECT_EQ(Weight(mobs, 0), 3u);  // 3 normals = 3 thirds
+}
+
+// All-elite pack: each body weighs 3 thirds.
+TEST(DungeonClearEliteWeightTest, AllEliteWeighsThreePerBody)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach, false, /*elite*/ true},
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach, false, /*elite*/ true},
+        {0.0f, 4.0f, 0.0f, true,  0u, kReach, false, /*elite*/ true}
+    };
+    EXPECT_EQ(Count(mobs, 0), 3u);
+    EXPECT_EQ(Weight(mobs, 0), 9u);  // 3 elites = 9 thirds
+}
+
+// The motivating fix: a big room of NORMAL trash that body-counts ABOVE the
+// ceiling (6 > 5) now weighs only 2 elite-equivalents (6 thirds) -> stays Leeroy.
+TEST(DungeonClearEliteWeightTest, LargeNormalRoomStaysLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach, false, false},
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach, false, false},
+        {6.0f, 0.0f, 0.0f, true,  0u, kReach, false, false},
+        {9.0f, 0.0f, 0.0f, true,  0u, kReach, false, false},
+        {12.0f, 0.0f, 0.0f, true, 0u, kReach, false, false},
+        {15.0f, 0.0f, 0.0f, true, 0u, kReach, false, false}
+    };
+    EXPECT_EQ(Count(mobs, 0), 6u);             // six bodies
+    EXPECT_EQ(Weight(mobs, 0), 6u);            // = 2 elite-equiv
+    EXPECT_FALSE(WeightedAdvanced(mobs, 0));   // 6 <= ceiling 15 thirds -> Leeroy
+}
+
+// Six ELITE bodies clear the same ceiling (18 > 15 thirds) -> Advanced, as before.
+TEST(DungeonClearEliteWeightTest, LargeEliteRoomGoesAdvanced)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach, false, true},
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {6.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {9.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {12.0f, 0.0f, 0.0f, true, 0u, kReach, false, true},
+        {15.0f, 0.0f, 0.0f, true, 0u, kReach, false, true}
+    };
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_EQ(Weight(mobs, 0), 18u);
+    EXPECT_TRUE(WeightedAdvanced(mobs, 0));    // 18 > 15 thirds -> Advanced
+}
+
+// Just past the ceiling on weight: six elites (18) is Advanced, five (15) is the
+// boundary (15 == ceiling, not >) so Leeroy — confirms the > comparison and scale.
+TEST(DungeonClearEliteWeightTest, FiveElitesIsTheLeeroyBoundary)
+{
+    std::vector<DynPullMob> five = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach, false, true},
+        {3.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {6.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {9.0f, 0.0f, 0.0f, true,  0u, kReach, false, true},
+        {12.0f, 0.0f, 0.0f, true, 0u, kReach, false, true}
+    };
+    EXPECT_EQ(Weight(five, 0), 15u);
+    EXPECT_FALSE(WeightedAdvanced(five, 0));    // 15 == ceiling -> Leeroy
+}
+
 // --- Patrol-wait: EstimateAggroCount lone-patroller exclusion --------------
 
 // Helper: the reduced pass (lone patrollers excluded).
