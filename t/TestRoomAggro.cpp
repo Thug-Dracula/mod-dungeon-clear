@@ -34,6 +34,16 @@ TEST(RoomAggroRegistryTest, MultiWingMapIsKeyedByEntry)
     EXPECT_EQ(RoomAggroRegistry::Find(189, 6487), nullptr);  // (some other 189 npc)
 }
 
+// Scholomance's linked pair are both flagged so the room-trash value tracks the
+// room around the live boss (Vectus) AND excludes the off-roster partner
+// (Marduk) from being chased as a faction-15 student.
+TEST(RoomAggroRegistryTest, ScholomanceLinkedPairBothFlagged)
+{
+    EXPECT_NE(RoomAggroRegistry::Find(289, 10432), nullptr);  // Vectus
+    EXPECT_NE(RoomAggroRegistry::Find(289, 10433), nullptr);  // Marduk Blackpool
+    EXPECT_EQ(RoomAggroRegistry::Find(289, 10475), nullptr);  // Scholomance Student
+}
+
 // --- IsMemberEntry --------------------------------------------------------
 
 TEST(RoomAggroRegistryTest, EmptyWhitelistMatchesAnyEntry)

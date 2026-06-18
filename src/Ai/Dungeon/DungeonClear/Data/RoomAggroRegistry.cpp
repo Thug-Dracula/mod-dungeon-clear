@@ -33,6 +33,20 @@ namespace
         { 189, 3976, 80.0f, {} },   // Highlord Mograine
         { 189, 3977, 80.0f, {} },   // Inquisitor Whitemane
 
+        // Scholomance (289): the linked pair Marduk Blackpool / Vectus. They do
+        // not pre-aggro but are wired together in SmartAI (each "On Aggro -> Set
+        // Data 3" and "On Data Set 3 -> Attack Start"), so pulling EITHER pulls
+        // BOTH. They stand ~18yd apart in a chamber of ~32 Scholomance Students;
+        // an AoE that wakes one wakes the pair while the room is still up. The DC
+        // roster collapses the two into ONE boss anchored on Vectus (see
+        // BossRosterRegistry, map 289), so 10432 is the live tracked boss (room
+        // centre, nearest the close trash) and 10433 (Marduk, off the roster) is
+        // listed here ONLY so the room-trash value's partner check excludes it
+        // from being chased as a faction-15 "student". Radius 55 covers the
+        // student room; the RoomClearTimeout valve handles far stragglers.
+        { 289, 10432, 55.0f, {} }, // Scholomance — Vectus (tracked boss)
+        { 289, 10433, 55.0f, {} }, // Scholomance — Marduk Blackpool (partner)
+
         { 555, 18667, 100.0f, {} }, // Shadow Labyrinth — Blackheart the Inciter
         { 109, 5710,   90.0f, {} }, // Sunken Temple — Jammal'an the Prophet
         { 557, 18341,  70.0f, {} }, // Mana-Tombs — Pandemonius

@@ -39,7 +39,8 @@
 // Keep this list authoritative when adding rows so ids never collide:
 //   1  Shadowfang Keep  — courtyard door, Alliance
 //   2  Shadowfang Keep  — courtyard door, Horde
-//   3  (shared)         — room-aggro pre-clear (every RoomAggroRegistry boss)
+//   3  (shared)         — room-aggro pre-clear (every RoomAggroRegistry boss:
+//                         SM Cathedral, Scholomance Marduk & Vectus, ...)
 //   4  Razorfen Downs   — the gong
 //   5  Stratholme       — ziggurat 1 acolytes (Baroness, door open)
 //   6  Stratholme       — ziggurat 2 acolytes (Nerub'enkan, door open)
@@ -62,6 +63,7 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out);
 void RegisterWailingCavernsEvents(std::vector<DungeonEvent>& out);
 void RegisterStratholmeEvents(std::vector<DungeonEvent>& out);
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
+void RegisterScholomanceEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);

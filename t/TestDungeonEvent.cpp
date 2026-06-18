@@ -823,6 +823,23 @@ TEST(DungeonEventRoomAggro, ScarletCathedralEventShape)
     EXPECT_EQ(e->steps[0].creatureEntry, 0u);  // room-trash mode
 }
 
+// Scholomance (289) re-uses the same room-aggro pre-clear shape for the merged
+// Marduk & Vectus boss: Conditional(3) + a lone KillCreature(0) room-trash step.
+TEST(DungeonEventRoomAggro, ScholomanceMardukVectusEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(289, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_EQ(e->conditionId, 3u);
+    EXPECT_TRUE(e->required);
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[0].creatureEntry, 0u);  // room-trash mode
+
+    EXPECT_TRUE(DungeonEventRegistry::IsRoomAggroPreClear(*e));
+    EXPECT_TRUE(DungeonEventRegistry::HasRoomAggroEvent(289));
+}
+
 // IsRoomAggroPreClear distinguishes the room-trash gate from the step-driven
 // SFK gossip events and from anchored objectives — only the lone-KillCreature(0)
 // Conditional shape qualifies, so HasRoomAggroEvent flags only those maps.

@@ -41,6 +41,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(230));   // Blackrock Depths
     EXPECT_TRUE(BossRosterRegistry::HasPatch(36));    // Deadmines
     EXPECT_TRUE(BossRosterRegistry::HasPatch(329));   // Stratholme
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(289));   // Scholomance
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -313,6 +314,46 @@ TEST(BossRosterRegistryTest, SmCathedralSwapsWhitemaneForMograine)
     // Untouched bosses survive.
     EXPECT_NE(Find(out, 3975), nullptr);
     EXPECT_NE(Find(out, 4542), nullptr);
+}
+
+// --- Apply: Scholomance merges Marduk & Vectus into one boss --------------
+
+TEST(BossRosterRegistryTest, ScholomanceMergesMardukAndVectus)
+{
+    // The auto-derived list carries Vectus (10432) and Marduk (10433) as two
+    // separate encounters. Plus an untouched Scholomance boss to prove the patch
+    // only touches the entries it names.
+    std::vector<DungeonBossInfo> base = {
+        Boss(10506, 0, "Kirtonos the Herald", 289),  // untouched
+        Boss(10432, 3, "Vectus", 289),
+        Boss(10433, 4, "Marduk Blackpool", 289),
+    };
+
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(289, base);
+
+    // Both originals collapse: Marduk is gone entirely and Vectus's entry is
+    // re-added as the single merged anchor.
+    EXPECT_EQ(Find(out, 10433), nullptr);
+
+    DungeonBossInfo const* merged = Find(out, 10432);
+    ASSERT_NE(merged, nullptr);
+    EXPECT_EQ(merged->kind, DungeonAnchorKind::Boss);
+    EXPECT_EQ(merged->name, "Marduk & Vectus");
+    // Anchored on Vectus's spawn (the boss nearest the close room trash).
+    EXPECT_GT(merged->x, 140.0f);
+    EXPECT_LT(merged->x, 150.0f);
+    // Inherits Vectus's own kill-bit; the authoring field is consumed.
+    EXPECT_EQ(merged->encounterIndex, 3u);
+    EXPECT_EQ(merged->inheritCompletionFrom, 0u);
+
+    // Exactly one anchor remains for the pair (no duplicate 10432).
+    int merged10432 = 0;
+    for (DungeonBossInfo const& b : out)
+        if (b.entry == 10432)
+            ++merged10432;
+    EXPECT_EQ(merged10432, 1);
+
+    EXPECT_NE(Find(out, 10506), nullptr);
 }
 
 TEST(BossRosterRegistryTest, ResultStaysEncounterOrdered)

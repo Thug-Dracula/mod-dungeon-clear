@@ -262,6 +262,7 @@ namespace
             RegisterWailingCavernsEvents(t);
             RegisterStratholmeEvents(t);
             RegisterUldamanEvents(t);
+            RegisterScholomanceEvents(t);
             return t;
         }();
         return kEvents;
