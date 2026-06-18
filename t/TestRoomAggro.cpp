@@ -36,12 +36,29 @@ TEST(RoomAggroRegistryTest, MultiWingMapIsKeyedByEntry)
 
 // Scholomance's linked pair are both flagged so the room-trash value tracks the
 // room around the live boss (Vectus) AND excludes the off-roster partner
-// (Marduk) from being chased as a faction-15 student.
+// (Marduk) from being chased as a faction-15 student. Unlike every other
+// room-aggro boss, their room is scoped to an EXPLICIT whitelist (Scholomance
+// Students, 10475) because the whole chamber stands neutral until struck — the
+// whitelist both keeps unrelated hostile packs out of "the room" and signals the
+// value to clear the neutral students (see DungeonClearRoomTrashValue).
 TEST(RoomAggroRegistryTest, ScholomanceLinkedPairBothFlagged)
 {
-    EXPECT_NE(RoomAggroRegistry::Find(289, 10432), nullptr);  // Vectus
-    EXPECT_NE(RoomAggroRegistry::Find(289, 10433), nullptr);  // Marduk Blackpool
-    EXPECT_EQ(RoomAggroRegistry::Find(289, 10475), nullptr);  // Scholomance Student
+    RoomAggroBoss const* vectus = RoomAggroRegistry::Find(289, 10432);
+    RoomAggroBoss const* marduk = RoomAggroRegistry::Find(289, 10433);
+    ASSERT_NE(vectus, nullptr);
+    ASSERT_NE(marduk, nullptr);
+    EXPECT_EQ(RoomAggroRegistry::Find(289, 10475), nullptr);  // Student is room, not boss
+
+    // Both rows carry the student-only whitelist.
+    ASSERT_EQ(vectus->memberEntries.size(), 1u);
+    EXPECT_EQ(vectus->memberEntries[0], 10475u);
+    EXPECT_EQ(marduk->memberEntries, vectus->memberEntries);
+
+    // The whitelist scopes the room: a Scholomance Student inside the radius and
+    // outside the boss sphere is room trash; an unrelated hostile pack (e.g. a
+    // Diseased Ghoul, 10495) at the same distance is NOT.
+    EXPECT_TRUE(RoomAggroRegistry::IsRoomTrash(*vectus, 10475, 45.0f, 31.0f));
+    EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(*vectus, 10495, 45.0f, 31.0f));
 }
 
 // --- IsMemberEntry --------------------------------------------------------

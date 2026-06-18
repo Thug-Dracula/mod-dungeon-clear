@@ -127,7 +127,22 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         }
         if (u->GetGUID() == liveBoss->GetGUID())
             continue;
-        if (!bot->IsHostileTo(u))
+        // A room with an EXPLICIT member whitelist may stand NEUTRAL (yellow)
+        // until struck — Scholomance's Reanimation chamber (entry 10475) and its
+        // bosses are all non-hostile, so bot->IsHostileTo() is false for the
+        // entire room and the ordinary hostile gate would drop every student,
+        // leaving the boss to be pulled with the room still up. For an
+        // explicitly-listed member, skip the hostile gate: those entries ARE the
+        // room by author intent. IsPossibleTarget still runs below and accepts a
+        // neutral unit (it rejects only genuinely friendly / unattackable ones),
+        // so a mistargeted friendly NPC is still excluded. Rooms with an EMPTY
+        // whitelist (every other RoomAggroRegistry boss) keep the strict
+        // hostile-only behaviour — an empty whitelist is "any hostile", never
+        // "any neutral".
+        bool const explicitMember =
+            !room->memberEntries.empty() &&
+            RoomAggroRegistry::IsMemberEntry(*room, u->GetEntry());
+        if (!explicitMember && !bot->IsHostileTo(u))
         {
             ++exHostile;
             continue;

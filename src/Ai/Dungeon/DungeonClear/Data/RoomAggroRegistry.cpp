@@ -44,8 +44,21 @@ namespace
         // listed here ONLY so the room-trash value's partner check excludes it
         // from being chased as a faction-15 "student". Radius 55 covers the
         // student room; the RoomClearTimeout valve handles far stragglers.
-        { 289, 10432, 55.0f, {} }, // Scholomance — Vectus (tracked boss)
-        { 289, 10433, 55.0f, {} }, // Scholomance — Marduk Blackpool (partner)
+        //
+        // CRITICAL: the whole room — students AND the two bosses — stands NEUTRAL
+        // (yellow), not hostile, until struck. An EXPLICIT memberEntries whitelist
+        // is what makes this work: (1) it scopes "the room" to the students alone,
+        // so the unrelated HOSTILE packs that happen to sit within 55yd (Diseased
+        // Ghouls to the east, Plagued Hatchlings to the north, Risen Adepts) are
+        // NOT counted as room trash — without it those hostiles were the only
+        // things the value could see, and as they cleared the count flicked to 0
+        // and the boss was pulled with the students still up; and (2) a non-empty
+        // whitelist signals DungeonClearRoomTrashValue to clear these entries even
+        // though they are neutral (the hostile gate is bypassed for explicit
+        // members only — see that file). Marduk is whitelisted identically so the
+        // partner row behaves the same if it is ever the tracked boss.
+        { 289, 10432, 55.0f, { 10475 } }, // Scholomance — Vectus (tracked boss)
+        { 289, 10433, 55.0f, { 10475 } }, // Scholomance — Marduk Blackpool (partner)
 
         { 555, 18667, 100.0f, {} }, // Shadow Labyrinth — Blackheart the Inciter
         { 109, 5710,   90.0f, {} }, // Sunken Temple — Jammal'an the Prophet
