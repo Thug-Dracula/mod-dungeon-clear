@@ -15,6 +15,7 @@
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -949,8 +950,12 @@ bool DungeonClearHealRepositionTrigger::IsActive()
         return false;
 
     // The most-hurt member, chosen LOS-blind (the whole point — see
-    // DungeonClearHealTargetValue). Nothing below the HP floor => nothing to do.
-    Unit* target = AI_VALUE(Unit*, "dungeon clear heal target");
+    // DungeonClearHealTargetValue). Stored as a GUID (like the pull target),
+    // resolved live here. Nothing below the HP floor => nothing to do.
+    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, "dungeon clear heal target");
+    if (targetGuid.IsEmpty())
+        return false;
+    Unit* target = ObjectAccessor::GetUnit(*bot, targetGuid);
     if (!target || !target->IsAlive())
         return false;
 

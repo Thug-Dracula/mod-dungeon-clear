@@ -673,9 +673,13 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
 
 bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
 {
-    // The most-hurt heal target (LOS-blind, tank-biased). Re-read here (trigger/
-    // action gap); bail if it healed up or died in between.
-    Unit* target = AI_VALUE(Unit*, "dungeon clear heal target");
+    // The most-hurt heal target (LOS-blind, tank-biased). Stored as a GUID (like
+    // the pull target), resolved live here. Re-read (trigger/action gap); bail if
+    // it healed up or died in between.
+    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, "dungeon clear heal target");
+    if (targetGuid.IsEmpty())
+        return false;
+    Unit* target = ObjectAccessor::GetUnit(*bot, targetGuid);
     if (!target || !target->IsAlive())
         return false;
 
