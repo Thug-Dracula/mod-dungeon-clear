@@ -311,6 +311,24 @@ TEST(BossRosterRegistryTest, SmCathedralSwapsWhitemaneForMograine)
     EXPECT_EQ(mograine->encounterIndex, 5u);
     EXPECT_EQ(mograine->inheritCompletionFrom, 0u);
 
+    // ORDER FIX: room-clear + Mograine run BEFORE Fairbanks. Mograine carries
+    // orderOverride 3 (< Fairbanks's bit 4) so the picker reaches him first,
+    // while his completion still keys on Whitemane's real bit 5.
+    EXPECT_EQ(mograine->orderOverride, 3);
+    EXPECT_EQ(BossOrderKey(*mograine), 3u);
+
+    DungeonBossInfo const* fairbanks = Find(out, 4542);
+    ASSERT_NE(fairbanks, nullptr);
+    // Result is ordered by BossOrderKey, so Mograine precedes Fairbanks.
+    auto pos = [&](uint32 entry)
+    {
+        for (size_t i = 0; i < out.size(); ++i)
+            if (out[i].entry == entry)
+                return (int)i;
+        return -1;
+    };
+    EXPECT_LT(pos(3976), pos(4542));
+
     // Untouched bosses survive.
     EXPECT_NE(Find(out, 3975), nullptr);
     EXPECT_NE(Find(out, 4542), nullptr);
@@ -356,7 +374,7 @@ TEST(BossRosterRegistryTest, ScholomanceMergesMardukAndVectus)
     EXPECT_NE(Find(out, 10506), nullptr);
 }
 
-TEST(BossRosterRegistryTest, ResultStaysEncounterOrdered)
+TEST(BossRosterRegistryTest, ResultStaysClearOrdered)
 {
     std::vector<DungeonBossInfo> base = {
         Boss(3975, 2, "Herod", 189),
@@ -366,10 +384,13 @@ TEST(BossRosterRegistryTest, ResultStaysEncounterOrdered)
 
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, base);
 
+    // The result is sorted by clear ORDER key (orderOverride when set, else
+    // encounterIndex), NOT by raw encounterIndex — Mograine's orderOverride 3
+    // deliberately places him (kill-bit 5) ahead of Fairbanks (bit 4).
     ASSERT_FALSE(out.empty());
     for (size_t i = 1; i < out.size(); ++i)
-        EXPECT_LE(out[i - 1].encounterIndex, out[i].encounterIndex)
-            << "roster not encounter-ordered at index " << i;
+        EXPECT_LE(BossOrderKey(out[i - 1]), BossOrderKey(out[i]))
+            << "roster not clear-ordered at index " << i;
 }
 
 // inheritCompletionFrom must resolve against the PRE-removal base, so removing
