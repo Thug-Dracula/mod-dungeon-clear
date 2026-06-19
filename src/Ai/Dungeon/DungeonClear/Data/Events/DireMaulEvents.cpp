@@ -42,8 +42,15 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .Gossip(/*Ironbark the Redeemed*/ 14241, /*option*/ 0,
                               /*searchRadius*/ 20.0f)
                           .SkipIfTargetMissing()
+                      // Ironbark's SmartAI opens the door with SetGoState(2) =
+                      // GO_STATE_ACTIVE_ALTERNATIVE (not the usual ACTIVE=0), so
+                      // wait for 2. Wide search: the tank holds at Ironbark's
+                      // spawn while the door is ~187 yds east down the corridor,
+                      // far beyond the 20yd GO-search default — without this the
+                      // step never finds the GO and holds until timeout.
                       .WaitForGOState(/*Conservatory Door*/ 176907,
-                                      /*GO_STATE_ACTIVE*/ 0, /*timeout*/ 90000)
+                                      /*GO_STATE_ACTIVE_ALTERNATIVE*/ 2,
+                                      /*timeout*/ 90000, /*searchRadius*/ 250.0f)
                       .Persistent()
                       .Optional()
                       .Build());
