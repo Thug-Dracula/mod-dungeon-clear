@@ -512,6 +512,42 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- Dire Maul East (map 429) — Conservatory Door objective ---
+            // Alzzin the Wildshaper's grove is sealed behind the Conservatory
+            // Door (GO 176907), opened only by Ironbark the Redeemed (14241)
+            // after the party picks his gossip option. Add a travel OBJECTIVE at
+            // Ironbark's spawn, ordered just before Alzzin, wired to event 429/1
+            // (DireMaulEvents.cpp): boss-nav delivers the tank to Ironbark, the
+            // anchored event gossips him and waits for the door he walks off to
+            // open, then the clear proceeds through it to Alzzin.
+            //
+            // Dire Maul is a wing-split map, so the East bosses are reordered
+            // onto a contiguous key scale (10/20/30/50) with a gap (40) for the
+            // objective — this slots it correctly without depending on the DBC
+            // encounterIndex values, and ordering is computed per-wing so the
+            // West/North bosses (kept on their DBC order) are unaffected. The
+            // reorder sets orderOverride only; the real DBC kill-bits are
+            // untouched. The objective's synthetic entry is also added to the
+            // East wing list in DungeonWingRegistry so it survives wing-filtering.
+            {
+                BossRosterPatch p;
+                p.mapId = 429;
+                p.reorder = {
+                    { 11490, 10 },  // Zevrim Thornhoof
+                    { 13280, 20 },  // Hydrospawn
+                    { 14327, 30 },  // Lethtendris
+                    { 11492, 50 },  // Alzzin the Wildshaper (last)
+                };
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 40, 429,
+                                  "Ironbark the Redeemed (Conservatory Door)",
+                                  -56.59f, -269.12f, -57.87f,
+                                  /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;
