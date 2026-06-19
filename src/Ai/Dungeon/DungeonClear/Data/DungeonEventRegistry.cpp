@@ -263,6 +263,7 @@ namespace
             RegisterStratholmeEvents(t);
             RegisterUldamanEvents(t);
             RegisterScholomanceEvents(t);
+            RegisterDireMaulEvents(t);
             return t;
         }();
         return kEvents;

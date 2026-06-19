@@ -107,4 +107,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Value/DungeonClearHealTargetValue.{h,cpp}
 #   (LOS-blind, tank-biased most-hurt heal target — feeds the healer LOS
 #    reposition fix: DungeonClearHealReposition{Trigger,Action})
+# Data/Events/DireMaulEvents.cpp
+#   (Dire Maul East: Ironbark the Redeemed anchored objective/event — gossip him
+#    to open the Conservatory Door to Alzzin; ordered just before Alzzin via the
+#    BossRosterRegistry map-429 patch + East-wing objective entry)
 # (this comment bumps mtime to force CMake re-glob on next build)

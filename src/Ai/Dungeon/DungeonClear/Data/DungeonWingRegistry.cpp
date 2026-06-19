@@ -7,6 +7,8 @@
 
 #include <unordered_map>
 
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+
 namespace
 {
     // mapId -> wings. Boss entries are the ENCOUNTER_CREDIT_KILL_CREATURE
@@ -29,6 +31,10 @@ namespace
                     13280,  // Hydrospawn
                     14327,  // Lethtendris
                     11492,  // Alzzin the Wildshaper
+                    // Ironbark / Conservatory Door travel objective (a synthetic
+                    // entry, not a creature) — keep it in-wing so wing-filtering
+                    // doesn't drop it. See BossRosterRegistry map-429 patch.
+                    BossRosterRegistry::ObjectiveEntry(1),
                 }},
                 {"Dire Maul (West)", {
                     11489,  // Tendris Warpwood

@@ -42,6 +42,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(36));    // Deadmines
     EXPECT_TRUE(BossRosterRegistry::HasPatch(329));   // Stratholme
     EXPECT_TRUE(BossRosterRegistry::HasPatch(289));   // Scholomance
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(429));   // Dire Maul East
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -247,6 +248,45 @@ TEST(BossRosterRegistryTest, IronCladDoorSortsBetweenGilnidAndMrSmite)
     EXPECT_LT(doorIdx, smiteIdx) << "cannon must precede Mr. Smite";
     EXPECT_EQ(out[doorIdx].encounterIndex, 3u);
     EXPECT_EQ(out[doorIdx].eventId, 1u);
+}
+
+// Dire Maul East: the Ironbark / Conservatory Door objective (orderOverride 40,
+// eventId 1) must sort after the three southern bosses (reordered 10/20/30) and
+// before Alzzin the Wildshaper (reordered 50), so the tank gossips Ironbark to
+// open the door before heading to Alzzin's grove. The reorder leaves the real
+// DBC kill-bits (the base encounterIndex) untouched.
+TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(11490, 0, "Zevrim Thornhoof", 429),
+        Boss(13280, 1, "Hydrospawn", 429),
+        Boss(14327, 2, "Lethtendris", 429),
+        Boss(11492, 3, "Alzzin the Wildshaper", 429),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
+
+    int lethIdx = -1, ironbarkIdx = -1, alzzinIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 14327)
+            lethIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective)
+            ironbarkIdx = i;
+        if (out[i].entry == 11492)
+            alzzinIdx = i;
+    }
+    ASSERT_GE(ironbarkIdx, 0) << "Ironbark / Conservatory Door objective missing";
+    ASSERT_GE(lethIdx, 0);
+    ASSERT_GE(alzzinIdx, 0);
+    EXPECT_LT(lethIdx, ironbarkIdx) << "Ironbark must follow the southern bosses";
+    EXPECT_LT(ironbarkIdx, alzzinIdx) << "Ironbark must precede Alzzin";
+    EXPECT_EQ(out[ironbarkIdx].eventId, 1u);
+
+    // Reorder keys: 10/20/30/objective 40/50; real kill-bits untouched.
+    EXPECT_EQ(BossOrderKey(*Find(out, 14327)), 30u);
+    EXPECT_EQ(BossOrderKey(out[ironbarkIdx]), 40u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 11492)), 50u);
+    EXPECT_EQ(Find(out, 11492)->encounterIndex, 3u) << "Alzzin DBC kill-bit intact";
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
