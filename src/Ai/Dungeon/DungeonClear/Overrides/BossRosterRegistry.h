@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_BOSSROSTERREGISTRY_H
 #define _PLAYERBOT_BOSSROSTERREGISTRY_H
 
+#include <utility>
 #include <vector>
 
 #include "Common.h"
@@ -33,6 +34,16 @@ struct BossRosterPatch
     // DungeonAnchorKind::Objective. A boss with inheritCompletionFrom set
     // borrows that (to-be-removed) entry's encounterIndex for its kill-bit.
     std::vector<DungeonBossInfo> add;
+    // Reorder auto-derived bosses IN PLACE: {entry, orderOverride}. Sets
+    // DungeonBossInfo::orderOverride on the matching kept entry so it sorts by
+    // the given clear-path key while its real DBC kill-bit (encounterIndex) is
+    // left untouched. This is the low-boilerplate way to fix a dungeon whose
+    // DBC encounter order doesn't match the sensible travel path WITHOUT
+    // remove+re-add (no hand-authored coords needed — the auto-derived spawn
+    // coords are kept). Use a contiguous 1..N key sequence and slot any
+    // travel objectives into the same scale via MakeObjective's orderOverride.
+    // Entries not listed keep their DBC encounterIndex order.
+    std::vector<std::pair<uint32, int32>> reorder;
 };
 
 class BossRosterRegistry

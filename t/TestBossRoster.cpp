@@ -46,12 +46,13 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
 
-// ZulFarrak: the summit event objective shares Chief Ukorz's bit 7 and MUST
-// sort (and thus be reached) before him so the door-opening event runs first.
+// ZulFarrak: the Temple Summit event objective (orderOverride 4) MUST sort (and
+// thus be reached) before Chief Ukorz (orderOverride 5) so the door-opening
+// event runs first.
 TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
 {
     std::vector<DungeonBossInfo> base = {
-        Boss(7795, 6, "Shadowpriest Sezz'ziz", 209),
+        Boss(7795, 0, "Hydromancer Velratha", 209),
         Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
@@ -72,13 +73,14 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
     EXPECT_EQ(out[objIdx].encounterIndex, 7u);
 }
 
-// ZulFarrak: the optional Gahz'rilla gong objective (bit 8, above Chief Ukorz's
-// bit 7) MUST sort AFTER him so the strictly-ordinal picker only routes the tank
-// to the sacred pool once every real boss is dead — the "very last" stop.
+// ZulFarrak: the optional Gahz'rilla gong objective (orderOverride 7) MUST sort
+// AFTER Chief Ukorz (orderOverride 5) AND after Hydromancer Velratha (6) so the
+// strictly-ordinal picker only routes the tank to the sacred pool once every
+// real boss is dead — the "very last" stop.
 TEST(BossRosterRegistryTest, ZfGahzrillaObjectiveSortsAfterUkorz)
 {
     std::vector<DungeonBossInfo> base = {
-        Boss(7795, 6, "Shadowpriest Sezz'ziz", 209),
+        Boss(7795, 0, "Hydromancer Velratha", 209),
         Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
@@ -95,6 +97,55 @@ TEST(BossRosterRegistryTest, ZfGahzrillaObjectiveSortsAfterUkorz)
     ASSERT_GE(ukorzIdx, 0);
     EXPECT_GT(gahzIdx, ukorzIdx) << "Gahz'rilla must come after Ukorz (ordered last)";
     EXPECT_EQ(out[gahzIdx].eventId, 2u);
+}
+
+// ZulFarrak FULL clear order: the DBC bits (Velratha 0, Antu'sul 2, Theka 3,
+// Zum'rah 4, Ukorz 7) do not match the travel path. The `reorder` patch stamps
+// orderOverride 1..6 on the five real bosses (kill-bits untouched) and slots the
+// two objectives in at 4 and 7, yielding:
+//   Theka -> Antu'sul -> Zum'rah -> Temple Summit -> Ukorz -> Velratha -> Pool.
+TEST(BossRosterRegistryTest, ZfFullClearOrder)
+{
+    // Auto-derived list as BossSpawnIndex emits it (DBC encounterIndex order).
+    std::vector<DungeonBossInfo> base = {
+        Boss(7795, 0, "Hydromancer Velratha", 209),
+        Boss(8127, 2, "Antu'sul", 209),
+        Boss(7272, 3, "Theka the Martyr", 209),
+        Boss(7271, 4, "Witch Doctor Zum'rah", 209),
+        Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
+
+    auto pos = [&](uint32 entry)
+    {
+        for (int i = 0; i < (int)out.size(); ++i)
+            if (out[i].entry == entry)
+                return i;
+        return -1;
+    };
+    int summitPos = -1, poolPos = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+        if (out[i].kind == DungeonAnchorKind::Objective)
+        {
+            if (out[i].eventId == 1u) summitPos = i;
+            if (out[i].eventId == 2u) poolPos = i;
+        }
+    ASSERT_GE(summitPos, 0) << "Temple Summit objective missing";
+    ASSERT_GE(poolPos, 0) << "Sacred Pool objective missing";
+
+    // Theka -> Antu'sul -> Zum'rah -> Temple Summit -> Ukorz -> Velratha -> Pool.
+    EXPECT_LT(pos(7272), pos(8127));
+    EXPECT_LT(pos(8127), pos(7271));
+    EXPECT_LT(pos(7271), summitPos);
+    EXPECT_LT(summitPos, pos(7267));
+    EXPECT_LT(pos(7267), pos(7795));
+    EXPECT_LT(pos(7795), poolPos);
+
+    // Reordering must NOT disturb the real DBC kill-bits.
+    EXPECT_EQ(Find(out, 7795)->encounterIndex, 0u);  // Velratha
+    EXPECT_EQ(Find(out, 7267)->encounterIndex, 7u);  // Ukorz
+    EXPECT_EQ(BossOrderKey(*Find(out, 7795)), 6u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 7267)), 5u);
 }
 
 // Stratholme dead side: the DBC puts the ziggurats (Baroness 7, Nerub'enkan 8,
