@@ -384,13 +384,29 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // eligibility precomputable before the estimate.
     std::vector<DungeonClearMath::DynPullMob> mobs;
     mobs.reserve(hostiles.size());
+
+    // The target's own atomic pack is force-counted by EstimateAggroCount via
+    // packId closure REGARDLESS of chainEligible (it short-circuits past the
+    // eligibility test, and the seed already covers it so the assist/closure
+    // passes never read it either). So running the per-mob navmesh probe in
+    // chainConnected() for a packmate of the target is pure waste — its result is
+    // discarded. Skip it: the path query (the expensive part of this scan, and
+    // the spike in dense formation rooms) now runs ONLY for UNRELATED neighbours,
+    // which is exactly the set whose eligibility actually changes the verdict.
+    // Zero behaviour change — the math counts these mobs identically either way.
+    auto const targetEntry = idxByGuid.find(target->GetGUID());
+    uint32 const targetPackId =
+        (targetEntry != idxByGuid.end()) ? packIds[targetEntry->second] : 0u;
+
     std::size_t targetIdx = 0;
     for (std::size_t i = 0; i < hostiles.size(); ++i)
     {
         Unit* u = hostiles[i];
         if (u == target)
             targetIdx = i;
-        bool const chainEligible = u != target && chainConnected(u);
+        bool const samePackAsTarget = targetPackId != 0u && packIds[i] == targetPackId;
+        bool const chainEligible =
+            u != target && !samePackAsTarget && chainConnected(u);
         // Per-mob aggro reach vs the squishiest body: the same core value the
         // commit-range / boss handoff use (GetAggroRange + reach, level-diff
         // scaled). Players/totems keep 0 — they never form a pull pack.
@@ -596,7 +612,16 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // into chain range, a pack pulled by another fight — not to compensate for our own
     // movement. Once Advanced it is locked for the rest of the approach. One stable,
     // non-flapping decision per pack; the party is never churned Leeroy<->Advanced.
-    constexpr uint32 kRecheckMs = 400;
+    //
+    // Re-check cadence: since the verdict is now a stable property of the room
+    // (read identically from 35yd out as point-blank), the re-check exists ONLY to
+    // catch genuine room changes — a patrol wandering into chain range, a pack
+    // pulled by another fight — not our own approach. Each re-check runs the
+    // ClassifyPullAdvanced grid scan (LOS + navmesh probes over the neighbours),
+    // so 800ms (vs the old 400ms) halves that cost while still catching a wandering
+    // patrol well within the walk-in. UPGRADE-only, so a slower cadence can never
+    // cause an under-pull — at worst Advanced is recognised ~400ms later.
+    constexpr uint32 kRecheckMs = 800;
     bool const sameTarget = (pull.decisionTarget == target->GetGUID());
 
     // Resolve a fresh classification into a verdict, layering the patrol-wait gate

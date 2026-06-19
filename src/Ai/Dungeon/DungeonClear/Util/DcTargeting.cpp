@@ -7,6 +7,7 @@
 
 #include "DungeonClearUtil.h"   // DcEngageGeometry:: cross-unit calls + DC_PULL_* macros
 
+#include "DcDoorIndex.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -102,9 +103,17 @@ namespace
         if (!map)
             return doors;
         float const r2 = radius * radius;
-        for (auto const& kv : map->GetGameObjectBySpawnIdStore())
+        // Walk the cached door-GUID list (DcDoorIndex), not the entire map
+        // GameObject store. The store holds hundreds-to-thousands of GOs
+        // (chests/traps/doodads) and this runs on every path-trash scan tick; the
+        // index is the dozen-or-two door GOs, rebuilt only when it ages out or the
+        // store size changes. Shut-state is still read FRESH per door via
+        // IsDoorClosed (GOState), so door freshness is identical to the full-store
+        // walk — the index caches only "which GOs are doors". Mirrors the
+        // DcEngageGeometry door predicates, which already consume the index.
+        for (ObjectGuid const guid : DcDoorIndex::Get(map))
         {
-            GameObject* go = kv.second;
+            GameObject* go = map->GetGameObject(guid);
             if (!DcEngageGeometry::IsDoorClosed(go))
                 continue;
             float const gx = go->GetPositionX();
