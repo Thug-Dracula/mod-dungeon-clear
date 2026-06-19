@@ -43,13 +43,18 @@ namespace
         return b;
     }
 
-    // Build a travel-objective anchor. `orderIndex` slots it into the encounter
-    // ordering; `gateEntry` (optional) is a creature whose live presence also
-    // satisfies the objective; `hook` (optional) is an ObjectiveHookRegistry id.
+    // Build a travel-objective anchor. `encounterIndex` slots it into the
+    // encounter ordering; `gateEntry` (optional) is a creature whose live
+    // presence also satisfies the objective; `hook` (optional) is an
+    // ObjectiveHookRegistry id. `orderOverride` (default -1) reorders the
+    // objective in the clear sequence independently of `encounterIndex` (which,
+    // for an objective, is only an ordering hint — objectives carry no real
+    // kill-bit), so it can share a 1..N key scale with reordered real bosses.
     DungeonBossInfo MakeObjective(uint32 entry, uint32 encounterIndex, uint32 mapId,
                                   char const* name, float x, float y, float z,
                                   float arriveRadius = 0.0f, uint32 gateEntry = 0,
-                                  uint32 hook = 0, uint32 eventId = 0)
+                                  uint32 hook = 0, uint32 eventId = 0,
+                                  int32 orderOverride = -1)
     {
         DungeonBossInfo o;
         o.entry = entry;
@@ -64,6 +69,7 @@ namespace
         o.gateEntry = gateEntry;
         o.onArriveHook = hook;
         o.eventId = eventId;
+        o.orderOverride = orderOverride;
         return o;
     }
 
@@ -323,44 +329,62 @@ namespace
             }
 
             // --- ZulFarrak (map 209) -------------------------------------
-            // The temple (Executioner / Bly's Band) event runs at the top of the
-            // great staircase, and completing it opens the door to the final boss
-            // Chief Ukorz Sandscalp (bit 7). Without a target up there the tank
-            // heads straight for Ukorz, hits his closed door, and stalls. Add a
-            // travel objective at the Sandfury Executioner's spot (top of the
-            // stairs, verified from the creature table) ordered at bit 7 — the
-            // equal-index tie-break sorts an objective BEFORE the boss it shares an
-            // index with, so the tank goes up and triggers the event first.
-            // eventId 1 is the full PERSISTENT temple step list (see
-            // ZulFarrakEvents.cpp): the tank kills the executioner, cracks a cage,
-            // survives the waves, descends to help kill the temple bosses, then
-            // gossips Weegli (door) and Bly (final fight). Only when Bly dies does
-            // the event complete and latch this objective, after which the clear
-            // proceeds to Ukorz with the door open.
+            // ORDER FIX. The DBC encounter order does NOT match the travel path:
+            // Hydromancer Velratha carries bit 0, so the auto path sent the tank
+            // straight to the far sacred pool FIRST, before anything else. The
+            // sensible (and Blizzard-intended) clear sweeps the dungeon front to
+            // back and saves the pool for last:
+            //   1. Theka the Martyr      (DBC bit 3)
+            //   2. Antu'sul              (DBC bit 2)
+            //   3. Witch Doctor Zum'rah  (DBC bit 4)
+            //   4. Temple Summit         (objective — the Executioner event)
+            //   5. Chief Ukorz Sandscalp (DBC bit 7 — opens after the event)
+            //   6. Hydromancer Velratha  (DBC bit 0 — at the sacred pool)
+            //   7. Sacred Pool           (objective — the Gahz'rilla gong)
+            // Reorder the five auto-derived bosses in place (orderOverride keys
+            // 1..6 on a contiguous scale shared with the two objectives) so each
+            // sorts into its path slot while its real DBC kill-bit is untouched.
+            //
+            // The temple event (Executioner / Bly's Band) at the top of the great
+            // staircase opens the door to Chief Ukorz; the tank must trigger it
+            // before heading to Ukorz or it bee-lines into his closed door and
+            // stalls. The Temple Summit objective (key 4) sits just before Ukorz
+            // (key 5). eventId 1 is the full PERSISTENT temple step list (see
+            // ZulFarrakEvents.cpp): kill the executioner, crack a cage, survive
+            // the waves, descend to help kill the temple bosses, gossip Weegli
+            // (door) and Bly (final fight). Only when Bly dies does the event
+            // complete and latch this objective, after which the clear proceeds
+            // to Ukorz with the door open.
             {
                 BossRosterPatch p;
                 p.mapId = 209;
+                p.reorder = {
+                    { 7272, 1 },  // Theka the Martyr      (DBC bit 3)
+                    { 8127, 2 },  // Antu'sul              (DBC bit 2)
+                    { 7271, 3 },  // Witch Doctor Zum'rah  (DBC bit 4)
+                    { 7267, 5 },  // Chief Ukorz Sandscalp (DBC bit 7)
+                    { 7795, 6 },  // Hydromancer Velratha  (DBC bit 0)
+                };
                 p.add = {
-                    MakeObjective(OBJ(1), /*orderIndex*/ 7, 209,
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 7, 209,
                                   "Temple Summit (Executioner event)",
                                   1886.8f, 1289.9f, 46.0f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
-                                  /*hook*/ 0, /*eventId*/ 1),
-                    // The optional Gahz'rilla gong, ordered LAST: orderIndex 8 is
-                    // strictly above Chief Ukorz's bit 7 (the map's highest real
-                    // DungeonEncounter bit), so the strictly-ordinal picker only
-                    // routes the tank to the sacred pool once every real boss is
-                    // dead. Anchor sits ON the gong (GO 141832 spawn coords) so
-                    // boss-nav delivers the tank right to it; eventId 2 (see
-                    // ZulFarrakEvents.cpp) rings it and kills the summoned boss.
-                    // gateEntry 0: the event owns completion (Gahz'rilla dead),
-                    // not "boss alive". The objective carries no real kill-bit, so
-                    // index 8 can't collide with a set encounter bit.
-                    MakeObjective(OBJ(2), /*orderIndex*/ 8, 209,
+                                  /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 4),
+                    // The optional Gahz'rilla gong, ordered LAST (key 7): the
+                    // strictly-ordinal picker only routes the tank to the sacred
+                    // pool once every real boss is dead. Anchor sits ON the gong
+                    // (GO 141832 spawn coords) so boss-nav delivers the tank right
+                    // to it; eventId 2 (see ZulFarrakEvents.cpp) rings it and kills
+                    // the summoned boss. gateEntry 0: the event owns completion
+                    // (Gahz'rilla dead), not "boss alive". The objective carries no
+                    // real kill-bit, so its key can't collide with a set encounter
+                    // bit.
+                    MakeObjective(OBJ(2), /*encounterIndex*/ 8, 209,
                                   "Sacred Pool (Gahz'rilla gong)",
                                   1650.91f, 1171.88f, 10.901f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
-                                  /*hook*/ 0, /*eventId*/ 2),
+                                  /*hook*/ 0, /*eventId*/ 2, /*orderOverride*/ 7),
                 };
                 t.push_back(std::move(p));
             }
@@ -538,6 +562,20 @@ std::vector<DungeonBossInfo> BossRosterRegistry::Apply(uint32 mapId, std::vector
     for (DungeonBossInfo const& b : base)
         if (!remove.count(b.entry))
             result.push_back(b);
+
+    // 1b. Reorder auto-derived bosses in place: stamp the requested
+    //     orderOverride onto each kept entry so it sorts by its clear-path key
+    //     while its real DBC kill-bit (encounterIndex) stays as-is. Lets a
+    //     dungeon whose DBC encounter order doesn't match the travel path be
+    //     fixed without remove+re-add (cf. ZulFarrak: Velratha's DBC bit 0
+    //     would otherwise send the tank to the far sacred pool first).
+    for (auto const& [entry, order] : patch->reorder)
+        for (DungeonBossInfo& b : result)
+            if (b.entry == entry)
+            {
+                b.orderOverride = order;
+                break;
+            }
 
     // 2. Append the added anchors and re-sort into clear order so objectives
     //    and replacement bosses slot in. Ordering keys on BossOrderKey (the
