@@ -103,6 +103,20 @@ namespace
     // exactly what we applied and leaves a player's own manual "stay" alone.
     // Guarded by g_dcPassiveMutex (same lifecycle as g_dcPassivePlayers).
     std::map<ObjectGuid, uint8> g_dcHealerStayStates;
+
+    // "stay" and "follow" are siblings in mod-playerbots' MovementStrategyContext
+    // (constructed with supportsSiblings = true), and Engine::addStrategy removes
+    // every sibling of the strategy it adds. So `+stay` SILENTLY DELETES the bot's
+    // "follow" strategy from that engine, and the inverse `-stay` does NOT restore
+    // it (removeStrategy never re-adds siblings). Left unrepaired, a healer we pin
+    // loses "follow" for good and just stands there once the run ends / `dc off`
+    // — the "healer stuck in stay" bug. (DPS are unaffected: they get "+passive",
+    // which lives in the combat-strategy context and never touches "follow".)
+    // Maps a healer GUID to the bitmask of states where our `+stay` actually
+    // evicted a present "follow" (bit0 = COMBAT, bit1 = NON_COMBAT) so release
+    // restores exactly what we clobbered — and leaves alone a state that had no
+    // "follow" to begin with. Guarded by g_dcPassiveMutex.
+    std::map<ObjectGuid, uint8> g_dcHealerFollowStates;
 }
 
 // Flip any pets whose post-owner-release grace window has elapsed back to
@@ -245,13 +259,22 @@ void DcFollowerLifecycle::ApplyFollowerPassive(Player* follower)
     if (PlayerbotAI::IsHeal(follower))
     {
         uint8 added = 0;
+        // Record per state whether our `+stay` is about to evict a present
+        // "follow" sibling, so release can put exactly that back (see
+        // g_dcHealerFollowStates). The check must run BEFORE ChangeStrategy("+stay")
+        // — afterwards the sibling is already gone.
+        uint8 followEvicted = 0;
         if (!botAI->HasStrategy("stay", BOT_STATE_COMBAT))
         {
+            if (botAI->HasStrategy("follow", BOT_STATE_COMBAT))
+                followEvicted |= 0x1;
             botAI->ChangeStrategy("+stay", BOT_STATE_COMBAT);
             added |= 0x1;
         }
         if (!botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT))
         {
+            if (botAI->HasStrategy("follow", BOT_STATE_NON_COMBAT))
+                followEvicted |= 0x2;
             botAI->ChangeStrategy("+stay", BOT_STATE_NON_COMBAT);
             added |= 0x2;
         }
@@ -259,6 +282,11 @@ void DcFollowerLifecycle::ApplyFollowerPassive(Player* follower)
             std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
             g_dcPassivePlayers.insert(follower->GetGUID());
             g_dcHealerStayStates[follower->GetGUID()] = added;
+            // Only record an eviction we actually caused this pin; if the bot was
+            // already pinned (added==0 for that state) we did not touch "follow",
+            // so the prior pin's record (if any) must survive untouched.
+            if (followEvicted)
+                g_dcHealerFollowStates[follower->GetGUID()] |= followEvicted;
             // Re-holding within the post-release grace window: cancel any pending
             // pet release so a defensive pet isn't flipped unexpectedly.
             g_dcPetReleaseAt.erase(follower->GetGUID());
@@ -293,6 +321,7 @@ void DcFollowerLifecycle::RemoveFollowerPassive(Player* follower)
         return;
 
     uint8 healerStay = 0;
+    uint8 followRestore = 0;
     bool isHealerStay = false;
     {
         std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
@@ -311,6 +340,14 @@ void DcFollowerLifecycle::RemoveFollowerPassive(Player* follower)
             healerStay = it->second;
             g_dcHealerStayStates.erase(it);
         }
+        // ...and which states had their "follow" sibling evicted by our `+stay`,
+        // so we can put it back. Always cleared here so a stale record can't leak.
+        auto fit = g_dcHealerFollowStates.find(follower->GetGUID());
+        if (fit != g_dcHealerFollowStates.end())
+        {
+            followRestore = fit->second;
+            g_dcHealerFollowStates.erase(fit);
+        }
     }
 
     if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower))
@@ -324,8 +361,17 @@ void DcFollowerLifecycle::RemoveFollowerPassive(Player* follower)
                 botAI->ChangeStrategy("-stay", BOT_STATE_COMBAT);
             if ((healerStay & 0x2) && botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT))
                 botAI->ChangeStrategy("-stay", BOT_STATE_NON_COMBAT);
-            DC_PULL_DEBUG("[DC:{}] advanced-pull: healer released (stay cleared)",
-                          follower->GetName());
+            // Restore the "follow" strategy our `+stay` evicted (sibling removal in
+            // Engine::addStrategy). Without this the healer keeps no movement
+            // strategy in its non-combat engine and just stands there once the run
+            // ends / `dc off` — the "healer stuck in stay" bug. Guard on HasStrategy
+            // so we never double-add if something re-installed it meanwhile.
+            if ((followRestore & 0x1) && !botAI->HasStrategy("follow", BOT_STATE_COMBAT))
+                botAI->ChangeStrategy("+follow", BOT_STATE_COMBAT);
+            if ((followRestore & 0x2) && !botAI->HasStrategy("follow", BOT_STATE_NON_COMBAT))
+                botAI->ChangeStrategy("+follow", BOT_STATE_NON_COMBAT);
+            DC_PULL_DEBUG("[DC:{}] advanced-pull: healer released (stay cleared, "
+                          "follow restored: {})", follower->GetName(), followRestore);
             return;
         }
 
@@ -381,6 +427,10 @@ void DcFollowerLifecycle::ReapStrandedPassives()
             g_dcPassivePlayers.erase(guid);
             g_dcPlayerReleaseAt.erase(guid);
             g_dcHealerStayStates.erase(guid);
+            // Engine gone -> its strategies (stay AND the "follow" we evicted) are
+            // rebuilt fresh by AiFactory on the next bot, so there is nothing to
+            // restore; just drop the record so it can't leak.
+            g_dcHealerFollowStates.erase(guid);
             continue;
         }
 
