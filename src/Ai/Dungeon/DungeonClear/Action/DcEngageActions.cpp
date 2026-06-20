@@ -866,6 +866,12 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (outcome == EventDriveOutcome::Running)
     {
         // Event/hook still working — keep holding; it is driven again next tick.
+        // A running event is making progress, so clear any leftover stall string:
+        // a transient approach stall (way blocked / path-ends-short) set on the
+        // walk in is only cleared by a later successful Advance, which never runs
+        // once the tank switches to this event-hold path — leaving the panel stuck
+        // on "Blocked" through the whole (correctly-progressing) set-piece.
+        ClearStall(context);
         SetPhase(context, "objective");
         return true;
     }
@@ -1021,6 +1027,10 @@ bool DcRunEventAction::Execute(Event /*event*/)
 
     if (outcome == EventDriveOutcome::Running)
     {
+        // Progress is being made — clear any stale stall string (see the matching
+        // note in DcObjectiveArriveAction) so the panel doesn't report "Blocked"
+        // while a conditional event runs correctly.
+        ClearStall(context);
         SetPhase(context, "event");
         return true;
     }
