@@ -5,6 +5,8 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "AiObjectContext.h"
 #include "Creature.h"
 #include "GameObject.h"
 #include "GameObjectData.h"
@@ -13,6 +15,8 @@
 #include "Player.h"
 #include "Playerbots.h"
 #include "Timer.h"
+
+#include <optional>
 
 // --- Uldaman (map 70) — the Ironaya seal, CONDITIONAL --------------------
 // Ironaya (creature 7228, DungeonEncounter bit 2) sits behind the Seal of
@@ -157,11 +161,27 @@ namespace
     // preempt the (futile) boss pull on the still-stoned final boss. Due while he
     // is present and his encounter has not started; reads false the instant the
     // altar fires (state leaves NOT_STARTED), so it fires exactly once.
-    bool UldamanArchaedasAltar(Player* bot, AiObjectContext* /*context*/)
+    bool UldamanArchaedasAltar(Player* bot, AiObjectContext* context)
     {
         Creature* arch = bot->FindNearestCreature(ULD_ARCHAEDAS, ULD_SCAN, /*alive*/ true);
         InstanceScript* instance = bot->GetInstanceScript();
         uint32 const state = instance ? instance->GetData(ULD_DATA_ARCHAEDAS) : 0;
+
+        // Ordering guard: only summon Archaedas once he is the NEXT boss — i.e.
+        // every earlier roster boss (Grimlok included) is already dead. The 120yd
+        // proximity scan alone is NOT a real gate: Grimlok sits right above the
+        // Temple of the Stars, so while the tank fights toward him it comes within
+        // scan range of the stoned Archaedas below, and this event would otherwise
+        // fire and MoveTo-yank the tank down to the altar mid-Grimlok-approach
+        // (the "next boss is Grimlok but the tank navigates to Archaedas" bug). The
+        // sibling Ironaya/Stone-Keeper conditions get this ordering for free from
+        // their still-shut seal/door; Archaedas is ALWAYS present and ALWAYS
+        // NOT_STARTED until summoned, so it has no structural gate — tie it to the
+        // boss order explicitly. (Events run on a non-rest-gated driver, so an
+        // early fire also drags the tank off while the panel still reads "resting".)
+        std::optional<DungeonBossInfo> const next =
+            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        bool const archaedasIsNext = next.has_value() && next->entry == ULD_ARCHAEDAS;
 
         static uint32 lastLog = 0;
         uint32 const now = getMSTime();
@@ -169,12 +189,16 @@ namespace
         {
             lastLog = now;
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] Uldaman Archaedas cond: boss={} encounterState={}",
-                      bot->GetName(), arch ? "present" : "no", state);
+                      "[DC:{}] Uldaman Archaedas cond: boss={} encounterState={} nextBoss={} ({})",
+                      bot->GetName(), arch ? "present" : "no", state,
+                      next.has_value() ? next->entry : 0,
+                      archaedasIsNext ? "his turn" : "not yet");
         }
 
         if (!arch)
             return false;                            // not in the Temple of the Stars
+        if (!archaedasIsNext)
+            return false;                            // earlier bosses (Grimlok…) still up
         // NOT_STARTED (0) => due; IN_PROGRESS / DONE => the altar already fired.
         return state == 0;
     }
