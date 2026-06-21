@@ -162,6 +162,26 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                           .Build());
     }
 
+    // --- Dire Maul West (map 429) — Warpwood entrance room clear -----------
+    // The square entrance room (centre ~13,277,-8) is filled with Warpwood /
+    // Petrified Treants that pull as a group; they sit ~200yd south of and a
+    // floor above Tendris, so a room-aggro radius around Tendris is the wrong
+    // tool (it cleared the Eldreth behind him instead). Crystal generator 1 is in
+    // the middle of this room, so an anchored ClearRadius objective co-located
+    // with it (BossRosterRegistry OBJ(8), ordered first) sweeps the room before
+    // the bot clicks the crystal and moves north. Radius 140 covers the room
+    // (ClearRadius only counts REACHABLE hostiles, so it can't hang on a
+    // wall-corner straggler, and 140 stays short of Gen2/3 (~y429) and Tendris
+    // (~y475)). Generous timeout for a ~20-mob sweep; Optional so a stall
+    // degrades to simply moving on rather than wedging the run.
+    out.push_back(EventBuilder(429, 11, "Clear the Warpwood entrance")
+                      .Anchored(/*orderIndex, doc-only*/ 4)
+                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 140.0f,
+                                   /*zBand*/ 20.0f)
+                          .Timeout(180000)
+                      .Optional()
+                      .Build());
+
     // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
     // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)
     // gate the West path. Both are GAMEOBJECT_TYPE_DOOR with lock 1562 (the

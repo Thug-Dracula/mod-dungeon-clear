@@ -426,6 +426,17 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
               BossOrderKey(*wp));
     EXPECT_LT(BossOrderKey(*wp),
               BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(6))));
+
+    // Warpwood entrance-clear objective (OBJ 8, event 11) is ordered FIRST —
+    // before every pylon and Tendris — so the entrance room is swept on the way
+    // in.
+    DungeonBossInfo const* entrance = Find(out, BossRosterRegistry::ObjectiveEntry(8));
+    ASSERT_NE(entrance, nullptr);
+    EXPECT_EQ(entrance->eventId, 11u);
+    EXPECT_LT(BossOrderKey(*entrance),
+              BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))))
+        << "entrance clear precedes crystal generator 1";
+    EXPECT_LT(BossOrderKey(*entrance), BossOrderKey(*Find(out, 11489)));
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
