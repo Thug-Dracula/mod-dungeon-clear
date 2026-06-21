@@ -146,6 +146,32 @@ namespace
         GameObject* door = botAI->GetGameObject(doorGuid);
         return door && DcEngageGeometry::IsDoorClosed(door);
     }
+
+    // True when the cached "next dungeon boss" still names a Boss whose encounter
+    // is already complete — i.e. the value has gone stale across a kill. It is a
+    // CalculatedValue with a ~2s recompute TTL, so for up to that long after a
+    // boss dies it keeps returning the just-killed boss (the commit only advances
+    // on the next recompute). Publishing a status frame in that window flickers
+    // the panel back to the dead boss — and paints it "Blocked" if a travel stall
+    // happens to be set (e.g. a slow path build to the next anchor). The detector
+    // skips the status emit until the value resettles a tick or two later; the
+    // boss-list emit is unaffected, so the kill still shows on the roster at once.
+    bool NextBossAlreadyDead(PlayerbotAI* botAI)
+    {
+        Player* bot = botAI->GetBot();
+        if (!bot)
+            return false;
+        std::optional<DungeonBossInfo> const next =
+            botAI->GetAiObjectContext()
+                ->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")
+                ->Get();
+        if (!next.has_value() || next->kind != DungeonAnchorKind::Boss ||
+            next->encounterIndex >= 32)
+            return false;
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        uint32 const mask = inst ? inst->GetCompletedEncounterMask() : 0u;
+        return (mask & (1u << next->encounterIndex)) != 0u;
+    }
 }
 
 void DcStatusPublisher::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)
@@ -431,6 +457,12 @@ void DcStatusPublisher::TickStatusPushes(uint32 diff)
 
         std::string const payload = BuildStatusPayload(botAI);
         uint64 const bossSig = BuildBossSignature(botAI);
+        // Don't publish a transient stale frame whose target boss is already dead
+        // (the "next dungeon boss" value lags a kill by its recompute TTL). Holding
+        // the emit avoids flickering the panel back to the just-killed boss; the
+        // correct frame goes out once the value resettles. The boss-list emit below
+        // is intentionally NOT gated, so the kill still updates the roster at once.
+        bool const staleDeadBoss = NextBossAlreadyDead(botAI);
 
         bool emitStatus = false;
         bool emitBosses = false;
@@ -441,7 +473,7 @@ void DcStatusPublisher::TickStatusPushes(uint32 diff)
                 continue;  // unmarked between snapshot and now
 
             DcPushState& st = it->second;
-            if (!st.primed || st.lastStatus != payload)
+            if (!staleDeadBoss && (!st.primed || st.lastStatus != payload))
             {
                 st.lastStatus = payload;
                 emitStatus = true;
