@@ -208,19 +208,6 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         wantedEntries.insert(info.entry);
     std::unordered_map<uint32, BossLiveState> const liveness = BuildLiveness(map, wantedEntries);
 
-    // Durable per-run kill latch. A boss observed dead — its completion-mask bit
-    // set, OR a corpse on the floor — is recorded here and stays retired for the
-    // rest of the run. Classic bosses absent from DungeonEncounter.dbc (e.g.
-    // SFK's Odo) never set a mask bit, so the corpse is their only kill signal;
-    // it despawns ~1 min after death, after which the boss reads "not present"
-    // (indistinguishable from "grid not loaded") and would otherwise re-enter the
-    // candidate list and re-target the dead boss ("Can't reach <boss>: not
-    // spawned"). Latching the kill at first sighting — the tank loots each corpse
-    // for seconds, so an observation is effectively guaranteed — closes that
-    // window. Reset on dc on / instance transition with the other run-scoped sets.
-    auto& killedBosses =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear killed bosses")->Get();
-
     // Check if there is a manually selected boss target override
     uint32 const selectedEntry = AI_VALUE(uint32, "dungeon clear selected boss");
     if (selectedEntry != 0)
@@ -232,8 +219,6 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 bool invalid = false;
                 if (cleared.count(info.entry))
                     invalid = true;
-                else if (killedBosses.count(info.entry))
-                    invalid = true;  // already retired this run (latched dead)
                 else if (info.kind == DungeonAnchorKind::Boss &&
                          info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
                     invalid = true;
@@ -295,37 +280,17 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         if (cleared.count(info.entry))
             continue;
 
-        // Already retired this run by the durable kill latch — stays out even
-        // after the corpse despawns and the mask bit (if any) is gone.
-        if (info.kind == DungeonAnchorKind::Boss && killedBosses.count(info.entry))
-            continue;
-
         // Authoritative: this encounter is already complete in this instance.
         // Objectives never carry a real kill-bit, so the mask is consulted for
         // Boss anchors only (an objective's ordering index could otherwise
         // collide with an unrelated boss's set bit and vanish prematurely).
-        bool const maskDone = info.kind == DungeonAnchorKind::Boss &&
-            info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)) != 0u;
+        if (info.kind == DungeonAnchorKind::Boss &&
+            info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+            continue;
 
         BossLiveState const state = LookupLive(liveness, info.entry);
-        bool const corpse = state.present && !state.alive;
-
-        // Remember every boss seen alive this run, mirroring DcBossesAction so
-        // the re-targeting WARN below has data even when the addon panel isn't
-        // being polled. Reset with the other run-scoped sets.
-        if (info.kind == DungeonAnchorKind::Boss && state.alive)
-            context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")
-                ->Get().insert(info.entry);
-
-        // Latch the kill the instant it is observed (mask bit OR corpse) so it
-        // survives the corpse despawning / its grid unloading.
-        if (info.kind == DungeonAnchorKind::Boss && (maskDone || corpse))
-            killedBosses.insert(info.entry);
-
-        if (maskDone)
-            continue;
-        if (corpse)
-            continue;  // corpse — transient, now also latched above
+        if (state.present && !state.alive)
+            continue;  // corpse — transient, will flip to completed
 
         cands.push_back(info);
     }
@@ -351,35 +316,19 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     std::optional<DungeonBossInfo> pick =
         PickTarget(cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
 
-    // TRIPWIRE for the dead-boss wedge. The durable kill latch above retires a
-    // boss the instant its mask bit or corpse is first seen, so a killed boss can
-    // no longer be picked here. This WARN therefore fires ONLY in the residual
-    // edge the latch cannot cover: a boss we saw alive this run is being targeted
-    // while no longer alive AND was never latched — i.e. its kill was never
-    // observed (corpse despawned / grid unloaded before any compute caught it).
-    // If this ever fires, the latch missed a kill; the dumped context (present /
-    // corpse / maskBit / priorSticky / fresh / cands) pins why. `fresh=1` means
-    // the commit was released/zeroed (no held sticky); cross-reference the
-    // run-instance transition line to see whether an instance-id reset zeroed it.
-    if (pick && pick->kind == DungeonAnchorKind::Boss)
-    {
-        std::unordered_set<uint32> const& seenBosses =
-            AI_VALUE(std::unordered_set<uint32>&, "dungeon clear seen bosses");
-        BossLiveState const ps = LookupLive(liveness, pick->entry);
-        if (seenBosses.count(pick->entry) && !ps.alive)
-        {
-            bool const maskBit = pick->encounterIndex < 32 &&
-                                 (completedMask & (1u << pick->encounterIndex)) != 0u;
-            LOG_WARN("playerbots.dungeonclear",
-                     "[DC:{}] re-targeting seen-but-not-live boss '{}' (entry {}): "
-                     "seenAlive=1 liveNow=0 presentNow={} corpse={} maskBit={} "
-                     "priorSticky={} fresh={} cands={} -> dead-boss-wedge candidate",
-                     bot->GetName(), pick->name, pick->entry,
-                     ps.present ? 1 : 0, (ps.present && !ps.alive) ? 1 : 0,
-                     maskBit ? 1 : 0, stickyEntry, stickyEntry == 0 ? 1 : 0,
-                     static_cast<uint32>(cands.size()));
-        }
-    }
+    // A stall reason set by Advance always describes the boss it was heading to
+    // ("Can't reach <boss>: not spawned", "Stuck near <boss>", …). The instant
+    // the committed target advances to a DIFFERENT boss — the previous one was
+    // killed or skipped — that reason is obsolete: leaving it set makes the panel
+    // shout "Can't reach Malor" while the roster already shows Galford as next.
+    // Advance clears its own stall on a successful step, but it returns early
+    // (without clearing) whenever it is parked behind a loot/rest yield — exactly
+    // the post-kill window — so the stale reason can linger for the whole yield.
+    // Clear it here, at the single chokepoint every target change flows through,
+    // independent of whatever Advance is doing. Advance re-sets a fresh stall for
+    // the new target if it, too, can't proceed.
+    if (pick && stickyEntry && pick->entry != stickyEntry)
+        context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every

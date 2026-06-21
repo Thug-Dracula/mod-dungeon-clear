@@ -1546,6 +1546,12 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     {
         appr.OnBossChange(next->entry);
         context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+        // The stall reason (if any) was about the boss we just left — drop it so
+        // the panel can't keep reporting "Can't reach <old boss>" now that we're
+        // committed to a new target. NextDungeonBossValue also clears it on the
+        // commit change for the case where Advance is parked in a loot/rest yield
+        // and never reaches this bookkeeping; clearing here covers the live path.
+        ClearStall(context);
     }
 
     // Tail ladder. appr (the owned approach FSM) is shared by every rung; the

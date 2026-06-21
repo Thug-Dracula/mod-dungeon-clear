@@ -36,7 +36,6 @@ public:
         creators["dungeon clear skipped"] = &DungeonClearValueContext::dungeon_clear_skipped;
         creators["dungeon clear cleared anchors"] = &DungeonClearValueContext::dungeon_clear_cleared_anchors;
         creators["dungeon clear seen bosses"] = &DungeonClearValueContext::dungeon_clear_seen_bosses;
-        creators["dungeon clear killed bosses"] = &DungeonClearValueContext::dungeon_clear_killed_bosses;
         creators["dungeon clear seen due events"] = &DungeonClearValueContext::dungeon_clear_seen_due_events;
         creators["dungeon clear sticky boss"] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
         creators["dungeon clear selected boss"] = &DungeonClearValueContext::dungeon_clear_selected_boss;
@@ -81,7 +80,6 @@ private:
     static UntypedValue* dungeon_clear_skipped(PlayerbotAI* ai) { return new DungeonClearSkippedValue(ai); }
     static UntypedValue* dungeon_clear_cleared_anchors(PlayerbotAI* ai) { return new DungeonClearClearedAnchorsValue(ai); }
     static UntypedValue* dungeon_clear_seen_bosses(PlayerbotAI* ai) { return new DungeonClearSeenBossesValue(ai); }
-    static UntypedValue* dungeon_clear_killed_bosses(PlayerbotAI* ai) { return new DungeonClearKilledBossesValue(ai); }
     static UntypedValue* dungeon_clear_seen_due_events(PlayerbotAI* ai) { return new DungeonClearSeenDueEventsValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
     static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }

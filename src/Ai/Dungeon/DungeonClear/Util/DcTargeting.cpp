@@ -809,7 +809,6 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
     clearedSet.clear();
     skippedSet.clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
-    context->GetValue<std::unordered_set<uint32>&>("dungeon clear killed bosses")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
     context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
