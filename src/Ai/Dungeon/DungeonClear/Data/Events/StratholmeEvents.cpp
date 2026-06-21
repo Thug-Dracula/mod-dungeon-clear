@@ -11,6 +11,29 @@
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
+// --- Stratholme (map 329) — live (Scarlet) side: Dathrohan -> Balnazzar -----
+// The Balnazzar encounter (DBC bit 6) credits creature 10813 (Balnazzar), which
+// has NO creature.sql spawn: it exists only via Grand Crusader Dathrohan's
+// (10812) SmartAI, which at <=40% HP casts Balnazzar Transform and UpdateEntry's
+// the SAME creature in place (10812 -> 10813, GUID preserved). BossSpawnIndex
+// matches credit entries to spawns, so the spawn-less 10813 is dropped and the
+// clear skips from Archivist Galford (bit 5) straight to the dead side, never
+// fighting the live boss. (Same shape as Ramstein, also a spawn-less credit.)
+//
+// Fix: a BossRosterRegistry OBJECTIVE at Dathrohan's static spawn (bit 6, right
+// after Galford), carrying anchored event 5. The objective only travels the tank
+// in; an Objective completes on arrival WITHOUT engaging, so the event does the
+// fighting: KillCreatureEngage(10812) seeks and pulls Dathrohan, then
+// KillCreatureEngage(10813) finishes the transformed Balnazzar.
+//
+// Two steps, not one: a lone KillCreatureEngage(10812) would report Done the
+// instant he transforms at 40% (no live 10812 remains) while Balnazzar is still
+// up — the tank would latch the objective and walk off mid-fight. Step 2 holds
+// until 10813 is actually dead. Non-persistent: both steps are idempotent
+// kill-gates (no WaitForSpawn to false-complete across a combat gap, unlike the
+// Slaughterhouse), and the whole fight is one continuous combat at a fixed spot,
+// so a restart-from-0 after any combat lull just re-evaluates correctly.
+//
 // --- Stratholme (map 329) — the dead side / "Baron run" --------------------
 // The Undead-side set-piece, verified from instance_stratholme.cpp. Two
 // independent instance counters gate the whole thing; without orchestration the
@@ -57,6 +80,12 @@
 
 namespace
 {
+    // --- live side: Dathrohan -> Balnazzar -------------------------------
+    constexpr uint32 STR_DATHROHAN = 10812;  // Grand Crusader Dathrohan (spawned)
+    constexpr uint32 STR_BALNAZZAR = 10813;  // Balnazzar (UpdateEntry, no spawn)
+    constexpr float STR_DATH_SEEK = 60.0f;   // engage-seek radius from the anchor
+    constexpr uint32 STR_DATH_TIMEOUT = 120000;  // 2 min per phase
+
     // --- ziggurat acolyte chambers ---------------------------------------
     constexpr uint32 STR_ACOLYTE = 10399;  // Thuzadin Acolyte (inside, documentary)
 
@@ -165,6 +194,19 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
     // STR_RAMSTEIN is documentary too: the slaughter event folds him into step 1's
     // ClearRadius (he is summoned synchronously) rather than naming him in a step.
     (void) STR_RAMSTEIN;
+
+    // --- live side: Grand Crusader Dathrohan -> Balnazzar (anchored, id 5) --
+    // Anchored at the Dathrohan objective (BossRosterRegistry OBJ(2), bit 6).
+    // Step 1 seeks + engages Dathrohan; at 40% he UpdateEntry's to Balnazzar
+    // (same GUID, already in combat), so no live 10812 remains -> step Done.
+    // Step 2 holds until Balnazzar himself is dead, then the objective latches.
+    out.push_back(EventBuilder(329, 5, "Grand Crusader Dathrohan (Balnazzar)")
+                      .Anchored(6)
+                      .KillCreatureEngage(STR_DATHROHAN, /*count*/ 1, STR_DATH_SEEK)
+                          .Timeout(STR_DATH_TIMEOUT)
+                      .KillCreatureEngage(STR_BALNAZZAR, /*count*/ 1, STR_DATH_SEEK)
+                          .Timeout(STR_DATH_TIMEOUT)
+                      .Build());
 
     out.push_back(EventBuilder(329, 1, "Ziggurat 1 acolytes (Baroness)")
                       .Conditional(5)

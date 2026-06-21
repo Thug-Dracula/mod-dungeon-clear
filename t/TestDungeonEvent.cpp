@@ -554,6 +554,33 @@ TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
     EXPECT_GT(e->steps[5].radius, 100.0f);  // reaches the door from across the hall
 }
 
+// Stratholme (329) live side: Grand Crusader Dathrohan -> Balnazzar (eventId 5),
+// anchored at the Dathrohan objective (bit 6, after Galford). Balnazzar (10813)
+// has no spawn — he is Dathrohan (10812) after an UpdateEntry at 40% HP — so two
+// KillCreatureEngage steps: pull 10812 (Done when he transforms away), then hold
+// on 10813 until he's dead. Non-persistent: both steps are idempotent kill-gates.
+TEST(DungeonEventRegistryTest, StratholmeDathrohanBalnazzarEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(329, 5);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 6u);  // Balnazzar's DBC bit, right after Galford (5)
+    EXPECT_FALSE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 2u);
+
+    // 1. seek + engage Dathrohan; Done once he UpdateEntry's away (no live 10812).
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(e->steps[0].engage);
+    EXPECT_EQ(e->steps[0].creatureEntry, 10812u);
+
+    // 2. finish the transformed Balnazzar; Done when 10813 is dead.
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(e->steps[1].engage);
+    EXPECT_EQ(e->steps[1].creatureEntry, 10813u);
+}
+
 // The three ziggurat acolyte clears (eventIds 1/2/3) are conditional events
 // (conditions 5/6/7) that fire when a ziggurat door is open but the chamber not
 // yet cleared, each a single ClearRadius of its acolyte chamber.

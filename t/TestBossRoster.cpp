@@ -191,10 +191,16 @@ TEST(BossRosterRegistryTest, ZfFullClearOrder)
 // Maleki 9) before Magistrate Barthilas (10), but the path runs Barthilas FIRST.
 // The patch re-adds Barthilas with orderOverride 6 (keeping kill-bit 10) so the
 // clear order becomes Barthilas -> ziggurats -> Slaughterhouse (11) -> Baron (12).
+//
+// The live side here is just Archivist Galford (bit 5). Balnazzar (bit 6) is NOT
+// auto-derived in production: its credit creature 10813 has no creature.sql spawn
+// (it exists only via Dathrohan's UpdateEntry), so BossSpawnIndex drops it — the
+// base list jumps Galford(5) -> Baroness(7). The patch fills the gap with a
+// Dathrohan objective (OBJ(2), eventId 5, bit 6).
 TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
 {
     std::vector<DungeonBossInfo> base = {
-        Boss(10813, 6, "Balnazzar", 329),         // live side, stays put
+        Boss(10811, 5, "Archivist Galford", 329),  // live side, last auto-derived
         Boss(10436, 7, "Baroness Anastari", 329),
         Boss(10437, 8, "Nerub'enkan", 329),
         Boss(10438, 9, "Maleki the Pallid", 329),
@@ -203,26 +209,38 @@ TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, base);
 
-    int barthIdx = -1, baronessIdx = -1, malekiIdx = -1, slaughterIdx = -1, baronIdx = -1;
+    int galfordIdx = -1, dathrohanIdx = -1, barthIdx = -1, baronessIdx = -1,
+        malekiIdx = -1, slaughterIdx = -1, baronIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
+        if (out[i].entry == 10811) galfordIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 5u) dathrohanIdx = i;
         if (out[i].entry == 10435) barthIdx = i;
         if (out[i].entry == 10436) baronessIdx = i;
         if (out[i].entry == 10438) malekiIdx = i;
         if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 4u) slaughterIdx = i;
         if (out[i].entry == 10440) baronIdx = i;
     }
+    ASSERT_GE(galfordIdx, 0);
+    ASSERT_GE(dathrohanIdx, 0) << "Dathrohan (Balnazzar) objective missing";
     ASSERT_GE(barthIdx, 0);
     ASSERT_GE(baronessIdx, 0);
     ASSERT_GE(slaughterIdx, 0) << "slaughterhouse objective missing";
     ASSERT_GE(baronIdx, 0);
 
-    // Barthilas first, then the ziggurats, then slaughterhouse, then Baron.
+    // Galford -> Dathrohan/Balnazzar -> Barthilas -> ziggurats -> slaughter -> Baron.
+    EXPECT_LT(galfordIdx, dathrohanIdx) << "Dathrohan follows Galford on the live side";
+    EXPECT_LT(dathrohanIdx, barthIdx) << "live side (Balnazzar) before the dead side";
     EXPECT_LT(barthIdx, baronessIdx) << "Barthilas must precede the ziggurats";
     EXPECT_LT(malekiIdx, slaughterIdx) << "ziggurats before the slaughterhouse";
     EXPECT_LT(slaughterIdx, baronIdx) << "slaughterhouse before Baron";
 
-    // Reordering must NOT disturb his real kill-bit: completion still keys on 10.
+    // The Dathrohan objective slots at bit 6 (after Galford 5) and is an Objective
+    // (no real kill-bit — completion is its event, not the mask).
+    EXPECT_EQ(out[dathrohanIdx].kind, DungeonAnchorKind::Objective);
+    EXPECT_EQ(BossOrderKey(out[dathrohanIdx]), 6u);
+
+    // Reordering must NOT disturb Barthilas's real kill-bit: completion still keys on 10.
     EXPECT_EQ(out[barthIdx].encounterIndex, 10u);
     EXPECT_EQ(out[barthIdx].orderOverride, 6);
     EXPECT_EQ(BossOrderKey(out[barthIdx]), 6u);

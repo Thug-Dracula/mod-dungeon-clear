@@ -490,6 +490,22 @@ namespace
             // coords are his static creature.sql spawn (he relocates at run-time,
             // but the auto-list anchored on this spawn and the engage pipeline
             // handles his flee). See StratholmeEvents.
+            //
+            // LIVE-SIDE BALNAZZAR. The Balnazzar encounter (DBC bit 6) credits
+            // creature 10813 (Balnazzar), which has NO creature.sql spawn — it
+            // exists only via Grand Crusader Dathrohan's (10812) on-aggro SmartAI,
+            // which at <=40% HP casts Balnazzar Transform and UpdateEntry's the
+            // SAME creature 10812 -> 10813. So BossSpawnIndex (which matches credit
+            // entries to spawns) drops the encounter and the clear jumps straight
+            // from Archivist Galford (bit 5) to the dead side — the live boss is
+            // never fought. Same class as Ramstein. Fix: an OBJECTIVE at Dathrohan's
+            // static spawn ordered at bit 6 (right after Galford, sharing key 6 with
+            // the reordered Barthilas — Apply's Objective-before-Boss tie-break +
+            // PickTarget's equal-index loop run Dathrohan then Barthilas), carrying
+            // event 5 (KillCreatureEngage 10812 -> 10813). Completion is the event
+            // ("Balnazzar dead"), not the mask, so objectives' bit-6 ordering hint
+            // can't collide with the real bit-6 the encounter sets. See
+            // StratholmeEvents.
             {
                 BossRosterPatch p;
                 p.mapId = 329;
@@ -498,6 +514,14 @@ namespace
                     MakeBoss(10435, 329, "Magistrate Barthilas",
                              3663.23f, -3619.14f, 137.98f,
                              /*completionFrom*/ 10435, /*orderOverride*/ 6),
+                    // Grand Crusader Dathrohan -> Balnazzar (live side). Objective
+                    // at his static spawn (creature.sql, map 329), bit 6 so it slots
+                    // right after Galford; event 5 seeks + engages him and finishes
+                    // the transformed Balnazzar. See the LIVE-SIDE BALNAZZAR note.
+                    MakeObjective(OBJ(2), /*encounterIndex*/ 6, 329,
+                                  "Grand Crusader Dathrohan",
+                                  3415.8f, -3044.5f, 136.8f, /*arriveRadius*/ 30.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 5),
                     // Anchor pulled ~37yd SOUTH of SlaughterPos into the abomination
                     // hall: SlaughterPos (4032,-3378) sits at the still-closed Baron
                     // door (175796 @ -3364), so the approach hit the door and stalled
