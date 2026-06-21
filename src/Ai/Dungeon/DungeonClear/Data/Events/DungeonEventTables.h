@@ -54,7 +54,9 @@
 //                         gong summons him, so the party enters aggro range)
 //  12  Dire Maul North  — Gordok Courtyard Door (on-path; click to open)
 //  13  Dire Maul North  — Gordok Inner Door (on-path; click to open)
-//   -- next free: 14 (9 and 10 may be reused)
+//  14  Dire Maul West   — Crescent Key Door, lower (on-path; click to open)
+//  15  Dire Maul West   — Crescent Key Door, upper (on-path; click to open)
+//   -- next free: 16 (9 and 10 may be reused)
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 

@@ -536,47 +536,92 @@ namespace
                 t.push_back(std::move(p));
             }
 
-            // --- Dire Maul East (map 429) — Conservatory Door objective ---
-            // Alzzin the Wildshaper's grove is sealed behind the Conservatory
-            // Door (GO 176907), opened only by Ironbark the Redeemed (14241)
-            // after the party picks his gossip option. Add a travel OBJECTIVE at
-            // Ironbark's spawn, ordered just before Alzzin, wired to event 429/1
-            // (DireMaulEvents.cpp): boss-nav delivers the tank to Ironbark, the
-            // anchored event gossips him and waits for the door he walks off to
-            // open, then the clear proceeds through it to Alzzin.
+            // --- Dire Maul (map 429) — East + West (ONE patch per map) ----
+            // FindPatch returns the FIRST patch matching a map, so all of Dire
+            // Maul's wings share a SINGLE map-429 BossRosterPatch. Wing-filtering
+            // (DungeonWingRegistry, applied after this) scopes each run to its
+            // wing, so the East objective, the West reorder and the West pylon
+            // objectives coexist here harmlessly — an East run never sees the
+            // West adds and vice versa. orderOverride integers may therefore
+            // repeat across wings (ordering is computed per wing).
             //
-            // Ironbark is ANCHORED because the opener — the NPC — stands ~190yd
-            // away from the door, OFF the corridor: boss-nav must deliver the tank
-            // to a DIFFERENT spot than the blocked door. The North Gordok doors
-            // sit ON the corridor (the tank walks straight into them) and so are
-            // CONDITIONAL events instead — see DireMaulEvents.cpp /
-            // RegisterDireMaulConditions for why an on-path door must be
-            // conditional (it has to preempt the door-blocked stall, which an
-            // anchored objective-arrive cannot).
+            // EAST — Conservatory Door objective. Alzzin's grove is sealed behind
+            // the Conservatory Door (GO 176907), opened only by Ironbark the
+            // Redeemed (14241) after a gossip. A travel OBJECTIVE at Ironbark's
+            // spawn (wired to event 429/1) lets boss-nav deliver the tank to him;
+            // the anchored event gossips him and waits for the door he walks off
+            // to open. ANCHORED because the opener stands ~190yd OFF the corridor
+            // (contrast the North Gordok / West Crescent doors, which sit ON the
+            // corridor and so are CONDITIONAL — see DireMaulEvents.cpp). East
+            // bosses reordered onto 10/20/30/50 with a gap (40) for the objective.
             //
-            // Dire Maul is a wing-split map, so the East bosses are reordered
-            // onto a contiguous key scale (10/20/30/50) with a gap (40) for the
-            // objective — this slots it correctly without depending on the DBC
-            // encounterIndex values, and ordering is computed per-wing so the
-            // West/North bosses (kept on their DBC order) are unaffected. The
-            // reorder sets orderOverride only; the real DBC kill-bits are
-            // untouched. The objective's synthetic entry is also added to the
-            // East wing list in DungeonWingRegistry so it survives wing-filtering.
+            // WEST — order fix + Immol'thar pylons. The DBC encounter order does
+            // not match the kill order, and Prince Tortheldrin (11486) must be
+            // last: he is friendly/non-attackable until Immol'thar (11496) dies,
+            // yet his chamber (y625) sits BEFORE Immol'thar (y812) on the walk.
+            // Reorder so Immol'thar precedes the Prince. Immol'thar is held
+            // NON_ATTACKABLE by a force field (GO 179503) until all five Crystal
+            // Generators (pylons) are destroyed (the instance ORs a bitmask and
+            // clears the flag at 0x1F). The five generators (BUTTON GOs) are
+            // scattered wing-wide, far beyond HopTo range, so each is a travel
+            // OBJECTIVE wired to a tiny anchored UseGO event (DireMaulEvents
+            // 429/4..429/8) — the Sunken-Temple / Uldaman-altar pattern. Ordered
+            // south-trio-before-Tendris / north-pair-before-Immol'thar to track
+            // the route (pure orderOverride tuning if a backtrack looks bad live).
+            // Engage of Immol'thar naturally waits on his NON_ATTACKABLE flag, so
+            // no explicit "all pylons down" gate is needed. The objective
+            // encounterIndex values are synthetic highs (40 East; 41-45 West
+            // pylons) distinct from any real DBC kill-bit; objective completion
+            // keys on the anchor latch (eventId), never on encounterIndex.
+            //
+            // All synthetic objective entries are added to their wing's list in
+            // DungeonWingRegistry so wing-filtering keeps them.
             {
                 BossRosterPatch p;
                 p.mapId = 429;
                 p.reorder = {
+                    // East
                     { 11490, 10 },  // Zevrim Thornhoof
                     { 13280, 20 },  // Hydrospawn
                     { 14327, 30 },  // Lethtendris
                     { 11492, 50 },  // Alzzin the Wildshaper (last)
+                    // West
+                    { 11489, 10 },  // Tendris Warpwood
+                    { 11488, 20 },  // Illyanna Ravenoak
+                    { 11487, 30 },  // Magister Kalendris
+                    { 11496, 45 },  // Immol'thar (after all five pylons)
+                    { 11486, 50 },  // Prince Tortheldrin (last)
                 };
                 p.add = {
+                    // East — Ironbark / Conservatory Door.
                     MakeObjective(OBJ(1), /*encounterIndex*/ 40, 429,
                                   "Ironbark the Redeemed (Conservatory Door)",
                                   -56.59f, -269.12f, -57.87f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
+                    // West — Immol'thar pylons. Southern trio (before Tendris).
+                    MakeObjective(OBJ(2), /*encounterIndex*/ 41, 429,
+                                  "Destroy Demon Crystal (Generator 1)",
+                                  12.94f, 277.93f, -8.93f,
+                                  /*arriveRadius*/ 10.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 4, /*orderOverride*/ 5),
+                    MakeObjective(OBJ(3), /*encounterIndex*/ 42, 429,
+                                  "Destroy Demon Crystal (Generator 2)",
+                                  -92.35f, 442.67f, 28.55f,
+                                  10.0f, 0, 0, /*eventId*/ 5, /*orderOverride*/ 6),
+                    MakeObjective(OBJ(4), /*encounterIndex*/ 43, 429,
+                                  "Destroy Demon Crystal (Generator 3)",
+                                  121.22f, 429.09f, 28.45f,
+                                  10.0f, 0, 0, /*eventId*/ 6, /*orderOverride*/ 7),
+                    // West — northern pair (by Immol'thar's prison, after Kalendris).
+                    MakeObjective(OBJ(5), /*encounterIndex*/ 44, 429,
+                                  "Destroy Demon Crystal (Generator 4)",
+                                  78.14f, 737.40f, -24.62f,
+                                  10.0f, 0, 0, /*eventId*/ 7, /*orderOverride*/ 40),
+                    MakeObjective(OBJ(6), /*encounterIndex*/ 45, 429,
+                                  "Destroy Demon Crystal (Generator 5)",
+                                  -155.43f, 734.17f, -24.62f,
+                                  10.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 41),
                 };
                 t.push_back(std::move(p));
             }

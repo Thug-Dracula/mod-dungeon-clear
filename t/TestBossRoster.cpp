@@ -321,12 +321,15 @@ TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
 
+    // NOTE: Dire Maul shares ONE map-429 patch across wings, so Apply() also
+    // appends the West pylon objectives (eventId 4-8). Identify Ironbark by his
+    // eventId (1), not "any objective", which would now match a West pylon.
     int lethIdx = -1, ironbarkIdx = -1, alzzinIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
         if (out[i].entry == 14327)
             lethIdx = i;
-        if (out[i].kind == DungeonAnchorKind::Objective)
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 1)
             ironbarkIdx = i;
         if (out[i].entry == 11492)
             alzzinIdx = i;
@@ -343,6 +346,74 @@ TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
     EXPECT_EQ(BossOrderKey(out[ironbarkIdx]), 40u);
     EXPECT_EQ(BossOrderKey(*Find(out, 11492)), 50u);
     EXPECT_EQ(Find(out, 11492)->encounterIndex, 3u) << "Alzzin DBC kill-bit intact";
+}
+
+// Dire Maul West: the kill order is fixed (Immol'thar before the friendly-until-
+// his-death Prince), and Immol'thar's five Crystal Generator pylons are added as
+// travel objectives — three before Tendris, two before Immol'thar. Real DBC
+// kill-bits stay intact; objective encounterIndex values are synthetic highs.
+TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
+{
+    // Arbitrary DBC bit order (deliberately NOT the kill order) to prove the
+    // reorder is what fixes it.
+    std::vector<DungeonBossInfo> base = {
+        Boss(11486, 0, "Prince Tortheldrin", 429),
+        Boss(11496, 1, "Immol'thar", 429),
+        Boss(11487, 2, "Magister Kalendris", 429),
+        Boss(11488, 3, "Illyanna Ravenoak", 429),
+        Boss(11489, 4, "Tendris Warpwood", 429),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
+
+    // All five West bosses survive with their real kill-bits untouched.
+    ASSERT_NE(Find(out, 11489), nullptr);
+    EXPECT_EQ(Find(out, 11489)->encounterIndex, 4u) << "Tendris DBC kill-bit intact";
+    EXPECT_EQ(Find(out, 11486)->encounterIndex, 0u) << "Prince DBC kill-bit intact";
+
+    // Reorder keys put the kill order right: Tendris < Illyanna < Kalendris <
+    // Immol'thar < Prince.
+    EXPECT_EQ(BossOrderKey(*Find(out, 11489)), 10u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 11488)), 20u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 11487)), 30u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 11496)), 45u);
+    EXPECT_EQ(BossOrderKey(*Find(out, 11486)), 50u);
+
+    // Immol'thar strictly precedes the Prince in the final order.
+    int immolIdx = -1, princeIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 11496)
+            immolIdx = i;
+        if (out[i].entry == 11486)
+            princeIdx = i;
+    }
+    ASSERT_GE(immolIdx, 0);
+    ASSERT_GE(princeIdx, 0);
+    EXPECT_LT(immolIdx, princeIdx) << "Immol'thar must die before the Prince";
+
+    // The five pylon objectives are present, wired to events 4-8, with synthetic
+    // (>= 32, so never confused with a real DBC bit) encounterIndex values.
+    int pylonCount = 0;
+    for (DungeonBossInfo const& b : out)
+    {
+        if (b.kind == DungeonAnchorKind::Objective && b.eventId >= 4 && b.eventId <= 8)
+        {
+            ++pylonCount;
+            EXPECT_GE(b.encounterIndex, 32u)
+                << "pylon objective kill-bit must be synthetic-high";
+        }
+    }
+    EXPECT_EQ(pylonCount, 5) << "all five Crystal Generator objectives present";
+
+    // Two pylons are placed after Kalendris (order 40/41), three before Tendris
+    // (order 5/6/7) — i.e. the northern pair comes after Immol'thar's order in
+    // the list? No: orderOverride 40/41 < Immol'thar's 45, so both northern
+    // pylons precede the Immol'thar engage.
+    EXPECT_LT(BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(5))), 45u);
+    EXPECT_LT(BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(6))), 45u);
+    EXPECT_LT(BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))),
+              BossOrderKey(*Find(out, 11489)))
+        << "southern pylon trio routed before Tendris";
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
