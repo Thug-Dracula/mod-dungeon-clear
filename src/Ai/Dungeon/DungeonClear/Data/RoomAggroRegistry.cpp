@@ -67,15 +67,17 @@ namespace
         { 230, 9019,  166.0f, {} }, // Blackrock Depths — Emperor Dagran Thaurissan
         { 429, 14354,  50.0f, {} }, // Dire Maul East — Pusillin
 
-        // Dire Maul West — Tendris Warpwood (11489). He has no scripted
-        // CallForHelp, but stands amid the dense Warpwood treant trash that
-        // assists by default; pulling him drags the whole entrance pack. Empty
-        // memberEntries (any hostile in radius, the safe over-approximation —
-        // see the note above) matches Pusillin on this same map; the boss
-        // exclusion + aggro-sphere keep the gate off Tendris himself. Uses the
-        // legacy standalone room-trash path (no condition-3 event row), exactly
-        // like Pusillin — radius 45 ≈ the treant ring (tune live).
-        { 429, 11489,  45.0f, {} }, // Dire Maul West — Tendris Warpwood
+        // Dire Maul West — Tendris Warpwood (11489). He stands amid the dense
+        // Warpwood treant trash that assists when he is pulled. Empty
+        // memberEntries (any hostile in radius) matches Pusillin on this same map.
+        // Radius 80 (was 45): the room band is the shell between the boss aggro
+        // sphere and this radius; live diagnostics showed sphere≈33.5, so r=45
+        // left only an ~11.5yd band that the treant pack fell outside of
+        // (kept=0, far=171). 80 matches SM Cathedral and gives a ~46yd band while
+        // staying well short of Illyanna (~120yd away). The room-trash value's
+        // near[H]/near[N] entry histogram (DungeonClear.log) confirms what
+        // actually sits in the band; the RoomClearTimeout valve covers stragglers.
+        { 429, 11489,  80.0f, {} }, // Dire Maul West — Tendris Warpwood
 
         // Trial of the Champion (650) — Grand Champions, CallForHelp(100) on
         // unmount. Both faction rosters flagged; the other live champions are

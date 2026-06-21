@@ -5,7 +5,9 @@
 
 #include "DungeonClearRoomTrashValue.h"
 
+#include <map>
 #include <optional>
+#include <string>
 
 #include "AttackersValue.h"
 #include "Creature.h"
@@ -134,6 +136,13 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     uint32 nCand = 0, exDead = 0, exHostile = 0, exTarget = 0, exBossEntry = 0,
            exRoomPartner = 0, exSphere = 0, exReach = 0, exDoor = 0, exFar = 0;
 
+    // Diagnostic histograms: every live candidate within the room radius, bucketed
+    // by entry and hostility, so a live "kept=0" names EXACTLY which entries sit
+    // near the boss and whether they read hostile to the bot. This is what tells
+    // a future tuner whether a missing pre-clear is "threat is hostile-but-far"
+    // (widen radius) vs "threat is neutral-but-near" (explicit member whitelist).
+    std::map<uint32, uint32> diagHostileNear, diagNeutralNear;
+
     GuidVector const& candidates = AI_VALUE(GuidVector, "dungeon clear far targets");
     nCand = static_cast<uint32>(candidates.size());
     for (ObjectGuid const guid : candidates)
@@ -146,6 +155,20 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         }
         if (u->GetGUID() == liveBoss->GetGUID())
             continue;
+
+        // Diagnostic bucketing (in-radius only) — independent of the exclusion
+        // flow below so it captures units dropped early (e.g. the non-hostile
+        // gate). Cheap; only the leader formats it in the change-gated log.
+        {
+            float const dDiag = liveBoss->GetExactDist(u);
+            if (dDiag <= room->radius)
+            {
+                if (bot->IsHostileTo(u))
+                    ++diagHostileNear[u->GetEntry()];
+                else
+                    ++diagNeutralNear[u->GetEntry()];
+            }
+        }
         // A room with an EXPLICIT member whitelist may stand NEUTRAL (yellow)
         // until struck — Scholomance's Reanimation chamber (entry 10475) and its
         // bosses are all non-hostile, so bot->IsHostileTo() is false for the
@@ -233,13 +256,35 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         lastLoggedKept = out.size();
         bool const atBossNow =
             DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+
+        // Compact "entryxcount ..." rendering of an in-radius histogram (capped).
+        auto const histStr = [](std::map<uint32, uint32> const& m) -> std::string
+        {
+            std::string s;
+            uint32 shown = 0;
+            for (auto const& [entry, count] : m)
+            {
+                if (shown++ >= 8)
+                {
+                    s += "...";
+                    break;
+                }
+                if (!s.empty())
+                    s += " ";
+                s += std::to_string(entry) + "x" + std::to_string(count);
+            }
+            return s.empty() ? "-" : s;
+        };
+
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] room-trash {}: kept={} of cand={} (boss {} r={:.1f} "
                  "sphere={:.1f} atBoss={}) excl: far={} sphere={} door={} reach={} "
-                 "partner={} bossEntry={} dead={} hostile={} target={}",
+                 "partner={} bossEntry={} dead={} hostile={} target={} | "
+                 "near[H]: {} | near[N]: {}",
                  bot->GetName(), next->name, out.size(), nCand, room->bossEntry,
                  room->radius, bossSafe, atBossNow ? 1 : 0, exFar, exSphere, exDoor,
-                 exReach, exRoomPartner, exBossEntry, exDead, exHostile, exTarget);
+                 exReach, exRoomPartner, exBossEntry, exDead, exHostile, exTarget,
+                 histStr(diagHostileNear), histStr(diagNeutralNear));
     }
 
     // No-progress give-up valve: if the remaining count hasn't DROPPED within
