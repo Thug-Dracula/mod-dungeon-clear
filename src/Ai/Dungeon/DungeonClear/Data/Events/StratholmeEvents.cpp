@@ -36,10 +36,11 @@
 //   Undead (11030, wave 1); clearing those spawns 5 Black Guards (10394, wave 2,
 //   ~20s later); clearing those opens the door to Baron Rivendare (10440). The
 //   Mindless charge the party, but the Black Guards walk to fixed posts and idle
-//   (they only aggro by proximity), so between wave 1 and wave 2 the tank
-//   GARRISONS back to the hall centre and holds until they spawn — otherwise a
-//   wave-1 fight that drifted the party off down the hall leaves the guards
-//   standing unaggroed and the Baron door never opens. This whole chain is ONE
+//   (they only aggro by proximity), so wave 2 uses KillCreatureEngage to actively
+//   SEEK and engage them — otherwise a wave-1 fight that drifted the party off down
+//   the hall leaves the guards standing unaggroed and the Baron door never opens (a
+//   centre ClearRadius can't see them and a MoveTo hold can't haul the tank back the
+//   length of the hall). This whole chain is ONE
 //   persistent anchored event tied to a Slaughter-Square
 //   objective anchor (BossRosterRegistry, eventId 1, ordered at Ramstein's DBC
 //   bit 11 so the tank arrives after the ziggurats + Barthilas and before
@@ -217,25 +218,24 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                                    STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
                           .Timeout(STR_PHASE_TIMEOUT)
                       // 3. Wave 2: ~20s after the undead die, 5 Black Guards (10394)
-                      //    spawn at the north door and WALK to fixed posts ~8yd north
-                      //    of the hall centre, then idle (SetHomePosition there). Unlike
-                      //    the charging Mindless they never seek the party — they only
-                      //    aggro by proximity, and their deaths are what open the Baron
-                      //    door. If the ghoul fight dragged the party off down the hall,
-                      //    the guards reach their posts and stand there unaggroed: a bare
-                      //    WaitForSpawn + centre ClearRadius then can't see them (the
-                      //    engage scan is bot-centred and the gate false-completes when no
-                      //    hostile sits within the centre radius), so the run wedges.
-                      //    GARRISON the tank back to the hall centre — right where the
-                      //    guards arrive — and HOLD until they spawn, so they walk
-                      //    straight into the waiting party and aggro. Mirrors ZulFarrak's
-                      //    between-wave ramp hold (MoveToHoldUntilInstanceData); a spawn
-                      //    gate here since the slaughter phase exposes no GetData counter.
-                      .MoveToHoldUntilSpawn(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
-                                            /*radius*/ 10.0f, STR_BLACK_GUARD, /*wantAlive*/ true)
+                      //    spawn at the north door, WALK to fixed posts ~8yd north of
+                      //    the hall centre, then idle there (SetHomePosition). Unlike the
+                      //    charging Mindless they never seek the party — they only aggro
+                      //    by proximity, and their deaths are what open the Baron door.
+                      //    If the wave-1 fight dragged the party off down the hall, the
+                      //    guards reach their posts and stand there unaggroed and the run
+                      //    wedges. A point-anchored ClearRadius can't recover this: its
+                      //    engage scan is bot-centred (so far-off guards are invisible)
+                      //    and a MoveTo hold can't haul the tank the length of the hall
+                      //    (intra-room hop only — it just sat off-position till timeout).
+                      //    So WaitForSpawn first (the kill gate can't false-complete
+                      //    before they appear), then KillCreatureEngage: the engage
+                      //    pipeline (EngageDirect, long-range walk-in) actively SEEKS the
+                      //    guards wherever the party ended up and fights through all five.
+                      //    Same mechanism ZulFarrak uses to walk the tank to its bosses.
+                      .WaitForSpawn(STR_BLACK_GUARD, /*alive*/ true)
                           .Timeout(STR_WAVE_GAP_TIMEOUT)
-                      .ClearRadius(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
-                                   STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
+                      .KillCreatureEngage(STR_BLACK_GUARD, /*count*/ 1, /*searchRadius*/ 250.0f)
                           .Timeout(STR_PHASE_TIMEOUT)
                       // 4. The guards' death opens the Baron door (175796). Gate on
                       //    that monotonic, combat-gap-proof signal — the authoritative
