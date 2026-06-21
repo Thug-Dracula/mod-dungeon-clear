@@ -138,23 +138,47 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // reaches Immol'thar). Optional: a misfire degrades to the tank standing at
     // the still-shielded boss until the pylon is dealt with.
     //
-    // NOTE (verify live): the trigger is SMART_EVENT_UPDATE (a timer), not an
-    // explicit on-use event. If the generators auto-activate on spawn rather than
-    // on click, these UseGO steps are harmless no-ops (Optional, idempotent bit)
-    // and Immol'thar becomes attackable on his own — the objectives still route
-    // the tank correctly. If clicking IS required, they are essential.
-    struct PylonObjective { uint32 eventId; uint32 goEntry; char const* name; };
+    // Each generator is guarded by a tight cluster of ~7-8 elementals (Arcane
+    // Aberration 11480 / Mana Remnant 11483) standing on it. The Mana Remnants
+    // cast Blink (14514, ~20yd teleport), so a UseGO-only event left one behind
+    // alive after the bot clicked and moved on — that stray, often blinked out of
+    // melee, kept the party in combat and wedged progression. So clear the crystal
+    // first: a ClearRadius(50) step (covers the ~15yd cluster + a blink hop, with
+    // no overlap onto the next generator's cluster ~200yd away) precedes the UseGO,
+    // so all reachable elementals die before the bot clicks and leaves. Radius is
+    // deliberately > the cluster so a blinking Remnant stays inside the kill zone;
+    // ClearRadius counts only REACHABLE hostiles, so a Remnant that blinks
+    // somewhere unreachable can't hang the step. Generous timeout for the caster
+    // pack. The click (UseGO) is step 1: if the clear somehow times out and the
+    // Optional event skips, the pylon would be left unclicked — but the 120s
+    // window is ample for a 5-bot party vs ~8 casters, so in practice every pylon
+    // is cleared then clicked.
+    //
+    // NOTE (verify live): the generator trigger is SMART_EVENT_UPDATE (a timer),
+    // not an explicit on-use event. If the generators auto-activate on spawn
+    // rather than on click, the UseGO is a harmless no-op (idempotent bit) and the
+    // ClearRadius still does the useful work of clearing the guards.
+    struct PylonObjective
+    {
+        uint32 eventId;
+        uint32 goEntry;
+        float x, y, z;
+        char const* name;
+    };
     static constexpr PylonObjective kPylons[] = {
-        { 4, 177259, "Destroy Demon Crystal (Generator 1)" },
-        { 5, 177257, "Destroy Demon Crystal (Generator 2)" },
-        { 6, 177258, "Destroy Demon Crystal (Generator 3)" },
-        { 7, 179504, "Destroy Demon Crystal (Generator 4)" },
-        { 8, 179505, "Destroy Demon Crystal (Generator 5)" },
+        { 4, 177259,   12.94f, 277.93f,  -8.93f, "Destroy Demon Crystal (Generator 1)" },
+        { 5, 177257,  -92.35f, 442.67f,  28.55f, "Destroy Demon Crystal (Generator 2)" },
+        { 6, 177258,  121.22f, 429.09f,  28.45f, "Destroy Demon Crystal (Generator 3)" },
+        { 7, 179504,   78.14f, 737.40f, -24.62f, "Destroy Demon Crystal (Generator 4)" },
+        { 8, 179505, -155.43f, 734.17f, -24.62f, "Destroy Demon Crystal (Generator 5)" },
     };
     for (PylonObjective const& pyl : kPylons)
     {
         out.push_back(EventBuilder(429, pyl.eventId, pyl.name)
                           .Anchored(/*orderIndex, doc-only*/ pyl.eventId)
+                          .ClearRadius(pyl.x, pyl.y, pyl.z, /*radius*/ 50.0f,
+                                       /*zBand*/ 15.0f)
+                              .Timeout(120000)
                           .UseGO(pyl.goEntry, /*searchRadius*/ 12.0f)
                           .Wait(/*pylon activation delay*/ 6000)
                           .Persistent()

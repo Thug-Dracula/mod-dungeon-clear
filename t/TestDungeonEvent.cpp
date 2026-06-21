@@ -923,11 +923,16 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
         EXPECT_EQ(e->activation, EventActivation::Anchored);
         EXPECT_TRUE(e->persistent);
         EXPECT_FALSE(e->required);  // Optional
-        ASSERT_EQ(e->steps.size(), 2u);
-        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
-        EXPECT_EQ(e->steps[0].goEntry, p.goEntry);
-        EXPECT_EQ(e->steps[1].kind, EventStepKind::Wait);
-        EXPECT_GT(e->steps[1].durationMs, 0u);
+        ASSERT_EQ(e->steps.size(), 3u);
+        // Clear the guarding elementals FIRST so a blinked Mana Remnant isn't
+        // left alive when the bot clicks and moves on.
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+        EXPECT_GT(e->steps[0].radius, 15.0f);     // covers cluster + blink hop
+        EXPECT_GT(e->steps[0].timeoutMs, 30000u); // generous for a caster pack
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[1].goEntry, p.goEntry);
+        EXPECT_EQ(e->steps[2].kind, EventStepKind::Wait);
+        EXPECT_GT(e->steps[2].durationMs, 0u);
     }
 }
 
