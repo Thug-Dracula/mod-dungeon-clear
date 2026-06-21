@@ -138,6 +138,33 @@ private:
     std::unordered_set<uint32> data;
 };
 
+// Boss entries observed DEAD this run via a definitive kill signal — the
+// completed-encounter mask bit, or a corpse on the floor. This is the durable
+// kill latch the transient signals cannot provide on their own: a boss corpse
+// despawns about a minute after death (sooner once looted), and many classic
+// bosses (e.g. ShadowFang Keep's Odo the Blindwatcher) are absent from
+// DungeonEncounter.dbc, so their mask bit NEVER flips — leaving the corpse as
+// the sole kill signal. Without remembering the kill, once the corpse is gone
+// the dead boss reads "not present" (identical to "grid not loaded yet") and
+// re-enters the boss-selection candidate list, so a fresh/backward pick can walk
+// the tank back to the dead boss's spawn anchor forever ("Can't reach <boss>:
+// not spawned"). Populated by NextDungeonBossValue and DcBossesAction the moment
+// a kill is observed; read by both to retire the boss permanently. Reset on
+// `dc on` / instance change alongside the seen/skipped/cleared sets.
+class DungeonClearKilledBossesValue : public ManualSetValue<std::unordered_set<uint32>&>
+{
+public:
+    DungeonClearKilledBossesValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear killed bosses")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::unordered_set<uint32> data;
+};
+
 // Conditional events (DungeonEventRegistry) that have been observed DUE (their
 // gating condition read true) at least once this run. Some conditional events
 // are latched by their own gating condition rather than a ConditionalLatchKey —

@@ -265,6 +265,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear killed bosses")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
     // Fresh approach FSM: clears every stuck/recovery counter, the pursuit/dead-
@@ -514,6 +515,7 @@ bool DcBossesAction::Execute(Event event)
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
     auto const& cleared = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors");
     auto& seen = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear seen bosses");
+    auto& killedBosses = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear killed bosses");
 
     // The completed-encounter mask is the authoritative "the group killed it"
     // signal: Map::UpdateEncounterState (driven from KillRewarder) flips bit
@@ -677,13 +679,23 @@ bool DcBossesAction::Execute(Event event)
         if (liveOnMap)
             seen.insert(info.entry);
 
+        // Durable kill latch (shared with NextDungeonBossValue): the instant we
+        // see a definitive kill — mask bit or corpse — remember it so the row
+        // keeps reading "dead" after the corpse despawns. Without this, a classic
+        // boss with no DungeonEncounter.dbc mask bit (e.g. SFK's Odo) flipped
+        // from "dead" to "missing" a minute after the kill.
+        if (killed || corpseOnMap)
+            killedBosses.insert(info.entry);
+        bool const everKilled = killedBosses.count(info.entry) != 0;
+
         // alive   — in zone and the group has not killed it
         // dead    — the group has killed it (kill mask, or a corpse on the floor
-        //           for the brief window before the mask flips)
+        //           for the brief window before the mask flips, or a kill we
+        //           latched earlier this run whose corpse has since despawned)
         // missing — was seen alive earlier, is now gone, and was not killed
         // skipped — user/AI chose to pass it by (only while it's still alive)
         std::string statusStr;
-        if (killed || corpseOnMap)
+        if (killed || corpseOnMap || everKilled)
             statusStr = "dead";
         else if (skipped.count(info.entry))
             statusStr = "skipped";
