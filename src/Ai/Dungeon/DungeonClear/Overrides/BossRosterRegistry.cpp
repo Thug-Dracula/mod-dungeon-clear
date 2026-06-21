@@ -512,31 +512,55 @@ namespace
                 t.push_back(std::move(p));
             }
 
-            // --- Dire Maul East (map 429) — Conservatory Door objective ---
-            // Alzzin the Wildshaper's grove is sealed behind the Conservatory
-            // Door (GO 176907), opened only by Ironbark the Redeemed (14241)
-            // after the party picks his gossip option. Add a travel OBJECTIVE at
-            // Ironbark's spawn, ordered just before Alzzin, wired to event 429/1
-            // (DireMaulEvents.cpp): boss-nav delivers the tank to Ironbark, the
-            // anchored event gossips him and waits for the door he walks off to
-            // open, then the clear proceeds through it to Alzzin.
+            // --- Dire Maul (map 429) — East + North wing objectives ----------
+            // Dire Maul is a wing-split map, so ONE patch covers every wing (a
+            // map has a single roster patch; FindPatch returns the first match).
+            // Ordering is computed per-wing, so each wing's reorder keys only
+            // compete within that wing — the West wing has no objectives and keeps
+            // its native DBC order; East and North are reordered onto contiguous
+            // key scales with gaps for their door objectives. All reorders set
+            // orderOverride only; the real DBC kill-bits are untouched. Every
+            // objective's synthetic entry is also added to its wing list in
+            // DungeonWingRegistry so it survives wing-filtering.
             //
-            // Dire Maul is a wing-split map, so the East bosses are reordered
-            // onto a contiguous key scale (10/20/30/50) with a gap (40) for the
-            // objective — this slots it correctly without depending on the DBC
-            // encounterIndex values, and ordering is computed per-wing so the
-            // West/North bosses (kept on their DBC order) are unaffected. The
-            // reorder sets orderOverride only; the real DBC kill-bits are
-            // untouched. The objective's synthetic entry is also added to the
-            // East wing list in DungeonWingRegistry so it survives wing-filtering.
+            // EAST — Alzzin the Wildshaper's grove is sealed behind the
+            // Conservatory Door (GO 176907), opened only by Ironbark the Redeemed
+            // (14241) after the party picks his gossip option. A travel OBJECTIVE
+            // at Ironbark's spawn, ordered just before Alzzin and wired to event
+            // 429/1: boss-nav delivers the tank to Ironbark, the anchored event
+            // gossips him and waits for the door he walks off to open.
+            //
+            // NORTH — the wing runs south->north->east behind two shut doors the
+            // party can't path through: the Gordok Courtyard Door (GO 177219) at
+            // the front of the courtyard and the Gordok Inner Door (GO 177217)
+            // before King Gordok's chamber. A travel OBJECTIVE at each door, wired
+            // to events 429/2 and 429/3: boss-nav delivers the tank to the door,
+            // the anchored event UseGO's it open (gossip-hello path — no key
+            // needed), then the clear proceeds through. Spawn coords place the
+            // bosses south->north: Mol'dar (y-3), Kreeg (y97), Fengus (y258) sit
+            // before the Courtyard Door (y374); Slip'kik (y533, z-25 pit) is in
+            // the inner courtyard; the Inner Door (y515, z29) gates Kromcrush
+            // (627,481), then King Gordok (828,480) + Cho'Rush (834,489) far east.
             {
                 BossRosterPatch p;
                 p.mapId = 429;
                 p.reorder = {
+                    // East wing
                     { 11490, 10 },  // Zevrim Thornhoof
                     { 13280, 20 },  // Hydrospawn
                     { 14327, 30 },  // Lethtendris
+                    // gap 40 = Ironbark / Conservatory Door objective
                     { 11492, 50 },  // Alzzin the Wildshaper (last)
+                    // North wing
+                    { 14326, 10 },  // Guard Mol'dar
+                    { 14322, 20 },  // Stomper Kreeg
+                    { 14321, 30 },  // Guard Fengus
+                    // gap 35 = Gordok Courtyard Door objective
+                    { 14323, 40 },  // Guard Slip'kik
+                    // gap 45 = Gordok Inner Door objective
+                    { 14325, 50 },  // Captain Kromcrush
+                    { 11501, 60 },  // King Gordok
+                    { 14324, 70 },  // Cho'Rush the Observer
                 };
                 p.add = {
                     MakeObjective(OBJ(1), /*encounterIndex*/ 40, 429,
@@ -544,6 +568,16 @@ namespace
                                   -56.59f, -269.12f, -57.87f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
+                    MakeObjective(OBJ(2), /*encounterIndex*/ 35, 429,
+                                  "Gordok Courtyard Door",
+                                  385.33f, 374.23f, -1.34f,
+                                  /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 2, /*orderOverride*/ 35),
+                    MakeObjective(OBJ(3), /*encounterIndex*/ 45, 429,
+                                  "Gordok Inner Door",
+                                  491.20f, 515.13f, 29.47f,
+                                  /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 3, /*orderOverride*/ 45),
                 };
                 t.push_back(std::move(p));
             }

@@ -54,4 +54,40 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .Persistent()
                       .Optional()
                       .Build());
+
+    // --- Dire Maul North (map 429) — Gordok Courtyard & Inner Doors --------
+    // The North wing is gated by two doors the party can't path through while
+    // shut: the Gordok Courtyard Door (GO 177219) at the front of the courtyard
+    // and the Gordok Inner Door (GO 177217) before King Gordok's chamber. Both
+    // are GAMEOBJECT_TYPE_DOOR with SmartGameObjectAI: a gossip-hello SET_INST_DATA
+    // (TYPE_NORTH_WING_PROGRESS = 1 courtyard / 2 inner) and the door's own
+    // On-Update GO_SET_GO_STATE(0) swings it to GO_STATE_ACTIVE; autoclose is off
+    // so it stays open. GameObject::Use() fires the AI's GossipHello BEFORE any
+    // lock/key check (GameObject.cpp), so a plain UseGO opens them — no key
+    // needed, even though both carry GO_FLAG_LOCKED (which is precisely why the
+    // stock DC door machinery won't auto-force them; this event is the only path).
+    //
+    // Anchored (like the East Conservatory Door, not Conditional): each door is an
+    // OBJECTIVE on the North roster (BossRosterRegistry map 429) so boss-nav's
+    // LongRangePathfinder delivers the tank to the door; the anchored event then
+    // UseGO's it and waits for it to swing. (A Conditional step only HopTo's, raw
+    // MovePoint 74-node capped, and can't reliably reach the door.) Open state is
+    // GO_STATE_ACTIVE (0) here — unlike the East door, which Ironbark opens to 2.
+    // Optional so a non-firing script degrades to the normal door-blocked stall.
+
+    out.push_back(EventBuilder(429, 2, "Open the Gordok Courtyard Door")
+                      .Anchored(/*orderIndex, doc-only*/ 35)
+                      .UseGO(/*Gordok Courtyard Door*/ 177219, /*searchRadius*/ 18.0f)
+                      .WaitForGOState(177219, /*GO_STATE_ACTIVE*/ 0,
+                                      /*timeout*/ 30000, /*searchRadius*/ 18.0f)
+                      .Optional()
+                      .Build());
+
+    out.push_back(EventBuilder(429, 3, "Open the Gordok Inner Door")
+                      .Anchored(/*orderIndex, doc-only*/ 45)
+                      .UseGO(/*Gordok Inner Door*/ 177217, /*searchRadius*/ 18.0f)
+                      .WaitForGOState(177217, /*GO_STATE_ACTIVE*/ 0,
+                                      /*timeout*/ 30000, /*searchRadius*/ 18.0f)
+                      .Optional()
+                      .Build());
 }

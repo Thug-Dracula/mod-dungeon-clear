@@ -303,12 +303,16 @@ TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
 
+    // The map-429 patch also adds the North-wing Gordok door objectives
+    // (eventId 2/3); select Ironbark specifically by his eventId (1), not "any
+    // objective". The North reorder entries aren't in this East-only base, so
+    // those objectives still slot purely by their orderOverride.
     int lethIdx = -1, ironbarkIdx = -1, alzzinIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
         if (out[i].entry == 14327)
             lethIdx = i;
-        if (out[i].kind == DungeonAnchorKind::Objective)
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 1u)
             ironbarkIdx = i;
         if (out[i].entry == 11492)
             alzzinIdx = i;
