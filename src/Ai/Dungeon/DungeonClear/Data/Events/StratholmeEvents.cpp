@@ -34,8 +34,13 @@
 //   Spewer 10416 / Venom Belcher 10417 — trash, not bosses). Killing them all
 //   summons Ramstein the Gorger (10439); Ramstein's death spawns 33 Mindless
 //   Undead (11030, wave 1); clearing those spawns 5 Black Guards (10394, wave 2,
-//   ~20s later); clearing those opens the door to Baron Rivendare (10440). This
-//   whole chain is ONE persistent anchored event tied to a Slaughter-Square
+//   ~20s later); clearing those opens the door to Baron Rivendare (10440). The
+//   Mindless charge the party, but the Black Guards walk to fixed posts and idle
+//   (they only aggro by proximity), so between wave 1 and wave 2 the tank
+//   GARRISONS back to the hall centre and holds until they spawn — otherwise a
+//   wave-1 fight that drifted the party off down the hall leaves the guards
+//   standing unaggroed and the Baron door never opens. This whole chain is ONE
+//   persistent anchored event tied to a Slaughter-Square
 //   objective anchor (BossRosterRegistry, eventId 1, ordered at Ramstein's DBC
 //   bit 11 so the tank arrives after the ziggurats + Barthilas and before
 //   Baron). Persistent so the many separate fights (each a >1s combat tick-gap
@@ -212,8 +217,22 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                                    STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
                           .Timeout(STR_PHASE_TIMEOUT)
                       // 3. Wave 2: ~20s after the undead die, 5 Black Guards (10394)
-                      //    spawn and walk into the hall. Wait for them, then clear.
-                      .WaitForSpawn(STR_BLACK_GUARD, /*alive*/ true)
+                      //    spawn at the north door and WALK to fixed posts ~8yd north
+                      //    of the hall centre, then idle (SetHomePosition there). Unlike
+                      //    the charging Mindless they never seek the party — they only
+                      //    aggro by proximity, and their deaths are what open the Baron
+                      //    door. If the ghoul fight dragged the party off down the hall,
+                      //    the guards reach their posts and stand there unaggroed: a bare
+                      //    WaitForSpawn + centre ClearRadius then can't see them (the
+                      //    engage scan is bot-centred and the gate false-completes when no
+                      //    hostile sits within the centre radius), so the run wedges.
+                      //    GARRISON the tank back to the hall centre — right where the
+                      //    guards arrive — and HOLD until they spawn, so they walk
+                      //    straight into the waiting party and aggro. Mirrors ZulFarrak's
+                      //    between-wave ramp hold (MoveToHoldUntilInstanceData); a spawn
+                      //    gate here since the slaughter phase exposes no GetData counter.
+                      .MoveToHoldUntilSpawn(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
+                                            /*radius*/ 10.0f, STR_BLACK_GUARD, /*wantAlive*/ true)
                           .Timeout(STR_WAVE_GAP_TIMEOUT)
                       .ClearRadius(STR_SLAUGHTER_X, STR_SLAUGHTER_Y, STR_SLAUGHTER_Z,
                                    STR_SLAUGHTER_RADIUS, STR_SLAUGHTER_ZBAND)
