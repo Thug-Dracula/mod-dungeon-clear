@@ -510,10 +510,11 @@ TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
 // Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
 // (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
 // before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead
-// wave -> wait+clear guard wave -> gate on the Baron door opening. Slaughter
-// progress isn't exposed via GetData, so the phase barriers are the monotonic
-// doors (combat-gap proof), not transient creature checks; the waves are cleared
-// by ClearRadius (a hall centre well south of the closed Baron door).
+// wave (ClearRadius) -> wait+kill guard wave (KillCreatureEngage, since the
+// guards post far off and a bot-centred ClearRadius can't see them) -> gate on
+// the Baron door opening. Slaughter progress isn't exposed via GetData, so the
+// phase barriers are the monotonic doors (combat-gap proof), not transient
+// creature checks.
 TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(329, 4);
@@ -537,10 +538,13 @@ TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
     EXPECT_TRUE(e->steps[1].wantAlive);
     EXPECT_EQ(e->steps[2].kind, EventStepKind::ClearRadius);
 
-    // 3. wave 2: wait for the black guards, then ClearRadius them.
+    // 3. wave 2: wait for the black guards, then actively seek+kill them
+    //    (KillCreatureEngage) — they post far off, so a bot-centred ClearRadius
+    //    can't see them.
     EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
     EXPECT_EQ(e->steps[3].creatureEntry, 10394u);
-    EXPECT_EQ(e->steps[4].kind, EventStepKind::ClearRadius);
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[4].creatureEntry, 10394u);
 
     // 4. monotonic completion gate: the Baron door (175796) opens when the guards
     //    die. GO_STATE_ACTIVE (0) = open.
