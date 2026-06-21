@@ -162,6 +162,30 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     if (!map || !map->IsDungeon())
         return std::nullopt;
 
+    // New-instance reset. The run-scoped completion state read below — cleared
+    // anchors (where a travel objective / conditional event latches its "done"),
+    // user skips, the boss commit, and seen-boss bookkeeping — lives in the bot's
+    // CONTEXT, not the instance, so it survives leaving the group and re-entering
+    // a fresh instance. The completed-encounter MASK self-resets with the instance
+    // (so real bosses come back), but these sets don't, and `dc on` is the only
+    // other thing that clears them. Without this, re-running the same dungeon in a
+    // new instance without toggling dc on inherits the prior run's latched
+    // objectives — a completed ZulFarrak Temple event read "Done" again on
+    // re-entry. Wipe them once when the run crosses into a different instance
+    // (instanceId 0 = not in an instance / mid-load, never triggers it).
+    uint32 const instanceId = bot->GetInstanceId();
+    uint32 const lastRunInstance = AI_VALUE(uint32, "dungeon clear run instance");
+    if (instanceId != 0 && lastRunInstance != 0 && lastRunInstance != instanceId)
+    {
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
+        context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
+        context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
+    }
+    if (instanceId != 0 && lastRunInstance != instanceId)
+        context->GetValue<uint32>("dungeon clear run instance")->Set(instanceId);
+
     std::vector<DungeonBossInfo> const& bosses =
         AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
 

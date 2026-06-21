@@ -572,9 +572,14 @@ bool DcBossesAction::Execute(Event event)
             continue;
 
         uint32 const lk = DungeonEventExecutor::ConditionalLatchKey(ev->id);
-        char const* statusWord =
-            cleared.count(lk) ? "done" : skipped.count(lk) ? "skipped" : "pending";
-        std::string note = ev->name + " (" + statusWord + ")";
+        // Pending is the common case while clearing — leave it unsuffixed so the
+        // (already long) event name fits the panel sub-line without truncating;
+        // only the terminal states get a tag.
+        std::string note = ev->name;
+        if (cleared.count(lk))
+            note += " (done)";
+        else if (skipped.count(lk))
+            note += " (skipped)";
 
         std::string& slot = eventAnnotation[gatedEntry];
         slot = slot.empty() ? note : slot + " | " + note;

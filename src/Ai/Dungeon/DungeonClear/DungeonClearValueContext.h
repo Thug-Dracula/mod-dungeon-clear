@@ -38,6 +38,7 @@ public:
         creators["dungeon clear seen bosses"] = &DungeonClearValueContext::dungeon_clear_seen_bosses;
         creators["dungeon clear sticky boss"] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
         creators["dungeon clear selected boss"] = &DungeonClearValueContext::dungeon_clear_selected_boss;
+        creators["dungeon clear run instance"] = &DungeonClearValueContext::dungeon_clear_run_instance;
         creators["dungeon clear stall reason"] = &DungeonClearValueContext::dungeon_clear_stall_reason;
         creators["dungeon clear last said reason"] = &DungeonClearValueContext::dungeon_clear_last_said_reason;
         creators["dungeon clear phase"] = &DungeonClearValueContext::dungeon_clear_phase;
@@ -80,6 +81,7 @@ private:
     static UntypedValue* dungeon_clear_seen_bosses(PlayerbotAI* ai) { return new DungeonClearSeenBossesValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
     static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }
+    static UntypedValue* dungeon_clear_run_instance(PlayerbotAI* ai) { return new DungeonClearRunInstanceValue(ai); }
     static UntypedValue* dungeon_clear_stall_reason(PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); }
     static UntypedValue* dungeon_clear_last_said_reason(PlayerbotAI* ai) { return new DungeonClearLastSaidReasonValue(ai); }
     static UntypedValue* dungeon_clear_phase(PlayerbotAI* ai) { return new DungeonClearPhaseValue(ai); }

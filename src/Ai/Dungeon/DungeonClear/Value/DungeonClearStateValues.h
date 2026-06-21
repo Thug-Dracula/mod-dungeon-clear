@@ -259,6 +259,21 @@ public:
     }
 };
 
+// The dynamic instance id the run-scoped completion state currently belongs to.
+// The cleared-anchors / skipped / commit sets live in the bot's context, not the
+// instance, so they survive a re-enter; NextDungeonBossValue compares this against
+// the live instance id and wipes that state when the bot crosses into a new
+// instance, so re-running the same dungeon (without a fresh `dc on`) doesn't
+// inherit the prior run's latched objectives. 0 = not yet stamped.
+class DungeonClearRunInstanceValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearRunInstanceValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear run instance")
+    {
+    }
+};
+
 
 // The long-path cache bookkeeping that used to live in five loose values —
 // the boss entry + world position the cache was built for, the TTL deadline,
