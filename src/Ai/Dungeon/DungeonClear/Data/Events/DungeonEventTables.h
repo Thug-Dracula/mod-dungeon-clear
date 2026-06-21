@@ -52,7 +52,9 @@
 //                         (70/3) on a roster objective
 //  11  Razorfen Downs   — approach Tuten'kash (walk to his combat spot once the
 //                         gong summons him, so the party enters aggro range)
-//   -- next free: 12 (9 and 10 may be reused)
+//  12  Dire Maul North  — Gordok Courtyard Door (on-path; click to open)
+//  13  Dire Maul North  — Gordok Inner Door (on-path; click to open)
+//   -- next free: 14 (9 and 10 may be reused)
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 
@@ -76,5 +78,6 @@ void RegisterShadowfangKeepConditions(EventConditionMap& out);
 void RegisterRazorfenDownsConditions(EventConditionMap& out);
 void RegisterStratholmeConditions(EventConditionMap& out);
 void RegisterUldamanConditions(EventConditionMap& out);
+void RegisterDireMaulConditions(EventConditionMap& out);
 
 #endif

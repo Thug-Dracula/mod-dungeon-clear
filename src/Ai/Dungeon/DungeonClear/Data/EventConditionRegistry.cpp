@@ -27,6 +27,7 @@ namespace
             RegisterRazorfenDownsConditions(m);
             RegisterStratholmeConditions(m);
             RegisterUldamanConditions(m);
+            RegisterDireMaulConditions(m);
             return m;
         }();
         return kConditions;

@@ -51,11 +51,6 @@ namespace
                     14325,  // Captain Kromcrush
                     14324,  // Cho'Rush the Observer
                     11501,  // King Gordok
-                    // Gordok Courtyard / Inner Door travel objectives (synthetic
-                    // entries, not creatures) — keep them in-wing so wing-filtering
-                    // doesn't drop them. See BossRosterRegistry map-429 patch.
-                    BossRosterRegistry::ObjectiveEntry(2),
-                    BossRosterRegistry::ObjectiveEntry(3),
                 }},
             }}},
 

@@ -5,6 +5,13 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
+#include "GameObject.h"
+#include "Log.h"
+#include "Player.h"
+#include "Playerbots.h"
+#include "SharedDefines.h"
+#include "Timer.h"
+
 // --- Dire Maul East (map 429) — Ironbark / Conservatory Door -------------
 // Alzzin the Wildshaper's grove is sealed behind the Conservatory Door (GO
 // 176907), which the party cannot open. Ironbark the Redeemed (14241), who
@@ -67,27 +74,89 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // needed, even though both carry GO_FLAG_LOCKED (which is precisely why the
     // stock DC door machinery won't auto-force them; this event is the only path).
     //
-    // Anchored (like the East Conservatory Door, not Conditional): each door is an
-    // OBJECTIVE on the North roster (BossRosterRegistry map 429) so boss-nav's
-    // LongRangePathfinder delivers the tank to the door; the anchored event then
-    // UseGO's it and waits for it to swing. (A Conditional step only HopTo's, raw
-    // MovePoint 74-node capped, and can't reliably reach the door.) Open state is
-    // GO_STATE_ACTIVE (0) here — unlike the East door, which Ironbark opens to 2.
-    // Optional so a non-firing script degrades to the normal door-blocked stall.
+    // CONDITIONAL, not Anchored — these doors sit directly ON the corridor (the
+    // tank walks straight into them while pursuing the next boss). An anchored
+    // objective-arrive (relevance 30) CANNOT fire here: the shut door truncates
+    // the route short of any anchor placed at it, so the bot never "arrives", and
+    // the door-blocked stall (the blocking-door value flags a shut door up to
+    // ~80yd ahead) parks the tank with "a closed door is blocking the path". The
+    // door-blocked TRIGGER stands down only when a CONDITIONAL event is due
+    // (relevance 31 > 22), so an on-path door MUST be conditional to preempt it.
+    //
+    // No nav steps are needed: the door-blocked action itself MoveTo-delivers the
+    // tank up to the door before parking (see the door walk-in fix), so by the
+    // time the condition fires the bot is already at the door. The condition scan
+    // is kept TIGHT (~= the UseGO search radius) so door-blocked does that
+    // delivery first; only once the bot is within reach does the condition go
+    // true, door-blocked stands down, and UseGO closes the last few yards (HopTo)
+    // and clicks. A wide scan would strand the bot — UseGO has no long-range nav.
+    // Open state is GO_STATE_ACTIVE (0) here (unlike the East door, which Ironbark
+    // opens to 2). Optional so a misfire degrades to the normal door-blocked stall.
 
     out.push_back(EventBuilder(429, 2, "Open the Gordok Courtyard Door")
-                      .Anchored(/*orderIndex, doc-only*/ 35)
-                      .UseGO(/*Gordok Courtyard Door*/ 177219, /*searchRadius*/ 18.0f)
+                      .Conditional(/*conditionId*/ 12)
+                      .UseGO(/*Gordok Courtyard Door*/ 177219, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177219, /*GO_STATE_ACTIVE*/ 0,
-                                      /*timeout*/ 30000, /*searchRadius*/ 18.0f)
+                                      /*timeout*/ 30000, /*searchRadius*/ 25.0f)
                       .Optional()
                       .Build());
 
     out.push_back(EventBuilder(429, 3, "Open the Gordok Inner Door")
-                      .Anchored(/*orderIndex, doc-only*/ 45)
-                      .UseGO(/*Gordok Inner Door*/ 177217, /*searchRadius*/ 18.0f)
+                      .Conditional(/*conditionId*/ 13)
+                      .UseGO(/*Gordok Inner Door*/ 177217, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177217, /*GO_STATE_ACTIVE*/ 0,
-                                      /*timeout*/ 30000, /*searchRadius*/ 18.0f)
+                                      /*timeout*/ 30000, /*searchRadius*/ 25.0f)
                       .Optional()
                       .Build());
+}
+
+namespace
+{
+    constexpr uint32 DM_COURTYARD_DOOR = 177219;
+    constexpr uint32 DM_INNER_DOOR = 177217;
+    // Tight scan: see the CONDITIONAL note above. The condition is true only once
+    // the bot is within reach of the (still-shut) door, so the door-blocked action
+    // delivers the bot to the door first; then this preempts the stall and UseGO
+    // (search 25yd) opens it. Keep this <= the event's UseGO search radius.
+    constexpr float DM_DOOR_SCAN = 25.0f;
+
+    // Generic on-path door condition: due iff the door GO is found within reach
+    // and is still closed (GO_STATE_READY). Once UseGO opens it (-> ACTIVE) this
+    // reads false and the event latches done. FindNearestGameObject inherently
+    // localises to map 429 near the door, so no extra wing/coord gate is needed.
+    bool GordokDoorShut(Player* bot, uint32 doorEntry, char const* which)
+    {
+        GameObject* door = bot->FindNearestGameObject(doorEntry, DM_DOOR_SCAN);
+
+        // Throttled diagnostic (one line / 5s) so a live run shows whether the
+        // door is in reach and its state. Lands in DungeonClear.log.
+        static uint32 lastLog = 0;
+        uint32 const now = getMSTime();
+        if (getMSTimeDiff(lastLog, now) >= 5000)
+        {
+            lastLog = now;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] Gordok door cond ({}): door={} state={}",
+                      bot->GetName(), which, door ? "in-reach" : "far/MISSING",
+                      door ? static_cast<int>(door->GetGoState()) : -1);
+        }
+
+        return door && door->GetGoState() == GO_STATE_READY;
+    }
+
+    bool GordokCourtyardDoor(Player* bot, AiObjectContext* /*context*/)
+    {
+        return GordokDoorShut(bot, DM_COURTYARD_DOOR, "courtyard");
+    }
+
+    bool GordokInnerDoor(Player* bot, AiObjectContext* /*context*/)
+    {
+        return GordokDoorShut(bot, DM_INNER_DOOR, "inner");
+    }
+}
+
+void RegisterDireMaulConditions(EventConditionMap& out)
+{
+    out[12] = &GordokCourtyardDoor;
+    out[13] = &GordokInnerDoor;
 }
