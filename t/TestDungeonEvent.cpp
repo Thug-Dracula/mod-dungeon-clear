@@ -936,20 +936,22 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
     }
 }
 
-// The Warpwood entrance-clear (event 11) is an Anchored, Optional ClearRadius
-// over the square entrance room (the Warpwood/Petrified treants that pull as a
-// group), with a generous timeout for the large sweep.
-TEST(DungeonEventAnchored, DireMaulWestEntranceClearEventShape)
+// Generator 1's ClearRadius doubles as the Warpwood entrance sweep, so it is
+// wider than the other pylons' (which only clear their own guards). There is no
+// separate entrance-clear event (429/11) — its unreachable dais anchor deadlocked.
+TEST(DungeonEventAnchored, DireMaulWestEntranceFoldedIntoGenerator1)
 {
-    DungeonEvent const* e = DungeonEventRegistry::Find(429, 11);
-    ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Anchored);
-    EXPECT_FALSE(e->required);  // Optional
-    ASSERT_EQ(e->steps.size(), 1u);
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
-    EXPECT_GT(e->steps[0].radius, 100.0f);   // covers the room
-    EXPECT_GT(e->steps[0].zBand, 0.0f);
-    EXPECT_GT(e->steps[0].timeoutMs, 30000u); // generous for a big sweep
+    EXPECT_EQ(DungeonEventRegistry::Find(429, 11), nullptr);
+
+    DungeonEvent const* gen1 = DungeonEventRegistry::Find(429, 4);
+    DungeonEvent const* gen2 = DungeonEventRegistry::Find(429, 5);
+    ASSERT_NE(gen1, nullptr);
+    ASSERT_NE(gen2, nullptr);
+    ASSERT_FALSE(gen1->steps.empty());
+    ASSERT_FALSE(gen2->steps.empty());
+    EXPECT_EQ(gen1->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_GT(gen1->steps[0].radius, gen2->steps[0].radius)
+        << "generator 1 sweeps wider to clear the entrance room";
 }
 
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path

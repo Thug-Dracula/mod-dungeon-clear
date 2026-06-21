@@ -599,18 +599,16 @@ namespace
                                   -56.59f, -269.12f, -57.87f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
-                    // West — clear the Warpwood entrance room FIRST. The square
-                    // entrance room (centre ~13,277,-8) is packed with Warpwood /
-                    // Petrified Treants that pull as a group; crystal generator 1
-                    // sits in its middle. Ordered just before Gen1 (orderOverride
-                    // 4 < 5) so the room is cleared before the bot clicks the
-                    // crystal and heads north. ClearRadius event = 429/11.
-                    MakeObjective(OBJ(8), /*encounterIndex*/ 47, 429,
-                                  "Clear the Warpwood entrance",
-                                  13.0f, 277.0f, -8.0f,
-                                  /*arriveRadius*/ 15.0f, 0, /*hook*/ 0,
-                                  /*eventId*/ 11, /*orderOverride*/ 4),
                     // West — Immol'thar pylons. Southern trio (before Tendris).
+                    // NOTE: there is deliberately no separate "clear the entrance"
+                    // objective. A standalone ClearRadius anchor at the crystal
+                    // dais (13,277,-8) could not be reached — the bot drifted
+                    // off-line and could not generate a rejoin path to the point
+                    // (it sits on the dais / GO collision, ~1yd above the real
+                    // floor), so it thrashed (posStuck/resnap) forever. The
+                    // entrance treants are instead swept by generator 1's own
+                    // ClearRadius (event 429/4), which runs from the proven-
+                    // reachable crystal anchor.
                     MakeObjective(OBJ(2), /*encounterIndex*/ 41, 429,
                                   "Destroy Demon Crystal (Generator 1)",
                                   12.94f, 277.93f, -8.93f,

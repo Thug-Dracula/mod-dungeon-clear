@@ -158,25 +158,36 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // not an explicit on-use event. If the generators auto-activate on spawn
     // rather than on click, the UseGO is a harmless no-op (idempotent bit) and the
     // ClearRadius still does the useful work of clearing the guards.
+    // clearRadius covers each generator's own ~7-8 elemental guards (~15yd
+    // cluster + a Mana Remnant blink hop). Generator 1 sits in the middle of the
+    // square Warpwood entrance room, so it carries a wider sweep (70) to also
+    // clear the surrounding entrance treants that pull as a group (within the
+    // proven ClearRadius range — Sunken Temple 60, Slaughterhouse 80 — and, unlike
+    // the broken dais anchor, it runs as a COMBAT sweep from the reachable crystal
+    // so it always makes progress, never deadlocks) — this replaces
+    // the old standalone entrance-clear objective, whose dais anchor the bot
+    // couldn't reach. The other crystals stand alone, so a tight 50 keeps the
+    // sweep on their own guards (no chasing unrelated packs).
     struct PylonObjective
     {
         uint32 eventId;
         uint32 goEntry;
         float x, y, z;
+        float clearRadius;
         char const* name;
     };
     static constexpr PylonObjective kPylons[] = {
-        { 4, 177259,   12.94f, 277.93f,  -8.93f, "Destroy Demon Crystal (Generator 1)" },
-        { 5, 177257,  -92.35f, 442.67f,  28.55f, "Destroy Demon Crystal (Generator 2)" },
-        { 6, 177258,  121.22f, 429.09f,  28.45f, "Destroy Demon Crystal (Generator 3)" },
-        { 7, 179504,   78.14f, 737.40f, -24.62f, "Destroy Demon Crystal (Generator 4)" },
-        { 8, 179505, -155.43f, 734.17f, -24.62f, "Destroy Demon Crystal (Generator 5)" },
+        { 4, 177259,   12.94f, 277.93f,  -8.93f, 70.0f, "Destroy Demon Crystal (Generator 1)" },
+        { 5, 177257,  -92.35f, 442.67f,  28.55f, 50.0f, "Destroy Demon Crystal (Generator 2)" },
+        { 6, 177258,  121.22f, 429.09f,  28.45f, 50.0f, "Destroy Demon Crystal (Generator 3)" },
+        { 7, 179504,   78.14f, 737.40f, -24.62f, 50.0f, "Destroy Demon Crystal (Generator 4)" },
+        { 8, 179505, -155.43f, 734.17f, -24.62f, 50.0f, "Destroy Demon Crystal (Generator 5)" },
     };
     for (PylonObjective const& pyl : kPylons)
     {
         out.push_back(EventBuilder(429, pyl.eventId, pyl.name)
                           .Anchored(/*orderIndex, doc-only*/ pyl.eventId)
-                          .ClearRadius(pyl.x, pyl.y, pyl.z, /*radius*/ 50.0f,
+                          .ClearRadius(pyl.x, pyl.y, pyl.z, pyl.clearRadius,
                                        /*zBand*/ 15.0f)
                               .Timeout(120000)
                           .UseGO(pyl.goEntry, /*searchRadius*/ 12.0f)
@@ -186,25 +197,14 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                           .Build());
     }
 
-    // --- Dire Maul West (map 429) — Warpwood entrance room clear -----------
-    // The square entrance room (centre ~13,277,-8) is filled with Warpwood /
-    // Petrified Treants that pull as a group; they sit ~200yd south of and a
-    // floor above Tendris, so a room-aggro radius around Tendris is the wrong
-    // tool (it cleared the Eldreth behind him instead). Crystal generator 1 is in
-    // the middle of this room, so an anchored ClearRadius objective co-located
-    // with it (BossRosterRegistry OBJ(8), ordered first) sweeps the room before
-    // the bot clicks the crystal and moves north. Radius 140 covers the room
-    // (ClearRadius only counts REACHABLE hostiles, so it can't hang on a
-    // wall-corner straggler, and 140 stays short of Gen2/3 (~y429) and Tendris
-    // (~y475)). Generous timeout for a ~20-mob sweep; Optional so a stall
-    // degrades to simply moving on rather than wedging the run.
-    out.push_back(EventBuilder(429, 11, "Clear the Warpwood entrance")
-                      .Anchored(/*orderIndex, doc-only*/ 4)
-                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 140.0f,
-                                   /*zBand*/ 20.0f)
-                          .Timeout(180000)
-                      .Optional()
-                      .Build());
+    // NOTE: the Warpwood entrance treants are swept by generator 1's own
+    // ClearRadius (above, radius 70) rather than a separate entrance objective.
+    // A standalone ClearRadius anchored on the crystal dais (13,277,-8) could not
+    // be reached: the bot drifted off-line and could not generate a rejoin path to
+    // the point (off-mesh / GO collision / ~1yd above the floor), thrashing on
+    // posStuck/resnap forever with combat=0 (it never engaged anything). Folding
+    // the sweep into generator 1 (whose anchor IS reachable, and which the bot
+    // visits anyway) clears the same treants as a combat sweep that makes progress.
 
     // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
     // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)
