@@ -618,10 +618,26 @@ namespace
                                   "Destroy Demon Crystal (Generator 4)",
                                   78.14f, 737.40f, -24.62f,
                                   10.0f, 0, 0, /*eventId*/ 7, /*orderOverride*/ 40),
+                    // Detour waypoint between the two northern pylons. Immol'thar's
+                    // force field (GO 179503) is a ~83yd-radius dome centred on him
+                    // (-39,814) — the ring of 18 imprisoned Highborne Summoners sits
+                    // right on it. The dome is a DOOR-type GO, excluded from the
+                    // navmesh, so Detour would draw a straight crystal4->crystal5
+                    // chord that passes ~78yd south of centre — INSIDE the dome,
+                    // which players can't enter. This pure waypoint (no event/hook —
+                    // latched done on arrival) at due-south dist ~116yd forces the
+                    // route around the south arc: both legs stay >=109yd from
+                    // centre, clear of the dome. Floor is open here (Residual
+                    // Monstrosities spawn out to ~Y697). Ordered between the pylons.
+                    MakeObjective(OBJ(7), /*encounterIndex*/ 46, 429,
+                                  "Skirt Immol'thar's barrier",
+                                  -38.0f, 697.0f, -24.62f,
+                                  /*arriveRadius*/ 12.0f, 0, /*hook*/ 0,
+                                  /*eventId*/ 0, /*orderOverride*/ 41),
                     MakeObjective(OBJ(6), /*encounterIndex*/ 45, 429,
                                   "Destroy Demon Crystal (Generator 5)",
                                   -155.43f, 734.17f, -24.62f,
-                                  10.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 41),
+                                  10.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 42),
                 };
                 t.push_back(std::move(p));
             }

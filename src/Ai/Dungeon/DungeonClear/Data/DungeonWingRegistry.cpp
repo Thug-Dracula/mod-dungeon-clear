@@ -51,6 +51,7 @@ namespace
                     BossRosterRegistry::ObjectiveEntry(4),
                     BossRosterRegistry::ObjectiveEntry(5),
                     BossRosterRegistry::ObjectiveEntry(6),
+                    BossRosterRegistry::ObjectiveEntry(7),  // barrier-skirt waypoint
                 }},
                 {"Dire Maul (North)", {
                     14326,  // Guard Mol'dar

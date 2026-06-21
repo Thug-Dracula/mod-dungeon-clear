@@ -414,6 +414,18 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
     EXPECT_LT(BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))),
               BossOrderKey(*Find(out, 11489)))
         << "southern pylon trio routed before Tendris";
+
+    // Barrier-skirt waypoint (OBJ 7) is sequenced strictly between the two
+    // northern pylons (Gen4 OBJ5 -> waypoint -> Gen5 OBJ6) so the route around
+    // Immol'thar's force field is taken between them, and it carries no event.
+    DungeonBossInfo const* wp = Find(out, BossRosterRegistry::ObjectiveEntry(7));
+    ASSERT_NE(wp, nullptr);
+    EXPECT_EQ(wp->kind, DungeonAnchorKind::Objective);
+    EXPECT_EQ(wp->eventId, 0u) << "waypoint is a pure travel anchor (no event)";
+    EXPECT_LT(BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(5))),
+              BossOrderKey(*wp));
+    EXPECT_LT(BossOrderKey(*wp),
+              BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(6))));
 }
 
 // Sunken Temple: the DBC bit order is NOT a valid clear order. The roster removes
