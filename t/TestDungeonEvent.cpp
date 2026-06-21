@@ -931,6 +931,22 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
     }
 }
 
+// The Warpwood entrance-clear (event 11) is an Anchored, Optional ClearRadius
+// over the square entrance room (the Warpwood/Petrified treants that pull as a
+// group), with a generous timeout for the large sweep.
+TEST(DungeonEventAnchored, DireMaulWestEntranceClearEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(429, 11);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_FALSE(e->required);  // Optional
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_GT(e->steps[0].radius, 100.0f);   // covers the room
+    EXPECT_GT(e->steps[0].zBand, 0.0f);
+    EXPECT_GT(e->steps[0].timeoutMs, 30000u); // generous for a big sweep
+}
+
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path
 // Conditional door events — the same UseGO + WaitForGameObjectState shape as the
 // Gordok doors, so they preempt the door-blocked stall. GameObject::Use on a DOOR
