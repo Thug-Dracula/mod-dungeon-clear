@@ -289,6 +289,15 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             continue;
 
         BossLiveState const state = LookupLive(liveness, info.entry);
+
+        // DIAGNOSTIC support: remember every boss seen alive this run, mirroring
+        // DcBossesAction so the re-targeting WARN below has data even when the
+        // addon panel isn't being polled. Union semantics; reset on instance
+        // transition / dc on alongside the other run-scoped sets.
+        if (info.kind == DungeonAnchorKind::Boss && state.alive)
+            context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")
+                ->Get().insert(info.entry);
+
         if (state.present && !state.alive)
             continue;  // corpse — transient, will flip to completed
 
@@ -315,6 +324,38 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
     std::optional<DungeonBossInfo> pick =
         PickTarget(cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
+
+    // DIAGNOSTIC (unconfirmed "tank walks back to a dead boss" wedge). The
+    // signature is selecting a boss we have SEEN ALIVE this run that is no longer
+    // alive: a classic boss whose kill never set an encounter-mask bit (SFK's Odo
+    // is absent from DungeonEncounter.dbc) is only filtered while its corpse is on
+    // the floor; once the corpse despawns it reads "not present" — identical to
+    // "grid not loaded" — and re-enters this candidate list. Commit-and-hold
+    // normally masks that (sticky already advanced past it), so this fires only
+    // when something forced a fresh/backward pick onto the resurrected corpse.
+    // Log the full decision context so the next live occurrence is captured
+    // rather than inferred from a post-recovery log. `fresh=1` means the commit
+    // was released/zeroed (no held sticky); cross-reference the run-instance
+    // transition line to see whether an instance-id reset zeroed it.
+    if (pick && pick->kind == DungeonAnchorKind::Boss)
+    {
+        std::unordered_set<uint32> const& seenBosses =
+            AI_VALUE(std::unordered_set<uint32>&, "dungeon clear seen bosses");
+        BossLiveState const ps = LookupLive(liveness, pick->entry);
+        if (seenBosses.count(pick->entry) && !ps.alive)
+        {
+            bool const maskBit = pick->encounterIndex < 32 &&
+                                 (completedMask & (1u << pick->encounterIndex)) != 0u;
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] re-targeting seen-but-not-live boss '{}' (entry {}): "
+                     "seenAlive=1 liveNow=0 presentNow={} corpse={} maskBit={} "
+                     "priorSticky={} fresh={} cands={} -> dead-boss-wedge candidate",
+                     bot->GetName(), pick->name, pick->entry,
+                     ps.present ? 1 : 0, (ps.present && !ps.alive) ? 1 : 0,
+                     maskBit ? 1 : 0, stickyEntry, stickyEntry == 0 ? 1 : 0,
+                     static_cast<uint32>(cands.size()));
+        }
+    }
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every
