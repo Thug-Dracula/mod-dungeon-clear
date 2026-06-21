@@ -3,8 +3,8 @@
 # The navmesh stitches a walkable poly up a near-vertical chasm face between the
 # lower walkway (~z30) and an upper ledge (~z58). The long-range A* used to climb
 # it as a shortcut, leaving the human party (which can't make the climb) behind.
-# DcNavPenaltyRegistry boxes the shaft and DcRouteFilter taxes steep edges, so the
-# corridor must now take the legitimate way around.
+# DcNavPenaltyRegistry boxes the shaft (DcRouteFilter multiplies any A* edge through
+# it), so the corridor must now take the legitimate way around.
 #
 # The assertion here guards the must-not-regress property of the discouragement:
 # the upper ledge stays REACHABLE (a cost penalty must never strand the bot by

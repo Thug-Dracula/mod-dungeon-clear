@@ -513,30 +513,6 @@ DungeonClear.WaterPathCost = 3.0
 DungeonClear.MagmaPathCost = 20.0
 
 #
-#    DungeonClear.SlopePathPenalty
-#        Steep-slope avoidance strength for the route pathfinder. Detour's stock
-#        cost barely taxes slope, so the bot will climb a near-vertical wall the
-#        navmesh left walkable — a shortcut a real player can't follow, which
-#        leaves the party behind. Above SlopePathThreshold degrees, the per-edge
-#        route cost is multiplied by 1 + SlopePathPenalty * (slope - threshold)/10,
-#        so the search prefers a flatter way around whenever one exists. It is a
-#        cost, never a hard block: a mandatory steep climb (the only way through)
-#        is still taken. 0 disables the slope penalty entirely.
-#
-#        Default: 6.0
-#
-#    DungeonClear.SlopePathThreshold
-#        Slope (degrees) below which the route cost is NOT taxed. Sits above any
-#        legitimate ramp or staircase (≤ ~50°), so normal routes are unaffected and
-#        only genuine wall-climbs pay the penalty above.
-#
-#        Default: 55.0
-#
-
-DungeonClear.SlopePathPenalty = 6.0
-DungeonClear.SlopePathThreshold = 55.0
-
-#
 #    DungeonClear.SwimEnable
 #        Enable submerged swim legs. The navmesh keeps only a flat water-surface
 #        sheet over deep water (the floor under liquid is discarded at mmap-build

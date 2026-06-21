@@ -317,10 +317,10 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
     }
 
     // Player filter — matches PathGenerator's "assume Player" branch. DcRouteFilter
-    // adds the route-cost discouragements (steep-slope ramp + per-map no-go
-    // volumes) that steer the A* corridor off navmesh shortcuts a real player
-    // can't follow; it derives from dtQueryFilterExt, so the include/exclude flags
-    // and the liquid area costs below apply exactly as before.
+    // adds the per-map no-go volume penalty that steers the A* corridor off navmesh
+    // shortcuts a real player can't follow; it derives from dtQueryFilterExt, so
+    // the include/exclude flags and the liquid area costs below apply exactly as
+    // before, and on a map with no volume the cost is identical to stock.
     DcRouteFilter filter(mapId);
     filter.setIncludeFlags(static_cast<uint16>(NAV_GROUND | NAV_WATER | NAV_MAGMA));
     filter.setExcludeFlags(0);

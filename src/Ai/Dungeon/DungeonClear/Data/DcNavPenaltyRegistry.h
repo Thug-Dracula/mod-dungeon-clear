@@ -13,11 +13,10 @@
 // Some dungeon navmeshes contain shortcuts a real player cannot follow: the mmap
 // generator stitches a walkable poly up a ledge/chasm face, so Detour's A* climbs
 // a near-vertical wall instead of taking the intended ramp, and the human party
-// (which can't make that climb) gets left behind. The slope penalty in
-// DcRouteFilter discourages steep climbs in general, but where the offending poly
-// is geometrically gentle between portal midpoints — or where we simply want a
-// guaranteed kill of a specific known-bad spot — a targeted volume is the
-// reliable lever.
+// (which can't make that climb) gets left behind. Slope alone can't separate these
+// from legitimate steep ramps (the mmap generator's own walkable limit is 60°,
+// which overlaps the shortcut's ~50°), so a targeted, hand-authored volume is the
+// reliable lever for a known-bad spot.
 //
 // One row per known-bad spot: an axis-aligned world-space box on a map plus a
 // cost multiplier. DcRouteFilter::getCost multiplies the cost of any A* edge

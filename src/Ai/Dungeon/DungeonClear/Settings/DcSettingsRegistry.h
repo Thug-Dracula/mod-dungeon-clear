@@ -316,20 +316,6 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "WaterPathCost",         DcType::Float,  3,   1,  50,  false },
     { "MagmaPathCost",         DcType::Float, 20,   1, 1000, false },
 
-    // Steep-slope avoidance. The stock Detour route cost barely taxes slope (a
-    // ~50° climb costs only ~1.5× flat ground), so the A* corridor will happily
-    // climb a near-vertical wall the mmap generator left walkable — a shortcut a
-    // real player can't follow, leaving the party behind. Above SlopePathThreshold
-    // degrees the per-edge cost ramps by SlopePathPenalty per 10° of extra steep,
-    // so the search prefers a flatter way around WHENEVER one exists (it stays a
-    // cost, never a hard block — a mandatory steep climb is still taken). The
-    // threshold sits above any legitimate ramp/stair (≤~50°), so normal routes are
-    // untouched; only genuine wall-climbs pay. SlopePathPenalty 0 disables.
-    // General companion to the surgical per-spot DcNavPenaltyRegistry volumes;
-    // both feed DcRouteFilter::getCost. Server-only (read off the map thread).
-    { "SlopePathPenalty",      DcType::Float,  6,   0,  50,  false },
-    { "SlopePathThreshold",    DcType::Float, 55,  30,  89,  false },
-
     // Submerged swim legs (Tier A). When the navmesh route to a target dead-ends
     // AND water lies between, the bot greedily 3D-swims to it instead of stalling
     // (the navmesh has no mesh under liquid — only a surface sheet — so a

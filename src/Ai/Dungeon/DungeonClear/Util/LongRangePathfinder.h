@@ -68,8 +68,8 @@ public:
 
     // WORKER-SAFE. Pure navmesh A* + smoothing against `mesh`, from
     // (sx,sy,sz) to (tx,ty,tz). `mapId` selects the route-cost discouragements
-    // (steep-slope penalty + any DcNavPenaltyRegistry no-go volumes on that map);
-    // it reads only conf/registry tables, no live game state. `mesh` must be kept
+    // (any DcNavPenaltyRegistry no-go volumes on that map); it reads only the
+    // registry table, no live game state. `mesh` must be kept
     // alive by the caller for the duration of the call (hold its shared_ptr). No
     // Player*/Map*/VMAP access — must not, and cannot, touch live game state.
     static RawResult BuildCoreFromMesh(dtNavMesh const* mesh, uint32 mapId,

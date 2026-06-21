@@ -13,6 +13,7 @@
 #include "ModelIgnoreFlags.h"
 #include "PathGenerator.h"
 #include "Player.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcNavPenaltyRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonSpawnGraph.h"
 #include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
@@ -122,7 +123,7 @@ namespace
     // double-up when segments are concatenated) and returns true. On
     // failure outPoints is cleared; outType carries the raw path type for
     // the caller's diagnostics.
-    bool TryProbe(Player* bot, float cx, float cy, float cz, float px, float py, float pz,
+    bool TryProbe(Player* bot, uint32 mapId, float cx, float cy, float cz, float px, float py, float pz,
                   std::vector<G3D::Vector3>& outPoints, uint32& outType)
     {
         outPoints.clear();
@@ -192,6 +193,32 @@ namespace
                       "(type=0x{:x}) — re-probing from the clean end next stride",
                       keep, candidate.size(), outType);
             candidate.resize(keep);
+        }
+
+        // No-go volume screen (review Finding B). This strided fallback builds its
+        // corridor with the stock engine PathGenerator, which is BLIND to the
+        // DcRouteFilter route-cost discouragements that the primary long-range
+        // producer uses — so on its own it would happily path straight up a
+        // navmesh shortcut a real player can't follow (e.g. the LBRS chasm wall).
+        // Reject any probe whose corridor enters a registered no-go volume; the
+        // caller then tries the lateral arc / spawn-graph tiers (which route
+        // around it) or, failing those, reports the target unreachable — Advance
+        // rebuilds next tick (the primary normally succeeds), which is far better
+        // than stranding the party up a wall. HasVolumes gates the per-point loop
+        // so maps without a volume — i.e. almost all — pay nothing.
+        if (DcNavPenaltyRegistry::HasVolumes(mapId))
+        {
+            for (G3D::Vector3 const& p : candidate)
+            {
+                if (DcNavPenaltyRegistry::PenaltyAt(mapId, p.x, p.y, p.z) > 1.0f)
+                {
+                    LOG_DEBUG("playerbots.dungeonclear",
+                              "[dungeon-clear] probe rejected: corridor enters a no-go volume on "
+                              "map {} (type=0x{:x}); trying next tier",
+                              mapId, outType);
+                    return false;
+                }
+            }
         }
 
         outPoints = std::move(candidate);
@@ -359,7 +386,7 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
         // spawn-graph tiers below are now fallbacks for the cases the direct
         // probe genuinely can't satisfy in one call (PATHFIND_SHORT in a huge
         // open room, NOPATH, or an LOS reject across multi-level geometry).
-        if (TryProbe(bot, cx, cy, cz, tx, ty, tz, probePoints, outType))
+        if (TryProbe(bot, mapId, cx, cy, cz, tx, ty, tz, probePoints, outType))
         {
             stridedOk = true;
             tier = "direct";
@@ -379,7 +406,7 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                     NavmeshSnap::Snap(map, pr.x, pr.y, pr.z, STRIDE_SNAP_RADIUS);
                 if (!snapped.ok)
                     continue;
-                if (TryProbe(bot, cx, cy, cz, snapped.x, snapped.y, snapped.z,
+                if (TryProbe(bot, mapId, cx, cy, cz, snapped.x, snapped.y, snapped.z,
                              probePoints, outType))
                 {
                     tier = label;
@@ -416,7 +443,7 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                 DungeonSpawnGraph::FindCorridor(map, mapId, cx, cy, cz, tx, ty, tz);
             for (SpawnNode const& node : corridor)
             {
-                if (TryProbe(bot, cx, cy, cz, node.x, node.y, node.z, probePoints, outType))
+                if (TryProbe(bot, mapId, cx, cy, cz, node.x, node.y, node.z, probePoints, outType))
                 {
                     stridedOk = true;
                     tier = "spawngraph";

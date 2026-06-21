@@ -10,30 +10,27 @@
 #include "DetourExtended.h"   // dtQueryFilterExt
 
 // Route-cost filter for the dungeon-clear long-range pathfinder. Extends the
-// engine's dtQueryFilterExt with two human-authored "discouragements" that steer
-// the A* corridor away from navmesh shortcuts a real player cannot follow:
+// engine's dtQueryFilterExt with the DcNavPenaltyRegistry no-go volumes: a hand-
+// authored axis-aligned box over a known-bad spot (e.g. the LBRS chasm climb)
+// multiplies the cost of any A* edge through it so heavily that the detour always
+// wins — steering the corridor off a navmesh shortcut a real player can't follow.
 //
-//   1. A configurable STEEP-SLOPE penalty. The stock dtQueryFilterExt::getCost
-//      barely taxes slope (a ~50° climb costs only ~1.5×), so Detour happily
-//      routes the bot up near-vertical walls the mmap generator left walkable.
-//      Above a threshold this ramps the per-edge cost so the search prefers a
-//      flatter way around whenever one exists. GENERAL: discourages every
-//      wall-climb shortcut, not just the spots we've found by hand.
+// It is a COST, never a hard rejection (passFilter is untouched), so a boxed edge
+// stays traversable: if it is genuinely the only way through, the route still
+// takes it and the bot is never stranded. Outside a volume getCost is byte-for-
+// byte the stock dtQueryFilterExt cost (the base call below), so on every map
+// without a volume — i.e. almost all of them — routing is completely unchanged.
 //
-//   2. A no-go VOLUME penalty from DcNavPenaltyRegistry. SURGICAL: a hand-
-//      authored axis-aligned box over a known-bad spot (e.g. the LBRS chasm
-//      climb) multiplies any edge through it so heavily that the detour always
-//      wins — the reliable kill for a spot the slope rule alone can't catch
-//      (gentle portal-to-portal slope) or that we want guaranteed.
+// (A general steep-slope penalty was prototyped here and removed: Detour measures
+// slope portal-midpoint to portal-midpoint, not along the walkable surface, so it
+// misfired on legitimate staircases; and the mmap generator's own walkable limit
+// is 60°, which overlaps the ~50° shortcut slope, so slope can't cleanly separate
+// "bad shortcut" from "legit steep ramp". The surgical box is the reliable lever.)
 //
-// Both are cost multipliers layered on the base distance × area-cost; neither
-// touches passFilter, so a discouraged edge stays traversable. If a steep climb
-// or a boxed edge is genuinely the ONLY way through, the route still takes it —
-// the bot is never stranded by these rules, only nudged off avoidable shortcuts.
-//
-// One instance per Build (cheap: a few config reads in the ctor). getAreaCost /
-// include/exclude flags are inherited unchanged, so callers still apply the
-// liquid-avoidance area costs (DungeonClearGeometry::ApplyLiquidAreaCosts) on top.
+// One instance per Build (cheap: one registry membership check in the ctor).
+// getAreaCost / include/exclude flags are inherited unchanged, so callers still
+// apply the liquid-avoidance area costs (DungeonClearGeometry::ApplyLiquidAreaCosts)
+// on top.
 class DcRouteFilter : public dtQueryFilterExt
 {
 public:
@@ -46,9 +43,7 @@ public:
 
 private:
     uint32 _mapId;
-    float  _slopePenalty;        // ramp strength above the threshold (0 = off)
-    float  _slopeThresholdDeg;   // slope at/below this is untaxed
-    bool   _hasVolumes;          // map has a no-go volume (per-edge box-test gate)
+    bool   _hasVolumes;   // map has a no-go volume (per-edge box-test gate)
 };
 
 #endif
