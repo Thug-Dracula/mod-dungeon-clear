@@ -560,12 +560,16 @@ bool DcBossesAction::Execute(Event event)
 
         // The gated anchor must actually be in this (wing-filtered) list, else
         // the event belongs to another wing — leave it for the standalone loop,
-        // which applies the same wing guard.
+        // which applies the same wing guard. Capture the gated boss's kill state
+        // while we're here (needed for room-aggro pre-clears, below).
         bool present = false;
+        bool gatedBossKilled = false;
         for (DungeonBossInfo const& info : bosses)
             if (info.entry == gatedEntry)
             {
                 present = true;
+                gatedBossKilled = info.encounterIndex < 32 &&
+                                  (completedMask & (1u << info.encounterIndex)) != 0u;
                 break;
             }
         if (!present)
@@ -576,9 +580,25 @@ bool DcBossesAction::Execute(Event event)
         // (already long) event name fits the panel sub-line without truncating;
         // only the terminal states get a tag.
         std::string note = ev->name;
-        if (cleared.count(lk))
+        bool done = cleared.count(lk) != 0;
+        bool wasSkipped = !done && skipped.count(lk) != 0;
+        // A room-aggro PRE-CLEAR is intentionally never latched — it is repeatable
+        // per boss (see DcEngageActions, "The event is never latched"), so its
+        // ConditionalLatchKey never lands in `cleared` and the suffix above would
+        // stay pending forever. Its completion is the room being cleared, which is
+        // guaranteed once the gated boss is killed (the boss can't be pulled until
+        // the room is down). Mirror the gated boss's terminal state so the folded
+        // note still flips to (done)/(skipped) on the panel.
+        if (DungeonEventRegistry::IsRoomAggroPreClear(*ev))
+        {
+            if (gatedBossKilled)
+                done = true;
+            else if (skipped.count(gatedEntry))
+                wasSkipped = true;
+        }
+        if (done)
             note += " (done)";
-        else if (skipped.count(lk))
+        else if (wasSkipped)
             note += " (skipped)";
 
         std::string& slot = eventAnnotation[gatedEntry];
