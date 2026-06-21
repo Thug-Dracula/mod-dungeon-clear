@@ -558,8 +558,18 @@ bool DcBossesAction::Execute(Event event)
     // with no gated boss stay standalone (rendered read-only addon-side).
     std::map<uint32, std::string> eventAnnotation;  // boss/objective entry -> note
     std::unordered_set<uint32> foldedEventIds;
+    // A faction-specific event (panelTeam set) is shown only to its own team —
+    // the activation predicate already gates execution by team, so the other
+    // faction would only ever see a row it can never act on.
+    auto const hiddenForTeam = [bot](DungeonEvent const* ev)
+    {
+        return ev->panelTeam != TEAM_NEUTRAL && ev->panelTeam != bot->GetTeamId();
+    };
+
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
     {
+        if (hiddenForTeam(ev))
+            continue;
         uint32 gatedEntry = ev->panelGatesBossEntry;
         if (!gatedEntry && DungeonEventRegistry::IsRoomAggroPreClear(*ev) && haveRoomAggroBoss)
             gatedEntry = roomAggroBossEntry;
@@ -752,6 +762,10 @@ bool DcBossesAction::Execute(Event event)
     // off-path event uses index 99 so it sorts last.
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
     {
+        // Faction-specific events are hidden from the other team's panel.
+        if (hiddenForTeam(ev))
+            continue;
+
         // Events that gate a boss were folded into that boss's row in the pre-pass
         // above — don't also surface them as their own (Go-less) line.
         if (foldedEventIds.count(ev->id))
@@ -791,6 +805,18 @@ bool DcBossesAction::Execute(Event event)
                 {
                     uint32 const k = BossOrderKey(info);
                     idxField = k == 0 ? "-0.5" : std::to_string(k - 1) + ".5";
+                    break;
+                }
+        }
+        else if (ev->panelSortAfterBossEntry)
+        {
+            // A follow-on gate (e.g. SFK's courtyard door after Rethilgore) sorts
+            // just AFTER the named boss: "<bossKey>.5" lands between that boss and
+            // the next one, so the panel renders the event as the very next row.
+            for (DungeonBossInfo const& info : bosses)
+                if (info.entry == ev->panelSortAfterBossEntry)
+                {
+                    idxField = std::to_string(BossOrderKey(info)) + ".5";
                     break;
                 }
         }

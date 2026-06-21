@@ -39,6 +39,12 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
     // (not in the cell) for it to open — the closed door stops the approach a
     // few yards short, so the tank is parked ready to walk through the instant
     // the prisoner opens it.
+    // Panel placement: the courtyard door is opened right after the first boss
+    // (Rethilgore, 3914) and gates the rest of the keep, so it sorts as its own
+    // row immediately AFTER Rethilgore (#2) rather than last. Each row is shown
+    // only to the faction that actually performs it — the activation predicate
+    // already team-gates execution; .PanelTeam mirrors that on the panel so the
+    // other faction's row is hidden.
     out.push_back(EventBuilder(33, 1, "Free Ashcrombe (Courtyard Door, Alliance)")
                       .Conditional(1)
                       .MoveTo(-248.0f, 2122.0f, 81.3f, /*radius*/ 6.0f)
@@ -47,6 +53,8 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
                       .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
                       .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 60000)
+                      .PanelAfterBoss(/*Rethilgore*/ 3914)
+                      .PanelTeam(TEAM_ALLIANCE)
                       .Optional()
                       .Build());
 
@@ -58,6 +66,8 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
                       .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
                       .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 60000)
+                      .PanelAfterBoss(/*Rethilgore*/ 3914)
+                      .PanelTeam(TEAM_HORDE)
                       .Optional()
                       .Build());
 }

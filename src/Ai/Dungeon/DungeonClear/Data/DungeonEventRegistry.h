@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Common.h"
+#include "SharedDefines.h"  // TeamId
 
 // Declarative framework for scripted dungeon EVENTS the party must perform to
 // progress — pull a lever, click an altar, talk to an NPC and pick a gossip
@@ -180,6 +181,22 @@ struct DungeonEvent
     // the gong before Tuten'kash). 0 => default (sort last). Does not affect
     // engine ordering, only the status panel.
     uint32 panelGatesBossEntry{0};
+
+    // Conditional events only, panel cosmetics. Like panelGatesBossEntry but
+    // sorts the event just AFTER the named boss and keeps it as its OWN numbered
+    // row (panelGatesBossEntry instead FOLDS the event into the boss's row as a
+    // sub-line). Use for a standalone progression gate that follows a specific
+    // boss but isn't owned by the next one — e.g. Shadowfang Keep's courtyard
+    // door, which the party opens right after Rethilgore. 0 => not used.
+    uint32 panelSortAfterBossEntry{0};
+
+    // Conditional events only, panel cosmetics. When set to a real team the event
+    // is shown in the panel ONLY for that team — a faction-specific gate whose
+    // mechanic only one side ever performs (Shadowfang Keep frees Ashcrombe for
+    // Alliance, Adamant for Horde). The activation predicate already team-gates
+    // execution; this hides the irrelevant faction's row from the status panel.
+    // TEAM_NEUTRAL => shown to both factions.
+    TeamId panelTeam{TEAM_NEUTRAL};
 };
 
 // Fluent builder for readable registry rows, mirroring MakeBoss/MakeObjective.
@@ -200,6 +217,13 @@ public:
     EventBuilder& Repeatable();
     EventBuilder& Persistent();
     EventBuilder& PanelBeforeBoss(uint32 bossEntry);
+    // Sort this standalone event just AFTER `bossEntry` in the panel, keeping it
+    // as its own numbered row (unlike PanelBeforeBoss, which folds the event into
+    // the boss's row). See DungeonEvent::panelSortAfterBossEntry.
+    EventBuilder& PanelAfterBoss(uint32 bossEntry);
+    // Show this event in the panel only for `team` (a faction-specific gate). See
+    // DungeonEvent::panelTeam.
+    EventBuilder& PanelTeam(TeamId team);
 
     // Override the LAST-added step's timeout (0 on the step => the
     // EventStepTimeout config default). Chain it right after the step it tunes:
