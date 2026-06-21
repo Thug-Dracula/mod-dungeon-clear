@@ -265,6 +265,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
     // Fresh approach FSM: clears every stuck/recovery counter, the pursuit/dead-
     // end latches, the loot-yield anchor, the position sentinel + committed boss,

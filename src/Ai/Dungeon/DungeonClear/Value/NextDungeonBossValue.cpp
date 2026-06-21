@@ -182,6 +182,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
         context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
         context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     }

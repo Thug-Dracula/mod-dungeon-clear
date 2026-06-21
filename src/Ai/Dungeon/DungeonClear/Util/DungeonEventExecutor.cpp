@@ -573,6 +573,57 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
     return nullptr;
 }
 
+void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
+                                                           AiObjectContext* context,
+                                                           uint32 mapId)
+{
+    if (!bot || !context)
+        return;
+
+    std::vector<DungeonEvent const*> const conditional = DungeonEventRegistry::Conditional(mapId);
+    if (conditional.empty())
+        return;
+
+    auto& cleared =
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    auto& seenDue =
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get();
+
+    for (DungeonEvent const* ev : conditional)
+    {
+        // A room-aggro pre-clear repeats per boss (its "room trash remains"
+        // condition toggles each pull), so a momentary clear is NOT completion —
+        // its folded note tracks the gated boss's death instead (DcBossesAction).
+        // Genuinely repeatable events likewise never reach a terminal "done".
+        if (ev->repeatable || DungeonEventRegistry::IsRoomAggroPreClear(*ev))
+            continue;
+
+        uint32 const lk = ConditionalLatchKey(ev->id);
+        if (cleared.count(lk))
+            continue;
+
+        if (EventConditionRegistry::Evaluate(ev->conditionId, bot, context))
+        {
+            // Currently due: remember we saw it active so a later transition to
+            // not-due reads as completion rather than not-yet-started.
+            seenDue.insert(lk);
+        }
+        else if (seenDue.count(lk))
+        {
+            // Was due, now isn't, and the executor never latched it: its gating
+            // condition WAS the latch (e.g. a Stratholme ziggurat whose instance
+            // data flips 1 -> 2 the instant the Ash'ari Crystal topples, mid-
+            // combat, before the dormant executor can run its completion tick).
+            // Latch it so the folded panel note flips to (done) and — because the
+            // boss signature counts cleared.size() — the boss list re-pushes.
+            cleared.insert(lk);
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] conditional event '{}' (id {}) completed via condition "
+                      "transition -> latched done", bot->GetName(), ev->name, ev->id);
+        }
+    }
+}
+
 bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* context)
 {
     if (!context)

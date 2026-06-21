@@ -103,6 +103,20 @@ public:
     static DungeonEvent const* FindDueConditionalEvent(Player* bot, AiObjectContext* context,
                                                        uint32 mapId);
 
+    // IMPURE: detect conditional events whose completion is signalled by their
+    // own gating condition going false (instance state, not a ConditionalLatchKey)
+    // and latch them into "dungeon clear cleared anchors" so the panel can show
+    // them done. Some events (e.g. Stratholme ziggurat acolyte clears) flip their
+    // instance data 1 -> 2 during combat, before the dormant in-combat executor
+    // can run its own completion tick, so they never latch the normal way. Using
+    // "dungeon clear seen due events", an event that was once due and now reads
+    // not-due (and is neither repeatable nor a per-boss room-aggro pre-clear) is
+    // treated as complete. Called from the throttled status-publisher tick so it
+    // runs regardless of any bot's combat state. No-op when the map has no
+    // conditional events.
+    static void SweepCompletedConditionalEvents(Player* bot, AiObjectContext* context,
+                                                uint32 mapId);
+
     // True if `context`'s run is currently driving a PERSISTENT anchored event
     // that has started (stepIndex past 0) — i.e. a long multi-phase set-piece
     // (ZulFarrak's temple) owns the tank. Single source of truth used to stand

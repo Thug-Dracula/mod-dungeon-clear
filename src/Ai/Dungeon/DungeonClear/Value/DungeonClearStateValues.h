@@ -138,6 +138,31 @@ private:
     std::unordered_set<uint32> data;
 };
 
+// Conditional events (DungeonEventRegistry) that have been observed DUE (their
+// gating condition read true) at least once this run. Some conditional events
+// are latched by their own gating condition rather than a ConditionalLatchKey —
+// e.g. a Stratholme ziggurat's instance data flips 1 ("acolytes up") -> 2
+// ("chamber cleared") the instant the Ash'ari Crystal topples, which is during
+// combat, before the dormant in-combat executor can run its completion tick and
+// latch the event normally. Such an event would otherwise read pending forever
+// on the panel. SweepCompletedConditionalEvents remembers here every event seen
+// due, so when one later reads not-due it can tell genuine completion ("was due,
+// now isn't") apart from not-yet-started ("never been due"). Reset on
+// dc on / instance change alongside the cleared/skipped sets.
+class DungeonClearSeenDueEventsValue : public ManualSetValue<std::unordered_set<uint32>&>
+{
+public:
+    DungeonClearSeenDueEventsValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear seen due events")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::unordered_set<uint32> data;
+};
+
 class DungeonClearStallReasonValue : public ManualSetValue<std::string&>
 {
 public:

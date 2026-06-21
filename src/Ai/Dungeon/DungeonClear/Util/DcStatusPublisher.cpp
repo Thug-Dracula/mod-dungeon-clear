@@ -56,6 +56,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -454,6 +455,14 @@ void DcStatusPublisher::TickStatusPushes(uint32 diff)
         PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
         if (!botAI)
             continue;
+
+        // Latch conditional events whose gating condition has gone false this run
+        // (e.g. a Stratholme ziggurat acolyte clear, whose instance data flips to
+        // "cleared" mid-combat before the executor can latch it). This grows the
+        // cleared set, which BuildBossSignature counts — so a completed event both
+        // re-pushes the boss list and flips its folded note to (done) below.
+        DungeonEventExecutor::SweepCompletedConditionalEvents(
+            bot, botAI->GetAiObjectContext(), bot->GetMapId());
 
         std::string const payload = BuildStatusPayload(botAI);
         uint64 const bossSig = BuildBossSignature(botAI);
