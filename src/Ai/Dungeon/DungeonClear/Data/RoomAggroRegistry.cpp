@@ -67,6 +67,16 @@ namespace
         { 230, 9019,  166.0f, {} }, // Blackrock Depths — Emperor Dagran Thaurissan
         { 429, 14354,  50.0f, {} }, // Dire Maul East — Pusillin
 
+        // Dire Maul West — Tendris Warpwood (11489). He has no scripted
+        // CallForHelp, but stands amid the dense Warpwood treant trash that
+        // assists by default; pulling him drags the whole entrance pack. Empty
+        // memberEntries (any hostile in radius, the safe over-approximation —
+        // see the note above) matches Pusillin on this same map; the boss
+        // exclusion + aggro-sphere keep the gate off Tendris himself. Uses the
+        // legacy standalone room-trash path (no condition-3 event row), exactly
+        // like Pusillin — radius 45 ≈ the treant ring (tune live).
+        { 429, 11489,  45.0f, {} }, // Dire Maul West — Tendris Warpwood
+
         // Trial of the Champion (650) — Grand Champions, CallForHelp(100) on
         // unmount. Both faction rosters flagged; the other live champions are
         // themselves encounter bosses, so they fall out via the boss exclusion

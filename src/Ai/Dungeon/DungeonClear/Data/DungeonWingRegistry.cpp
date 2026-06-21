@@ -42,6 +42,15 @@ namespace
                     11487,  // Magister Kalendris
                     11496,  // Immol'thar
                     11486,  // Prince Tortheldrin
+                    // Immol'thar's five Crystal Generator (pylon) travel
+                    // objectives — synthetic entries, not creatures; keep them
+                    // in-wing so wing-filtering doesn't drop them. See the
+                    // map-429 West patch in BossRosterRegistry.
+                    BossRosterRegistry::ObjectiveEntry(2),
+                    BossRosterRegistry::ObjectiveEntry(3),
+                    BossRosterRegistry::ObjectiveEntry(4),
+                    BossRosterRegistry::ObjectiveEntry(5),
+                    BossRosterRegistry::ObjectiveEntry(6),
                 }},
                 {"Dire Maul (North)", {
                     14326,  // Guard Mol'dar

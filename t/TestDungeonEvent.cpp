@@ -904,3 +904,54 @@ TEST(DungeonEventRoomAggro, PredicateAndHasRoomAggroEvent)
     DungeonEvent anchored = EventBuilder(1, 1, "x").Anchored(0).KillCreature(0).Build();
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(anchored));
 }
+
+// --- Dire Maul West (map 429) --------------------------------------------
+
+// Immol'thar's five Crystal Generator pylons (events 4-8) are Anchored UseGO +
+// Wait objectives — Persistent (a combat gap at a guarded pylon must not rewind
+// and re-click the spent BUTTON) and Optional (a misfire degrades to standing at
+// the still-shielded boss). Each clicks one generator GO; the instance flips the
+// pylon bit and, at all five, makes Immol'thar attackable.
+TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
+{
+    struct Pylon { uint32 eventId; uint32 goEntry; };
+    for (Pylon const& p : { Pylon{4, 177259}, Pylon{5, 177257}, Pylon{6, 177258},
+                            Pylon{7, 179504}, Pylon{8, 179505} })
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(429, p.eventId);
+        ASSERT_NE(e, nullptr) << "missing pylon event " << p.eventId;
+        EXPECT_EQ(e->activation, EventActivation::Anchored);
+        EXPECT_TRUE(e->persistent);
+        EXPECT_FALSE(e->required);  // Optional
+        ASSERT_EQ(e->steps.size(), 2u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[0].goEntry, p.goEntry);
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::Wait);
+        EXPECT_GT(e->steps[1].durationMs, 0u);
+    }
+}
+
+// The two Crescent Key doors (events 9/10, conditions 14/15) are on-path
+// Conditional door events — the same UseGO + WaitForGameObjectState shape as the
+// Gordok doors, so they preempt the door-blocked stall. GameObject::Use on a DOOR
+// ignores the lock, so no Crescent Key is needed.
+TEST(DungeonEventConditional, DireMaulWestCrescentDoorEventShape)
+{
+    struct Door { uint32 eventId; uint32 conditionId; uint32 goEntry; };
+    for (Door const& d : { Door{9, 14, 177221}, Door{10, 15, 179550} })
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(429, d.eventId);
+        ASSERT_NE(e, nullptr) << "missing crescent door event " << d.eventId;
+        EXPECT_EQ(e->activation, EventActivation::Conditional);
+        EXPECT_EQ(e->conditionId, d.conditionId);
+        EXPECT_FALSE(e->required);  // Optional
+        ASSERT_EQ(e->steps.size(), 2u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[0].goEntry, d.goEntry);
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::WaitForGameObjectState);
+        EXPECT_EQ(e->steps[1].goEntry, d.goEntry);
+        EXPECT_EQ(e->steps[1].wantState, 0u);  // GO_STATE_ACTIVE (open)
+
+        EXPECT_TRUE(EventConditionRegistry::Has(d.conditionId));
+    }
+}

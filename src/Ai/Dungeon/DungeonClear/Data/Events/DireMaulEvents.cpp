@@ -116,12 +116,89 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .PanelAfterBoss(/*Guard Slip'kik*/ 14323)
                       .Optional()
                       .Build());
+
+    // --- Dire Maul West (map 429) — Immol'thar's five Crystal Generators ---
+    // Immol'thar (11496) is held NON_ATTACKABLE behind a force field (GO 179503)
+    // powered by five Crystal Generator pylons (BUTTON GOs). Each generator's
+    // SmartGameObjectAI, once active, sets a bit in instance data TYPE_PYLONS_STATE
+    // (field 2); at 0x1F (all five) the instance drops the field and clears
+    // Immol'thar's (and the Highborne Summoners') NON_ATTACKABLE flag. The pylons
+    // are scattered across the whole West wing — far beyond UseGO's HopTo range —
+    // so each is a travel OBJECTIVE (BossRosterRegistry map-429 West patch,
+    // OBJ(2..6)) that boss-nav delivers the tank to; this anchored event then
+    // clicks it.
+    //
+    // ANCHORED (the objective-arrive drives it), not Conditional: there is no
+    // door to preempt, and boss-nav must deliver the tank across the wing to each
+    // pylon's anchor first. Persistent so a combat tick-gap at a guarded pylon
+    // can't rewind the event to step 0 and re-click (the instance ORs the bit, so
+    // a re-fire is idempotent, but re-clicking a spent BUTTON is best avoided).
+    // The Wait(6000) covers the generator's ~5s SmartAI activation delay so the
+    // bit is set before the tank moves on (and, on the last pylon, before it
+    // reaches Immol'thar). Optional: a misfire degrades to the tank standing at
+    // the still-shielded boss until the pylon is dealt with.
+    //
+    // NOTE (verify live): the trigger is SMART_EVENT_UPDATE (a timer), not an
+    // explicit on-use event. If the generators auto-activate on spawn rather than
+    // on click, these UseGO steps are harmless no-ops (Optional, idempotent bit)
+    // and Immol'thar becomes attackable on his own — the objectives still route
+    // the tank correctly. If clicking IS required, they are essential.
+    struct PylonObjective { uint32 eventId; uint32 goEntry; char const* name; };
+    static constexpr PylonObjective kPylons[] = {
+        { 4, 177259, "Destroy Demon Crystal (Generator 1)" },
+        { 5, 177257, "Destroy Demon Crystal (Generator 2)" },
+        { 6, 177258, "Destroy Demon Crystal (Generator 3)" },
+        { 7, 179504, "Destroy Demon Crystal (Generator 4)" },
+        { 8, 179505, "Destroy Demon Crystal (Generator 5)" },
+    };
+    for (PylonObjective const& pyl : kPylons)
+    {
+        out.push_back(EventBuilder(429, pyl.eventId, pyl.name)
+                          .Anchored(/*orderIndex, doc-only*/ pyl.eventId)
+                          .UseGO(pyl.goEntry, /*searchRadius*/ 12.0f)
+                          .Wait(/*pylon activation delay*/ 6000)
+                          .Persistent()
+                          .Optional()
+                          .Build());
+    }
+
+    // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
+    // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)
+    // gate the West path. Both are GAMEOBJECT_TYPE_DOOR with lock 1562 (the
+    // Crescent Key, item 18249) — but server-side GameObject::Use() on a DOOR
+    // toggles it open with NO lock/key check (the key is a client-only gate), so
+    // a bot UseGO opens them without a key, exactly like the Gordok doors. The
+    // stock DC door machinery refuses them (DcDoorPolicy suppresses bare-hands on
+    // GO_FLAG_LOCKED), so this CONDITIONAL event is the only path — and being
+    // on-path it must be conditional to preempt the door-blocked stall (rel 31 >
+    // 22; an anchored objective can't fire because the shut door truncates the
+    // route short of it). Same shape as the Gordok doors. (The third lock-1562
+    // door, 179549 at the entrance, is off the West boss path and is ignored.)
+    out.push_back(EventBuilder(429, 9, "Open the Crescent Key Door (lower)")
+                      .Conditional(/*conditionId*/ 14)
+                      .UseGO(/*after Tendris*/ 177221, /*searchRadius*/ 25.0f)
+                      .WaitForGOState(177221, /*GO_STATE_ACTIVE*/ 0,
+                                      /*timeout*/ 30000, /*searchRadius*/ 25.0f)
+                      .PanelAfterBoss(/*Tendris Warpwood*/ 11489)
+                      .Optional()
+                      .Build());
+
+    out.push_back(EventBuilder(429, 10, "Open the Crescent Key Door (upper)")
+                      .Conditional(/*conditionId*/ 15)
+                      .UseGO(/*before Immol'thar*/ 179550, /*searchRadius*/ 25.0f)
+                      .WaitForGOState(179550, /*GO_STATE_ACTIVE*/ 0,
+                                      /*timeout*/ 30000, /*searchRadius*/ 25.0f)
+                      .PanelAfterBoss(/*Magister Kalendris*/ 11487)
+                      .Optional()
+                      .Build());
 }
 
 namespace
 {
     constexpr uint32 DM_COURTYARD_DOOR = 177219;
     constexpr uint32 DM_INNER_DOOR = 177217;
+    constexpr uint32 DM_CRESCENT_DOOR_LO = 177221;  // after Tendris
+    constexpr uint32 DM_CRESCENT_DOOR_HI = 179550;  // before Immol'thar
     // Tight scan: see the CONDITIONAL note above. The condition is true only once
     // the bot is within reach of the (still-shut) door, so the door-blocked action
     // delivers the bot to the door first; then this preempts the stall and UseGO
@@ -161,10 +238,25 @@ namespace
     {
         return GordokDoorShut(bot, DM_INNER_DOOR, "inner");
     }
+
+    // Crescent Key doors (West) reuse the identical on-path door predicate —
+    // due iff the lock-1562 door is in reach and still shut. GameObject::Use on
+    // a DOOR ignores the lock server-side, so the event's UseGO opens it.
+    bool CrescentDoorLower(Player* bot, AiObjectContext* /*context*/)
+    {
+        return GordokDoorShut(bot, DM_CRESCENT_DOOR_LO, "crescent-lo");
+    }
+
+    bool CrescentDoorUpper(Player* bot, AiObjectContext* /*context*/)
+    {
+        return GordokDoorShut(bot, DM_CRESCENT_DOOR_HI, "crescent-hi");
+    }
 }
 
 void RegisterDireMaulConditions(EventConditionMap& out)
 {
     out[12] = &GordokCourtyardDoor;
     out[13] = &GordokInnerDoor;
+    out[14] = &CrescentDoorLower;
+    out[15] = &CrescentDoorUpper;
 }
