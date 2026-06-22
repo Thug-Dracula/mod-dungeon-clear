@@ -566,6 +566,31 @@ bool DcEngageGeometry::IsRangedAttacker(Player* bot, Unit* u)
 
     return false;
 }
+namespace
+{
+    // GO entries that are TYPED as GAMEOBJECT_TYPE_DOOR but are encounter
+    // force-fields / spell-visual barriers, NOT navigation doors the tank can or
+    // should open. They are raised/dropped by the encounter (e.g. Immol'thar's
+    // prison dome falls when his five demon crystals are destroyed), the navmesh
+    // already routes correctly past/around them, and the bot has no way to "open"
+    // one — so left in the door predicates they read as a permanently-shut
+    // corridor blocker and the run auto-pauses in front of thin air. Observed in
+    // Dire Maul West: the path to Prince Tortheldrin grazes the Magic Vortex
+    // doodad (179506) and the run paused "blocked by a door" right after
+    // Immol'thar died, though nothing was in the way.
+    bool IsNavIgnoredBarrierEntry(std::uint32_t entry)
+    {
+        switch (entry)
+        {
+            case 179503:  // Doodad_DireMaulBossForceField01 (Immol'thar prison dome)
+            case 179506:  // Doodad_DiremaulMagicVortex01 (Immol'thar magic vortex)
+                return true;
+            default:
+                return false;
+        }
+    }
+}
+
 bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
 {
     if (!go || !go->IsInWorld())
@@ -575,6 +600,10 @@ bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
         return false;
     // Authored non-blocking (decorative / always-passable) doors never count.
     if (info->door.ignoredByPathing)
+        return false;
+    // Encounter force-fields / spell visuals miscatalogued as doors (see above):
+    // never a navigation blocker.
+    if (IsNavIgnoredBarrierEntry(info->entry))
         return false;
     // Physical truth on this core: a door's collision follows GOState ALONE —
     // GO_STATE_READY has collision ON (blocking), both ACTIVE states have it
