@@ -193,22 +193,21 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // ClearRadius pre-clear (BossRosterRegistry OBJ(8), ordered FIRST), NOT a
     // step on the crystal click.
     //
-    // This is the third (working) attempt. Earlier ones failed for two reasons,
-    // both now fixed: (1) the standalone anchor on the crystal dais "couldn't be
-    // reached" — but that was an arriveRadius too small (15) so the tank kept
-    // trying to TRAVEL onto the off-mesh dais and thrashed; (2) folding it into
-    // the crystal made clear-vs-click compete. The fix for both is the same rule
-    // (see Uldaman): arriveRadius (95) >= ClearRadius (80). With a large
-    // arriveRadius the tank "arrives" the moment boss-nav gets it anywhere near
-    // (it never has to stand ON the dais), so the at-objective action owns the
-    // tick and its ClearRadius drives the sweep — no travel-to-anchor thrash, no
-    // competing controller. ClearRadius-only (no UseGO), so there is no reach-the-
-    // GO problem. Counts only REACHABLE hostiles (corner treants on ledges are
-    // skipped, never hang it). Persistent across the multi-mob fight; Optional so
-    // a stall degrades to moving on; generous timeout for the pack.
+    // Tuned to the Uldaman keeper-altar numbers (arriveRadius 30 < ClearRadius
+    // 45), NOT a huge arriveRadius. ClearRadius only fires its "no hostile -> done"
+    // gate once the tank is AT the objective; that gate ASSUMES "arrived" means
+    // "among the mobs, which are therefore loaded/reachable". A huge arriveRadius
+    // (the earlier 95) broke that: the tank "arrived" ~80yd out, the treants
+    // weren't loaded/reachable, so the gate returned DONE in 0ms and the pre-clear
+    // no-op'd (live log: "step 0 ... result 1 elapsed 0ms" then marked cleared).
+    // A moderate arriveRadius (30, still > the ~10-17yd the tank parks short of the
+    // off-mesh dais, so no travel-thrash deadlock) makes "arrived" mean the tank
+    // is genuinely in the room, so the ClearRadius engages the treants instead of
+    // instantly completing. ClearRadius-only (no UseGO); counts only REACHABLE
+    // hostiles; Persistent across the fight; Optional; generous timeout.
     out.push_back(EventBuilder(429, 11, "Clear the Warpwood entrance")
                       .Anchored(/*orderIndex, doc-only*/ 3)
-                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 80.0f,
+                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 45.0f,
                                    /*zBand*/ 20.0f)
                           .Timeout(180000)
                       .Persistent()

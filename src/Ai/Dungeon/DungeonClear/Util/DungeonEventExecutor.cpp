@@ -255,6 +255,20 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             float const r = step.radius > 0.0f ? step.radius : 50.0f;
             Unit* u = DcTargeting::NearestHostileNearPoint(bot, context, step.x, step.y,
                                                            step.z, r, step.zBand);
+            // Diagnostic: a ClearRadius that completes in ~0ms is "premature" —
+            // it found no hostile because the tank evaluated it from too far
+            // (arriveRadius too large for the design assumption that 'arrived'
+            // means 'among the mobs'). Log the gap so that's unambiguous: bot's
+            // distance to the clear centre + whether a target was found.
+            if (!u)
+            {
+                float const botToCentre =
+                    bot->GetExactDist(step.x, step.y, step.z);
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[DC:{}] ClearRadius DONE: no hostile in r={:.0f} of "
+                          "({:.0f},{:.0f},{:.0f}); botDistToCentre={:.1f}",
+                          bot->GetName(), r, step.x, step.y, step.z, botToCentre);
+            }
             return u ? StepResult::Running : StepResult::Done;
         }
 

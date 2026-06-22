@@ -600,26 +600,24 @@ namespace
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
                     // West — clear the Warpwood entrance room FIRST (event 429/11,
-                    // ClearRadius 80). Ordered first (orderOverride 3 < Gen1's 5).
-                    // arriveRadius 95 (> the 80yd ClearRadius) ON PURPOSE: the tank
-                    // "arrives" as soon as boss-nav gets it near, so it never has to
-                    // stand on the off-mesh crystal dais (the old arriveRadius-15
-                    // version thrashed trying to TRAVEL onto it), and the
-                    // at-objective action owns the tick so the clear has no
-                    // competing controller. See the matching note in DireMaulEvents.
+                    // ClearRadius 45). Ordered first (orderOverride 3 < Gen1's 5).
+                    // arriveRadius 30 (Uldaman keeper-altar numbers): big enough to
+                    // clear the parks-short of the off-mesh dais (~10-17yd) so no
+                    // travel-thrash deadlock, but NOT huge — a huge arriveRadius
+                    // makes the tank "arrive" ~80yd out where the treants aren't
+                    // loaded, so the ClearRadius gate completes in 0ms and the
+                    // pre-clear no-ops. 30 means "arrived" = actually in the room.
+                    // See the matching note in DireMaulEvents.
                     MakeObjective(OBJ(8), /*encounterIndex*/ 47, 429,
                                   "Clear the Warpwood entrance",
                                   13.0f, 277.0f, -8.0f,
-                                  /*arriveRadius*/ 95.0f, /*gateEntry*/ 0,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 11, /*orderOverride*/ 3),
                     // West — Immol'thar pylons. Southern trio (before Tendris).
-                    // The crystal objectives' arriveRadius (45) is larger than
-                    // their event's 40yd ClearRadius ON PURPOSE (same rule): it
-                    // keeps the tank "arrived" while the ClearRadius drives it
-                    // around the guard cluster, so the at-objective action keeps
-                    // the tick and nothing competes. A small arriveRadius let the
-                    // tank slip out of "arrived" mid-clear and engage-trash/Advance
-                    // competed -> deadlock.
+                    // The crystal objectives' arriveRadius (45) is moderate — big
+                    // enough to clear the parks-short distance (so no travel-thrash
+                    // deadlock) yet close enough that "arrived" means among the
+                    // guards (so the ClearRadius engages, not a 0ms no-op).
                     MakeObjective(OBJ(2), /*encounterIndex*/ 41, 429,
                                   "Destroy Demon Crystal (Generator 1)",
                                   12.94f, 277.93f, -8.93f,

@@ -439,11 +439,14 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
         << "entrance pre-clear precedes crystal generator 1";
     EXPECT_LT(BossOrderKey(*entrance), BossOrderKey(*Find(out, 11489)));
 
-    // DEADLOCK REGRESSION GUARD: every objective that carries a ClearRadius (the
-    // entrance pre-clear AND the five crystals) must have arriveRadius >= that
-    // ClearRadius. If a clear pulls the tank past arriveRadius it drops "arrived",
-    // and engage-trash/Advance compete with the at-objective action for the tick
-    // -> the live back-and-forth deadlock. Keep arrive >= clear.
+    // REGRESSION GUARD: every objective that carries a ClearRadius (the entrance
+    // pre-clear AND the five crystals) must have a MODERATE arriveRadius. Two ways
+    // it has broken live, both guarded here:
+    //   * too SMALL (< the ~10-17yd the tank parks short of an off-mesh GO dais)
+    //     -> the tank never "arrives", thrashes in travel (deadlock). Need >= 25.
+    //   * too LARGE -> the tank "arrives" far from the mobs, the ClearRadius gate
+    //     finds nothing loaded and completes in 0ms (premature no-op). Keep it
+    //     within ~ClearRadius + 20 so "arrived" means "among the mobs".
     for (uint32 obj : {8u, 2u, 3u, 4u, 5u, 6u})
     {
         DungeonBossInfo const* o = Find(out, BossRosterRegistry::ObjectiveEntry(obj));
@@ -452,9 +455,12 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
         ASSERT_NE(e, nullptr);
         for (auto const& step : e->steps)
             if (step.kind == EventStepKind::ClearRadius)
-                EXPECT_GE(o->arriveRadius, step.radius)
-                    << "OBJ" << obj << " arriveRadius (" << o->arriveRadius
-                    << ") must be >= its ClearRadius (" << step.radius << ")";
+            {
+                EXPECT_GE(o->arriveRadius, 25.0f)
+                    << "OBJ" << obj << " arriveRadius too small -> deadlock risk";
+                EXPECT_LE(o->arriveRadius, step.radius + 20.0f)
+                    << "OBJ" << obj << " arriveRadius too large -> premature 0ms clear";
+            }
     }
 }
 
