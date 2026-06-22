@@ -938,13 +938,21 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
     }
 }
 
-// There is no dedicated standalone Warpwood entrance-clear event (429/11) — that
-// unreachable dais anchor deadlocked. The entrance/guard clearing lives inside
-// the crystal events themselves (ClearRadius step), paired with a large
-// arriveRadius in the roster so it doesn't compete with the travel-to-crystal.
-TEST(DungeonEventAnchored, DireMaulWestNoStandaloneEntranceEvent)
+// The Warpwood entrance pre-clear (event 429/11) is a dedicated ClearRadius-only
+// Anchored objective ordered first. It carries no UseGO (clear the room, that's
+// it). Its roster arriveRadius (95) is > this ClearRadius (80) — the rule that
+// stops the clear competing with travel — verified in TestBossRoster.
+TEST(DungeonEventAnchored, DireMaulWestEntrancePreClearShape)
 {
-    EXPECT_EQ(DungeonEventRegistry::Find(429, 11), nullptr);
+    DungeonEvent const* e = DungeonEventRegistry::Find(429, 11);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_TRUE(e->persistent);
+    EXPECT_FALSE(e->required);  // Optional
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_GT(e->steps[0].radius, 40.0f);      // covers the entrance room
+    EXPECT_GT(e->steps[0].timeoutMs, 30000u);  // generous for the pack
 }
 
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path

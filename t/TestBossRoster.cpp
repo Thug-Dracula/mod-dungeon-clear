@@ -428,15 +428,23 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
     EXPECT_LT(BossOrderKey(*wp),
               BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(6))));
 
-    // There is no separate entrance-clear objective (OBJ 8) — its unreachable
-    // dais anchor deadlocked; the clearing lives inside the crystal events.
-    EXPECT_EQ(Find(out, BossRosterRegistry::ObjectiveEntry(8)), nullptr);
+    // The Warpwood entrance pre-clear (OBJ 8, event 11) exists and is ordered
+    // FIRST — before every pylon and Tendris — so the entrance room is swept on
+    // the way in.
+    DungeonBossInfo const* entrance = Find(out, BossRosterRegistry::ObjectiveEntry(8));
+    ASSERT_NE(entrance, nullptr);
+    EXPECT_EQ(entrance->eventId, 11u);
+    EXPECT_LT(BossOrderKey(*entrance),
+              BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))))
+        << "entrance pre-clear precedes crystal generator 1";
+    EXPECT_LT(BossOrderKey(*entrance), BossOrderKey(*Find(out, 11489)));
 
-    // DEADLOCK REGRESSION GUARD: every crystal objective's arriveRadius must be
-    // >= its event's ClearRadius. If a clear pulls the tank past arriveRadius it
-    // drops "arrived", and engage-trash/Advance compete with the at-objective
-    // action for the tick -> the live back-and-forth deadlock. Keep arrive >= clear.
-    for (uint32 obj : {2u, 3u, 4u, 5u, 6u})
+    // DEADLOCK REGRESSION GUARD: every objective that carries a ClearRadius (the
+    // entrance pre-clear AND the five crystals) must have arriveRadius >= that
+    // ClearRadius. If a clear pulls the tank past arriveRadius it drops "arrived",
+    // and engage-trash/Advance compete with the at-objective action for the tick
+    // -> the live back-and-forth deadlock. Keep arrive >= clear.
+    for (uint32 obj : {8u, 2u, 3u, 4u, 5u, 6u})
     {
         DungeonBossInfo const* o = Find(out, BossRosterRegistry::ObjectiveEntry(obj));
         ASSERT_NE(o, nullptr);
@@ -445,7 +453,7 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
         for (auto const& step : e->steps)
             if (step.kind == EventStepKind::ClearRadius)
                 EXPECT_GE(o->arriveRadius, step.radius)
-                    << "crystal OBJ" << obj << " arriveRadius (" << o->arriveRadius
+                    << "OBJ" << obj << " arriveRadius (" << o->arriveRadius
                     << ") must be >= its ClearRadius (" << step.radius << ")";
     }
 }

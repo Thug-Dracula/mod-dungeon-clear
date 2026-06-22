@@ -187,15 +187,33 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                           .Build());
     }
 
-    // NOTE: there is intentionally no dedicated "clear the Warpwood entrance"
-    // objective/step. Two attempts failed: (1) a standalone ClearRadius anchored
-    // on the crystal dais couldn't be reached (off-mesh, thrashed forever); (2)
-    // folding a ClearRadius into generator 1 made the crystal objective fight
-    // itself — engage-the-treants vs run-to-the-crystal — a live deadlock. The
-    // entrance treants are hostile and handled by the ordinary engage-trash flow
-    // as the tank walks in to generator 1. If a specific entrance pack still needs
-    // forcing, it must be a SEPARATE pre-objective at a verified-walkable anchor,
-    // not layered onto the crystal click.
+    // --- Dire Maul West (map 429) — Warpwood entrance pre-clear ------------
+    // The square entrance room is packed with Warpwood / Petrified Treants that
+    // pull as a group; clear them before pushing on to Tendris. A dedicated
+    // ClearRadius pre-clear (BossRosterRegistry OBJ(8), ordered FIRST), NOT a
+    // step on the crystal click.
+    //
+    // This is the third (working) attempt. Earlier ones failed for two reasons,
+    // both now fixed: (1) the standalone anchor on the crystal dais "couldn't be
+    // reached" — but that was an arriveRadius too small (15) so the tank kept
+    // trying to TRAVEL onto the off-mesh dais and thrashed; (2) folding it into
+    // the crystal made clear-vs-click compete. The fix for both is the same rule
+    // (see Uldaman): arriveRadius (95) >= ClearRadius (80). With a large
+    // arriveRadius the tank "arrives" the moment boss-nav gets it anywhere near
+    // (it never has to stand ON the dais), so the at-objective action owns the
+    // tick and its ClearRadius drives the sweep — no travel-to-anchor thrash, no
+    // competing controller. ClearRadius-only (no UseGO), so there is no reach-the-
+    // GO problem. Counts only REACHABLE hostiles (corner treants on ledges are
+    // skipped, never hang it). Persistent across the multi-mob fight; Optional so
+    // a stall degrades to moving on; generous timeout for the pack.
+    out.push_back(EventBuilder(429, 11, "Clear the Warpwood entrance")
+                      .Anchored(/*orderIndex, doc-only*/ 3)
+                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 80.0f,
+                                   /*zBand*/ 20.0f)
+                          .Timeout(180000)
+                      .Persistent()
+                      .Optional()
+                      .Build());
 
     // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
     // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)
