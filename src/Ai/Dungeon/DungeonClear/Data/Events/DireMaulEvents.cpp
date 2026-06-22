@@ -138,34 +138,48 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // reaches Immol'thar). Optional: a misfire degrades to the tank standing at
     // the still-shielded boss until the pylon is dealt with.
     //
-    // The event does ONE thing: go to the pylon and click it. It deliberately
-    // does NOT carry a ClearRadius "room clear" step. An earlier version did, to
-    // sweep the guarding elementals / entrance treants — but a point-anchored
-    // ClearRadius is a SECOND controller (engage that mob) that fights the
-    // travel-to-the-crystal controller: whenever the tank wasn't firmly "arrived"
-    // (it parks ~10yd out, just past the arrive radius), engage-trash pulled it
-    // toward a treant while Advance pulled it toward the crystal — the live
-    // back-and-forth deadlock. Trash the bot runs into on the way is handled by
-    // the normal engage-trash flow (kill what aggros, then advance), exactly as
-    // everywhere else in the dungeon; that flow takes the tick cleanly because it
-    // is not competing with a second move-to-a-point intent layered on the same
-    // objective.
+    // Each event clears the crystal's guards/treants THEN clicks it — the proven
+    // Uldaman keeper-altar pattern (ClearRadius -> MoveTo -> UseGO), NOT a bare
+    // UseGO. The trick that makes "clear AND click" not deadlock is matching the
+    // objective's arriveRadius to the ClearRadius (BossRosterRegistry sets the
+    // crystal objectives' arriveRadius to 45, > this 40yd ClearRadius): while the
+    // ClearRadius drives the tank around the clear zone chasing guards, the tank
+    // stays within arriveRadius so the at-objective action keeps OWNING the tick
+    // (relevance 30) and runs the event's steps in sequence. A small arriveRadius
+    // (the old 10 vs a 50-70 ClearRadius) let the tank slip out of "arrived"
+    // mid-clear, so engage-trash/Advance competed for the tick — the live
+    // back-and-forth deadlock. Steps:
+    //   0) ClearRadius(40): kill the ~7-8 elemental guards (Arcane Aberration
+    //      11480 / Mana Remnant 11483; the Remnants Blink ~20yd, so 40 keeps a
+    //      blinker in the kill zone) plus any treants within 40yd (at generator 1,
+    //      the Warpwood entrance pack). Counts only REACHABLE hostiles, so a mob
+    //      blinked somewhere unreachable can't hang it. 120s timeout backstop.
+    //   1) MoveTo the crystal (radius 6): close the last yards via a fresh HopTo,
+    //      so a long-range route that truncated short of the dais still reaches.
+    //   2) UseGO: click the generator (sets the pylon bit ~5s later).
+    //   3) Wait: cover that ~5s SmartAI activation delay before advancing.
+    // Persistent so a combat tick-gap during the guard fight can't rewind to step
+    // 0 and re-click. Optional so a stall degrades to moving on.
     //
     // NOTE (verify live): the generator trigger is SMART_EVENT_UPDATE (a timer),
     // not an explicit on-use event. If the generators auto-activate on spawn
     // rather than on click, the UseGO is a harmless no-op (the bit is idempotent).
-    struct PylonObjective { uint32 eventId; uint32 goEntry; char const* name; };
+    struct PylonObjective { uint32 eventId; uint32 goEntry; float x, y, z; char const* name; };
     static constexpr PylonObjective kPylons[] = {
-        { 4, 177259, "Destroy Demon Crystal (Generator 1)" },
-        { 5, 177257, "Destroy Demon Crystal (Generator 2)" },
-        { 6, 177258, "Destroy Demon Crystal (Generator 3)" },
-        { 7, 179504, "Destroy Demon Crystal (Generator 4)" },
-        { 8, 179505, "Destroy Demon Crystal (Generator 5)" },
+        { 4, 177259,   12.94f, 277.93f,  -8.93f, "Destroy Demon Crystal (Generator 1)" },
+        { 5, 177257,  -92.35f, 442.67f,  28.55f, "Destroy Demon Crystal (Generator 2)" },
+        { 6, 177258,  121.22f, 429.09f,  28.45f, "Destroy Demon Crystal (Generator 3)" },
+        { 7, 179504,   78.14f, 737.40f, -24.62f, "Destroy Demon Crystal (Generator 4)" },
+        { 8, 179505, -155.43f, 734.17f, -24.62f, "Destroy Demon Crystal (Generator 5)" },
     };
     for (PylonObjective const& pyl : kPylons)
     {
         out.push_back(EventBuilder(429, pyl.eventId, pyl.name)
                           .Anchored(/*orderIndex, doc-only*/ pyl.eventId)
+                          .ClearRadius(pyl.x, pyl.y, pyl.z, /*radius*/ 40.0f,
+                                       /*zBand*/ 15.0f)
+                              .Timeout(120000)
+                          .MoveTo(pyl.x, pyl.y, pyl.z, /*radius*/ 6.0f)
                           .UseGO(pyl.goEntry, /*searchRadius*/ 12.0f)
                           .Wait(/*pylon activation delay*/ 6000)
                           .Persistent()

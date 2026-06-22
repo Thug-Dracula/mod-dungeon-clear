@@ -923,33 +923,28 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
         EXPECT_EQ(e->activation, EventActivation::Anchored);
         EXPECT_TRUE(e->persistent);
         EXPECT_FALSE(e->required);  // Optional
-        // The crystal objective does ONE thing — click the pylon — with NO
-        // ClearRadius "room clear" step (that second controller fought the
-        // travel-to-crystal and deadlocked). Trash is handled by engage-trash.
-        ASSERT_EQ(e->steps.size(), 2u);
-        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
-        EXPECT_EQ(e->steps[0].goEntry, p.goEntry);
-        EXPECT_EQ(e->steps[1].kind, EventStepKind::Wait);
-        EXPECT_GT(e->steps[1].durationMs, 0u);
+        // Uldaman keeper pattern: clear the guards, close to the crystal, click,
+        // wait. ClearRadius first (kill guards/treants), then MoveTo (reach the
+        // dais), then UseGO (click), then Wait (activation delay).
+        ASSERT_EQ(e->steps.size(), 4u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+        EXPECT_GT(e->steps[0].radius, 15.0f);      // covers guards + blink hop
+        EXPECT_GT(e->steps[0].timeoutMs, 30000u);  // generous for a caster pack
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::MoveTo);
+        EXPECT_EQ(e->steps[2].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[2].goEntry, p.goEntry);
+        EXPECT_EQ(e->steps[3].kind, EventStepKind::Wait);
+        EXPECT_GT(e->steps[3].durationMs, 0u);
     }
 }
 
-// There is no dedicated Warpwood entrance-clear event (429/11), and the crystal
-// objectives carry NO ClearRadius step — both the standalone entrance anchor and
-// the ClearRadius-folded-into-generator-1 approaches deadlocked (unreachable
-// anchor / room-clear-vs-travel competition). The crystals are click-only.
-TEST(DungeonEventAnchored, DireMaulWestNoEntranceClearOrCrystalSweep)
+// There is no dedicated standalone Warpwood entrance-clear event (429/11) — that
+// unreachable dais anchor deadlocked. The entrance/guard clearing lives inside
+// the crystal events themselves (ClearRadius step), paired with a large
+// arriveRadius in the roster so it doesn't compete with the travel-to-crystal.
+TEST(DungeonEventAnchored, DireMaulWestNoStandaloneEntranceEvent)
 {
     EXPECT_EQ(DungeonEventRegistry::Find(429, 11), nullptr);
-
-    for (uint32 id : {4u, 5u, 6u, 7u, 8u})
-    {
-        DungeonEvent const* e = DungeonEventRegistry::Find(429, id);
-        ASSERT_NE(e, nullptr);
-        for (auto const& step : e->steps)
-            EXPECT_NE(step.kind, EventStepKind::ClearRadius)
-                << "crystal event " << id << " must not carry a ClearRadius";
-    }
 }
 
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path

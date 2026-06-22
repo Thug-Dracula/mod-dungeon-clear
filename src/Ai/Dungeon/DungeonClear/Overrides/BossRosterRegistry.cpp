@@ -606,27 +606,31 @@ namespace
                     // off-line and could not generate a rejoin path to the point
                     // (it sits on the dais / GO collision, ~1yd above the real
                     // floor), so it thrashed (posStuck/resnap) forever. The
-                    // entrance treants are instead swept by generator 1's own
-                    // ClearRadius (event 429/4), which runs from the proven-
-                    // reachable crystal anchor.
+                    // entrance treants are instead swept by the generators' own
+                    // ClearRadius (events 429/4..8). arriveRadius is 45 — larger
+                    // than the event's 40yd ClearRadius ON PURPOSE: it keeps the
+                    // tank "arrived" (so the at-objective action keeps the tick)
+                    // while the ClearRadius drives it around the clear zone. A
+                    // small arriveRadius let the tank slip out of "arrived"
+                    // mid-clear and engage-trash/Advance competed -> deadlock.
                     MakeObjective(OBJ(2), /*encounterIndex*/ 41, 429,
                                   "Destroy Demon Crystal (Generator 1)",
                                   12.94f, 277.93f, -8.93f,
-                                  /*arriveRadius*/ 10.0f, /*gateEntry*/ 0,
+                                  /*arriveRadius*/ 45.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 4, /*orderOverride*/ 5),
                     MakeObjective(OBJ(3), /*encounterIndex*/ 42, 429,
                                   "Destroy Demon Crystal (Generator 2)",
                                   -92.35f, 442.67f, 28.55f,
-                                  10.0f, 0, 0, /*eventId*/ 5, /*orderOverride*/ 6),
+                                  45.0f, 0, 0, /*eventId*/ 5, /*orderOverride*/ 6),
                     MakeObjective(OBJ(4), /*encounterIndex*/ 43, 429,
                                   "Destroy Demon Crystal (Generator 3)",
                                   121.22f, 429.09f, 28.45f,
-                                  10.0f, 0, 0, /*eventId*/ 6, /*orderOverride*/ 7),
+                                  45.0f, 0, 0, /*eventId*/ 6, /*orderOverride*/ 7),
                     // West — northern pair (by Immol'thar's prison, after Kalendris).
                     MakeObjective(OBJ(5), /*encounterIndex*/ 44, 429,
                                   "Destroy Demon Crystal (Generator 4)",
                                   78.14f, 737.40f, -24.62f,
-                                  10.0f, 0, 0, /*eventId*/ 7, /*orderOverride*/ 40),
+                                  45.0f, 0, 0, /*eventId*/ 7, /*orderOverride*/ 40),
                     // Detour waypoint between the two northern pylons. Immol'thar's
                     // force field (GO 179503) is a ~83yd-radius dome centred on him
                     // (-39,814) — the ring of 18 imprisoned Highborne Summoners sits
@@ -646,7 +650,7 @@ namespace
                     MakeObjective(OBJ(6), /*encounterIndex*/ 45, 429,
                                   "Destroy Demon Crystal (Generator 5)",
                                   -155.43f, 734.17f, -24.62f,
-                                  10.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 42),
+                                  45.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 42),
                 };
                 t.push_back(std::move(p));
             }
