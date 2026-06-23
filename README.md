@@ -47,13 +47,6 @@ While enabled, the tank bot handles a run end to end:
 2. Re-run CMake and rebuild the worldserver (`-DMODULES=static`).
 3. Optionally copy `conf/mod_dungeon_clear.conf.dist` to
    `mod_dungeon_clear.conf`.
-4. To enable chat keywords and follower behaviour for self-bots and mid-session
-   bots, add to your deployed `playerbots.conf`:
-
-   ```
-   AiPlayerbot.NonCombatStrategies          = "+dungeon clear"
-   AiPlayerbot.RandomBotNonCombatStrategies = "+dungeon clear"
-   ```
 
 ## Usage
 
