@@ -92,6 +92,15 @@ protected:
     // final boss exists, so the caller falls through to Drive and the step's
     // completion gate latches the objective. `prog` carries the watchdog clock.
     bool DriveEscortCreature(EventStep const& step, DungeonEventProgress& prog);
+
+    // Drive a DropInHole step (Wailing Caverns' return-fall off Verdan's shelf):
+    // glide the leader a few yards OUT over the open hole-mouth with a raw spline
+    // (a MovePoint would clamp it back onto the shelf edge), then MoveFall() it
+    // pure-vertical into the water below. Owns the tick (returns true) the whole
+    // way down so the at-objective Hold can't cancel the off-mesh nudge spline;
+    // returns false once the leader is on the deep floor, so the caller falls
+    // through to Drive and RunStep's gate pulls the followers down + latches.
+    bool DriveDropInHole(EventStep const& step);
 };
 
 class DungeonClearAdvanceAction : public DcMovementAction

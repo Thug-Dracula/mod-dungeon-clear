@@ -423,6 +423,48 @@ bool DcLeaderSignal::IsInPausedDungeonClearRun(Player* bot)
     return leaderCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
            leaderCtx->GetValue<bool>("dungeon clear paused")->Get();
 }
+bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader runs the drop; only followers hold for it
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get())
+        return false;
+
+    // The leader's active anchored-event step must be a DropInHole.
+    std::optional<DungeonBossInfo> const next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
+        return false;
+
+    DungeonEvent const* ev = DungeonEventRegistry::Find(next->mapId, next->eventId);
+    if (!ev)
+        return false;
+
+    DungeonEventProgress const& prog =
+        ctx->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+    if (prog.eventId != ev->id || prog.stepIndex >= ev->steps.size())
+        return false;
+
+    // Hold for the WHOLE time the DropInHole step is active — including the landing
+    // tick, on which the RunStep gate teleports the party down and advances the
+    // step in one go. Gating on "not yet landed" instead would open a one-tick race:
+    // a follower ticking after the leader lands but before the same-tick teleport
+    // would read "not dropping" and try to follow the just-landed leader, which is
+    // still across the un-pathable gap — clipping for that tick. The step stops
+    // being active (stepIndex advances) in the same tick the teleport fires, so the
+    // hold releases exactly when the followers are already down on the landing.
+    return ev->steps[prog.stepIndex].kind == EventStepKind::DropInHole;
+}
 bool DcLeaderSignal::IsPullPhaseHolding(uint32 phase)
 {
     return phase == static_cast<uint32>(DcPullPhase::Forming) ||

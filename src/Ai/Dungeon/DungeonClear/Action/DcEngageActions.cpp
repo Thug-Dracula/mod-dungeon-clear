@@ -949,6 +949,70 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
     return true;
 }
 
+bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
+{
+    if (!bot)
+        return false;
+
+    // Already down on the deep floor -> hand back. The caller drops through to
+    // Drive, whose RunStep gate pulls the stranded followers and latches Done.
+    if (DungeonEventExecutor::IsOnDropLanding(bot, step))
+        return false;
+
+    MotionMaster* mm = bot->GetMotionMaster();
+
+    // Mid-fall: the pure-vertical MoveFall is in flight (its EFFECT generator is
+    // still running). Let gravity finish — keep owning the tick so the at-objective
+    // Hold can't interrupt the descent. Test the GENERATOR, not MOVEMENTFLAG_FALLING
+    // (a server bot never clears that flag, so it would read "falling" forever).
+    bool const falling =
+        mm && mm->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
+    if (falling)
+        return true;
+
+    SetPhase(context, "objective");
+
+    // How close (2D) the leader must be to the over-hole nudge target before we
+    // commit the fall — tight, so the column below really is the open shaft (the
+    // landing X/Y), not the shelf or the mid-shaft ledge a yard short of it.
+    constexpr float DC_DROP_OVERHOLE_RADIUS = 2.5f;
+    float const overDist2d = bot->GetExactDist2d(step.x, step.y);
+
+    // Settled OVER the open hole-mouth at shelf height -> commit the drop. MoveFall
+    // searches straight down (vmap) and falls to the first floor it finds; because
+    // we are over the open shaft (not the lip), that floor is the deep water, not
+    // the intermediate ledge. Pure-vertical => no horizontal travel => no wall clip.
+    if (overDist2d <= DC_DROP_OVERHOLE_RADIUS && !bot->isMoving())
+    {
+        mm->MoveFall();
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} DropInHole: MoveFall from ({:.1f},{:.1f},{:.1f})",
+                 bot->GetName(), bot->GetPositionX(), bot->GetPositionY(),
+                 bot->GetPositionZ());
+        return true;
+    }
+
+    // Still on/at the lip. Glide OUT over the open hole-mouth with a raw spline:
+    // MoveSplinePath feeds the two points straight to an EscortMovementGenerator
+    // (no per-point navmesh path generation), so it leaves the mesh edge instead
+    // of clamping to it. The leg is a few yards of OPEN AIR above the shaft mouth
+    // (no wall there — it's the opening), held at shelf Z; the MoveFall above then
+    // takes over. Re-issue only when settled, so a launched glide isn't restarted.
+    if (!bot->isMoving())
+    {
+        Movement::PointsArray pts;
+        pts.push_back(G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(),
+                                   bot->GetPositionZ()));
+        pts.push_back(G3D::Vector3(step.x, step.y, step.z));
+        mm->MoveSplinePath(&pts, FORCED_MOVEMENT_NONE);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} DropInHole: glide to hole-mouth "
+                 "({:.1f},{:.1f},{:.1f})",
+                 bot->GetName(), step.x, step.y, step.z);
+    }
+    return true;
+}
+
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
@@ -1018,6 +1082,17 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             else if (step.kind == EventStepKind::EscortCreature)
             {
                 if (DriveEscortCreature(step, prog))
+                    return true;
+            }
+            // DropInHole: the step OWNS the tick while the leader glides out over
+            // the hole-mouth and falls. Returning here SKIPS the StopBot(Hold)
+            // below, which would otherwise cancel the off-mesh nudge spline every
+            // tick and pin the leader on the lip (the prior attempts' failure).
+            // DriveDropInHole returns false once landed, so we fall through to
+            // Drive and RunStep's gate pulls the followers down + latches Done.
+            else if (step.kind == EventStepKind::DropInHole)
+            {
+                if (DriveDropInHole(step))
                     return true;
             }
         }

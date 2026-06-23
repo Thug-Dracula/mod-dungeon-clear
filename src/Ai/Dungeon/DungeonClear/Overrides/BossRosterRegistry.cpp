@@ -463,12 +463,17 @@ namespace
             // escorts the Disciple, he summons Mutanus, the escort completion gate
             // latches, and the picker hands over the same-key Mutanus boss next.
             //
-            // NOTE (deferred — see the plan §6.2): the RETURN-FALL from the
-            // Serpentis/Verdan shelf back down to the lower caverns may need its own
-            // Jump objective (the shelf is a one-way drop in). Its lip/landing coords
-            // require in-game island-dumper probing, so it is intentionally not wired
-            // here yet; if the navmesh routes the party off the shelf on its own the
-            // escort is reachable without it.
+            // (3) The RETURN-FALL: after Verdan the escort objective is back DOWN
+            // in the lower caverns, reachable only by dropping through a narrow
+            // vertical hole behind Verdan into the water. An OBJECTIVE anchor at the
+            // LIP (eventId 3, ordering key 7) drives the tank there; its DropInHole
+            // event glides the leader over the open shaft mouth and MoveFall()s it
+            // pure-vertical into the water (the lip column stacks shelf/-58 ledge/
+            // -105.8 floor — a blind drop catches the ledge; see WailingCavernsEvents
+            // and tools/probe_navmesh.py). Ordering key 7 with objective-before-boss
+            // and insertion-before-escort places it Verdan(6) -> hole-drop -> escort
+            // -> Mutanus; it latches by entry on event completion (objectives carry
+            // no kill-bit, so sharing key 7 with Mutanus is harmless).
             {
                 BossRosterPatch p;
                 p.mapId = 43;
@@ -484,6 +489,12 @@ namespace
                     MakeObjective(OBJ(1), /*encounterIndex*/ 5, 43, "Drop to Lord Serpentis",
                                   -290.65567f, -3.8297224f, -58.30473f, /*arriveRadius*/ 6.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+                    // Return-fall off Verdan's shelf (key 7, BEFORE the escort by
+                    // insertion order; see the (3) note above). Backed by event 3.
+                    MakeObjective(OBJ(3), /*encounterIndex*/ 7, 43,
+                                  "Drop down to the lower caverns",
+                                  -55.89f, 44.32f, -29.01f, /*arriveRadius*/ 6.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 3),
                     MakeObjective(OBJ(2), /*encounterIndex*/ 7, 43,
                                   "Escort the Disciple of Naralex",
                                   -134.97f, 125.40f, -78.09f, /*arriveRadius*/ 18.0f,

@@ -69,6 +69,25 @@ enum class EventStepKind : uint8
                              // watchdog); RunStep here is the pure completion gate.
                              // Anchored+Persistent only (the escort spans several
                              // combat gaps that would rewind a non-persistent event).
+    DropInHole,              // DROP the party down a narrow vertical hole into the
+                             // water below (Wailing Caverns' return-fall off Verdan's
+                             // shelf to reach the Disciple). A ground move clamps to
+                             // the navmesh edge and a ballistic Jump (Jump kind) clips
+                             // the shaft wall — so this glides the leader a few yards
+                             // OUT over the open hole-mouth (raw spline, off-mesh),
+                             // then MoveFall()s it PURE-VERTICAL into the water (no
+                             // horizontal travel => no wall clip; clears the mid-shaft
+                             // ledge a lip-MoveFall would catch). Followers can't
+                             // reproduce the off-mesh nudge, so they teleport to the
+                             // landing (the sanctioned one-way-drop pattern). `x,y,z`
+                             // is the over-hole nudge target; `landX,landY,landZ` the
+                             // deep-floor landing.
+                             // DRIVEN by the action (DriveDropInHole owns the leader's
+                             // glide+fall so the at-objective Hold can't cancel the
+                             // off-mesh spline); RunStep here pulls the followers and
+                             // gates Done once the leader is on the deep floor.
+                             // Anchored+Persistent (the drop is one-way — like the
+                             // Serpentis Jump, the bot can't path back up).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -148,6 +167,13 @@ struct EventStep
     int32  escortDoneBit{-1};       // completion encounter bit, as a backstop to the
                                     // grid scan (set once the boss is killed even
                                     // after its corpse despawns). -1 => bit unused.
+
+    // --- DropInHole only --------------------------------------------------
+    // The deep-floor LANDING the leader falls onto and the followers teleport to.
+    // (`x,y,z` is the over-hole nudge target the leader glides to before MoveFall.)
+    float  landX{0.0f};
+    float  landY{0.0f};
+    float  landZ{0.0f};
 
     // MoveTo garrison gate, instance-data variant. When instanceDataId >= 0 the
     // step holds at (x,y,z) until the map's InstanceScript GetData(instanceDataId)
@@ -340,6 +366,15 @@ public:
                                  uint32 doneEntry, int32 doneBit,
                                  float standoff = 5.0f, float threatRadius = 18.0f,
                                  float threatZBand = 20.0f, float searchRadius = 80.0f);
+    // Drop the party down a narrow vertical hole (see EventStepKind::DropInHole).
+    // (overX,overY,overZ) is the over-hole nudge target the leader glides to (a
+    // point whose column is open straight to the deep floor — NOT the lip, whose
+    // column catches a mid-shaft ledge); (landX,landY,landZ) the deep-floor landing
+    // the leader falls onto and the followers teleport to. The preceding step must
+    // settle the leader on the lip (a short MoveTo), exactly like the Serpentis
+    // Jump's MoveTo→Jump pair.
+    EventBuilder& DropInHole(float overX, float overY, float overZ,
+                             float landX, float landY, float landZ);
 
     DungeonEvent Build() const { return _ev; }
 

@@ -262,6 +262,19 @@ EventBuilder& EventBuilder::EscortCreature(uint32 escortee, int32 startGossipOpt
     return *this;
 }
 
+EventBuilder& EventBuilder::DropInHole(float overX, float overY, float overZ,
+                                       float landX, float landY, float landZ)
+{
+    EventStep& s = Add(EventStepKind::DropInHole);
+    s.x = overX;
+    s.y = overY;
+    s.z = overZ;
+    s.landX = landX;
+    s.landY = landY;
+    s.landZ = landZ;
+    return *this;
+}
+
 // --- The event table ------------------------------------------------------
 // The rows themselves live one-file-per-dungeon under Data/Events/, each
 // exposing a Register<Dungeon>Events appender (declared in DungeonEventTables.h).

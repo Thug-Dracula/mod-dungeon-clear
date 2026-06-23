@@ -700,8 +700,9 @@ TEST(BossRosterRegistryTest, WailingCavernsEscortObjectiveSortsBeforeMutanus)
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(43, base);
 
     DungeonBossInfo const* escort = nullptr;
+    DungeonBossInfo const* drop = nullptr;
     DungeonBossInfo const* mutanus = Find(out, 3654);
-    int escortIdx = -1, mutanusIdx = -1, verdanIdx = -1;
+    int escortIdx = -1, dropIdx = -1, mutanusIdx = -1, verdanIdx = -1;
     for (size_t i = 0; i < out.size(); ++i)
     {
         if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 2)
@@ -709,11 +710,17 @@ TEST(BossRosterRegistryTest, WailingCavernsEscortObjectiveSortsBeforeMutanus)
             escort = &out[i];
             escortIdx = static_cast<int>(i);
         }
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 3)
+        {
+            drop = &out[i];
+            dropIdx = static_cast<int>(i);
+        }
         if (out[i].entry == 3654) mutanusIdx = static_cast<int>(i);
         if (out[i].entry == 5775) verdanIdx = static_cast<int>(i);
     }
 
     ASSERT_NE(escort, nullptr);
+    ASSERT_NE(drop, nullptr);
     ASSERT_NE(mutanus, nullptr);
 
     // Mutanus carries his real kill-bit 7 and is a combat boss.
@@ -725,7 +732,14 @@ TEST(BossRosterRegistryTest, WailingCavernsEscortObjectiveSortsBeforeMutanus)
     EXPECT_EQ(escort->encounterIndex, 7u);
     EXPECT_FLOAT_EQ(escort->arriveRadius, 18.0f);
 
-    // Order: Verdan (6) -> escort objective (7, objective) -> Mutanus (7, boss).
-    EXPECT_LT(verdanIdx, escortIdx);
+    // The return-fall objective wires event 3 and also keys at 7 (an objective's
+    // index is an ordering hint; it latches by entry, so sharing Mutanus's bit is
+    // harmless). It sorts BEFORE the escort by insertion order (stable_sort).
+    EXPECT_EQ(drop->encounterIndex, 7u);
+    EXPECT_EQ(drop->kind, DungeonAnchorKind::Objective);
+
+    // Order: Verdan (6) -> hole-drop (7, obj) -> escort (7, obj) -> Mutanus (7, boss).
+    EXPECT_LT(verdanIdx, dropIdx);
+    EXPECT_LT(dropIdx, escortIdx);
     EXPECT_LT(escortIdx, mutanusIdx);
 }

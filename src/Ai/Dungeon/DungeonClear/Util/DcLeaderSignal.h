@@ -54,6 +54,19 @@ public:
     // IsAnyPartyMemberLooting true — which stalls the tank.
     static bool IsInPausedDungeonClearRun(Player* bot);
 
+    // True when `bot`'s elected leader is mid DropInHole — gliding off the ledge
+    // and falling down a narrow one-way hole the followers CANNOT path (Wailing
+    // Caverns' return-fall off Verdan's shelf). A follower's MoveFollow toward the
+    // now-far-below tank can't find a navmesh route and produces a degenerate path
+    // that clips the follower straight down through the hole wall; while this is
+    // true the follow-tank action HOLDS the follower at the ledge top instead. The
+    // leader teleports the whole party to the landing once it lands (the DropInHole
+    // RunStep gate), at which point this flips false and the party follows again.
+    // Derived live from the leader's event progress (the active step is a
+    // DropInHole and the leader has not yet landed) — no manual flag to go stale.
+    // False for the leader itself and off runs. Pass any group member.
+    static bool IsLeaderDroppingInHole(Player* bot);
+
     // --- Advanced pulls -----------------------------------------------------
     // True for the "holding" pull phases (Forming/Advancing/Returning) during
     // which the party stays passive and camped; false for Idle/Engage.

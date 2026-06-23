@@ -93,6 +93,13 @@ public:
     static StepResult RunStep(Player* bot, AiObjectContext* context,
                               EventStep const& step, DungeonEventProgress& prog, uint32 nowMs);
 
+    // True once the leader has fallen onto a DropInHole step's deep-floor landing
+    // (settled at/below landing Z and no longer falling). Shared by RunStep's gate
+    // and the action's DriveDropInHole so the "still dropping vs. landed" decision
+    // is single-sourced. Z-based: the MoveFall is pure-vertical, so the leader's
+    // X/Y is already over the landing — only the descent has to finish.
+    static bool IsOnDropLanding(Player* bot, EventStep const& step);
+
     // IMPURE: drive the gossip OPCODES to open `npc`'s menu and select `option`,
     // returning true once the select has been sent (false while the menu/option
     // is not yet populated). Shared by the Gossip step and the EscortCreature

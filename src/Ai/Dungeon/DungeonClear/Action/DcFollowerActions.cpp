@@ -94,6 +94,27 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         return false;
     }
 
+    // Leader is dropping down a narrow one-way hole the followers can't path
+    // (Wailing Caverns' return-fall off Verdan's shelf). HOLD here at the ledge
+    // top instead of following: a MoveFollow toward the now-far-below tank finds
+    // no navmesh route and produces a degenerate path that clips the follower
+    // straight down through the hole wall. StopBot(Hold) tears down any follow
+    // generator already installed (otherwise it keeps driving the clip). The
+    // leader teleports the whole party to the landing the instant it lands (the
+    // DropInHole RunStep gate), so the right behavior until then is to stand
+    // still. Keep the teardown/orphan bookkeeping live so a generator we installed
+    // is still cancelled when the DC tank later goes away.
+    if (DcLeaderSignal::IsLeaderDroppingInHole(bot))
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        followedTank = tank->GetGUID();
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] follow-tank: leader dropping down the hole -> holding at "
+                  "the ledge top until it lands", bot->GetName());
+        return true;
+    }
+
     // Loot yield (with commit-timeout). Followers run ONLY this action while DC
     // is active (their own DC is never enabled — `dc on` is tank-only — so the
     // advance/engage triggers are all inactive for them; follow-tank, relevance

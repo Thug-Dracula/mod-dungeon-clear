@@ -541,6 +541,38 @@ TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
     EXPECT_FLOAT_EQ(e->steps[1].radius, 5.0f);
 }
 
+// Wailing Caverns return-fall (event 3): off Verdan's shelf down the narrow hole
+// to the lower caverns. Settle on the lip, then DropInHole — glide over the open
+// shaft mouth and MoveFall pure-vertical into the water. Persistent (the drop is
+// one-way; a rewind would walk back to the now-unreachable lip).
+TEST(DungeonEventRegistryTest, WailingCavernsReturnFallEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(43, 3);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 7u);  // after Verdan (6), before the escort (also 7)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 2u);
+
+    // 1. settle on the lip (so stepIndex reaches 1, the persistence sticky).
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, -55.89f);
+    EXPECT_FLOAT_EQ(e->steps[0].radius, 4.0f);
+
+    // 2. drop: x/y/z is the over-hole nudge target; landX/Y/Z the deep-floor
+    //    landing the leader falls onto and the followers teleport to.
+    EventStep const& drop = e->steps[1];
+    EXPECT_EQ(drop.kind, EventStepKind::DropInHole);
+    EXPECT_FLOAT_EQ(drop.x, -49.5f);
+    EXPECT_FLOAT_EQ(drop.y, 47.6f);
+    EXPECT_FLOAT_EQ(drop.z, -29.0f);
+    EXPECT_FLOAT_EQ(drop.landX, -49.5f);
+    EXPECT_FLOAT_EQ(drop.landY, 47.6f);
+    EXPECT_FLOAT_EQ(drop.landZ, -105.83f);
+}
+
 // Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
 // (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
 // before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead

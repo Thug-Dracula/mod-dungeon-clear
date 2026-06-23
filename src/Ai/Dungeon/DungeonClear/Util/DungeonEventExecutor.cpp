@@ -115,6 +115,25 @@ namespace
     }
 }
 
+bool DungeonEventExecutor::IsOnDropLanding(Player* bot, EventStep const& step)
+{
+    if (!bot)
+        return false;
+    MotionMaster* mm = bot->GetMotionMaster();
+    // The MoveFall spline runs in an EFFECT_MOTION_TYPE generator that POPS the
+    // moment the spline reaches the floor — a reliable, server-managed "the fall
+    // FINISHED" signal, so we fire only once the bot is actually at the bottom (not
+    // mid-shaft, which teleported the party into the walls). Do NOT also test
+    // MOVEMENTFLAG_FALLING: a server bot has no client to send the fall-land packet
+    // that clears it, so it stays stuck on and would wedge this gate forever (the
+    // party strands up top and the tank dies — the first observed bug). Require the
+    // bot to also be well below the hole mouth (step.z, the ledge height) so a tick
+    // before the fall has started (no EFFECT generator yet) doesn't read as landed.
+    bool const fallSplineRunning =
+        mm && mm->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
+    return !fallSplineRunning && bot->GetPositionZ() < step.z - 15.0f;
+}
+
 bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
 {
     if (!bot || !npc)
@@ -413,6 +432,35 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                     return StepResult::Done;
             }
             return StepResult::Running;
+        }
+
+        case EventStepKind::DropInHole:
+        {
+            // PURE gate + follower teleport. The leader's glide-over-the-hole and
+            // pure-vertical MoveFall are driven by the ACTION (DriveDropInHole),
+            // which owns the tick so the at-objective Hold can't cancel the off-mesh
+            // nudge spline; RunStep is reached only once the action hands back — i.e.
+            // the leader has finished falling and is down on the deep floor. Pull any
+            // follower still held up top down to the landing (they can't reproduce
+            // the off-mesh nudge; the teleport is the sanctioned one-way-drop fix),
+            // then report Done so the objective latches and the clear advances to the
+            // escort. Idempotent: a follower already down is skipped.
+            if (!DungeonEventExecutor::IsOnDropLanding(bot, step))
+                return StepResult::Running;
+            // Clear the stuck fall state. MoveFall set MOVEMENTFLAG_FALLING and no
+            // client ever clears it for a bot, so without this the leader stays
+            // "falling" forever and can't swim/walk out to the escort afterward.
+            bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR);
+            bot->GetMotionMaster()->Clear();
+            // MoveFall targets the vmap GROUND (the lakebed), which in WC sits a few
+            // yards below the water-SURFACE navmesh sheet the mmaps bake (the deep
+            // floor we routed to). Settle the leader exactly on the landing so stock
+            // nav resumes cleanly (and the followers fan out around it there).
+            if (std::fabs(bot->GetPositionZ() - step.landZ) > 3.0f)
+                bot->NearTeleportTo(step.landX, step.landY, step.landZ,
+                                    bot->GetOrientation());
+            PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+            return StepResult::Done;
         }
 
         case EventStepKind::CastSpell:
