@@ -19,7 +19,7 @@
 // 2, Swamplord's bit — the Objective-before-Boss tie-break in Apply() sorts it
 // ahead of him); boss-nav drives the tank to it. This event then:
 //   1. TELEPORTS the whole party down to the mid landing (333.63, -471.46, 52.10),
-//   2. WAITS 5s so the party doesn't get too far ahead of the players,
+//   2. WAITS 10s so the party doesn't get too far ahead of the players,
 //   3. TELEPORTS the party down to the lower landing (355.71, -471.68, 24.32),
 // after which boss-nav resumes toward Swamplord from solid, connected mesh.
 //
@@ -42,7 +42,7 @@ void RegisterUnderbogEvents(std::vector<DungeonEvent>& out)
                       .TeleportParty(/*ledge*/ 274.72f, -462.60f, 81.37f,
                                      /*mid landing*/ 333.63f, -471.46f, 52.10f)
                       // Pause so the party doesn't outrun the human players.
-                      .Wait(5000)
+                      .Wait(10000)
                       // Hop 2: mid landing -> lower landing (the checkpoint here is
                       // the mid landing the prior hop left the party on).
                       .TeleportParty(/*mid landing*/ 333.63f, -471.46f, 52.10f,

@@ -605,7 +605,7 @@ TEST(DungeonEventRegistryTest, SlavePensDropDownEventShape)
     EXPECT_TRUE(DungeonEventRegistry::Conditional(547).empty());
 }
 
-// The Underbog (546) post-Ghaz'an drop: a TWO-hop TeleportParty with a 5s pause
+// The Underbog (546) post-Ghaz'an drop: a TWO-hop TeleportParty with a 10s pause
 // between, relocating the party down a tiered navmesh break (upper ledge -> mid
 // landing -> lower landing). Anchored on the ledge objective and PERSISTENT (the
 // first hop moves the leader far from the anchor, so the at-objective trigger
@@ -635,7 +635,7 @@ TEST(DungeonEventRegistryTest, UnderbogDropDownEventShape)
     // Pause between hops.
     EventStep const& wait = e->steps[1];
     EXPECT_EQ(wait.kind, EventStepKind::Wait);
-    EXPECT_EQ(wait.durationMs, 5000u);
+    EXPECT_EQ(wait.durationMs, 10000u);
 
     // Hop 2: mid landing (the prior hop's landing, now the checkpoint) -> lower.
     EventStep const& hop2 = e->steps[2];
