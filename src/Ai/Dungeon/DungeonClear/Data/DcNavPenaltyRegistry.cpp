@@ -31,9 +31,25 @@ namespace
     // (≈5.8yd rise over ≈5yd ground = ~49°). Tight box hugging the two endpoints,
     // mid-band z 49.4..54.2 so the lower walkway (≤~49) and the upper platform
     // (≥~54.7, which the proper route reaches from another direction) stay untaxed.
-    constexpr std::array<DcNavPenaltyVolume, 2> kVolumes = {{
+    //
+    // Sethekk Halls (map 556) — the Talon King's back-door ramp. The instance is a
+    // loop: Talon King Ikiss (44.7, 287.0, z25) sits on an upper ring you reach the
+    // long way (west ramp near (-250, 210) up to z27, then east across the upper
+    // room). But a narrow ramp climbs straight to his platform from a closed,
+    // script-controlled door (GO 183398 at (44.8, 150.7, z0)) on the LOWER level
+    // directly south of him. The mmap stitches that ramp into the navmesh ignoring
+    // the shut door, so Detour's A* picks the short south climb, routes the party
+    // back toward the entrance, and wedges at the door (it can't open it) — the
+    // "can't reach Ikiss after Syth" symptom. The ramp is a single ~x45 column
+    // (x≈40..50, void either side) rising y153->245, z0->27, opening onto the
+    // shared platform only at y>=250. Box the whole climb up to (not into) the
+    // platform — x 25..68, y 150..248, z -5..30 — so every edge on the shortcut is
+    // taxed while the upper room / platform (y>=250) and the lower lobby (y<150)
+    // stay untaxed and the legitimate west-ramp route is left at base cost.
+    constexpr std::array<DcNavPenaltyVolume, 3> kVolumes = {{
         { 229, -134.0f, -406.0f, 33.0f, -118.0f, -374.0f, 56.0f, 40.0f },
         { 229,  -65.5f, -384.0f, 49.4f,  -60.5f, -377.0f, 54.2f, 40.0f },
+        { 556,   25.0f,  150.0f, -5.0f,   68.0f,  248.0f, 30.0f, 40.0f },
     }};
 }
 

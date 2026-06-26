@@ -12,8 +12,28 @@
 TEST(DcNavPenaltyRegistry, ReportsMapsWithVolumes)
 {
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(229));   // Lower Blackrock Spire
+    EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(556));   // Sethekk Halls
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(0));     // no rows
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(230));   // BRD — no rows
+}
+
+TEST(DcNavPenaltyRegistry, PenalizesTheSethekkBackDoorRamp)
+{
+    // A point partway up the narrow x≈45 shortcut ramp (door y151,z0 ->
+    // platform y250,z27): squarely inside the box, so it must be taxed.
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(556, 45.0f, 200.0f, 14.0f), 1.0f);
+
+    // The legitimate western approach arrives on the platform at y>=250 — north
+    // of the box. Ikiss's own position must be untaxed so the final hop is free.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, 44.7f, 287.0f, 25.2f), 1.0f);
+
+    // The lower lobby south of the door (y<150) is the normal pre-Syth floor —
+    // untaxed so early routing is unchanged.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, 45.0f, 130.0f, 0.3f), 1.0f);
+
+    // The west ramp the long way actually uses (~(-250, 210)) is far from the
+    // box — untaxed.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, -250.0f, 210.0f, 27.0f), 1.0f);
 }
 
 TEST(DcNavPenaltyRegistry, PenalizesInsideTheLbrsShaft)
