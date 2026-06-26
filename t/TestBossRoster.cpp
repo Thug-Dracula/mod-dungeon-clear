@@ -46,6 +46,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(429));   // Dire Maul East
     EXPECT_TRUE(BossRosterRegistry::HasPatch(70));    // Uldaman — altar objectives
     EXPECT_TRUE(BossRosterRegistry::HasPatch(547));   // Slave Pens — drop objective
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(546));   // Underbog — drop objective
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -369,6 +370,41 @@ TEST(BossRosterRegistryTest, SlavePensDropSortsBetweenMennuAndRokmar)
     EXPECT_EQ(out[dropIdx].eventId, 1u);
     // The three real bosses survive untouched (no remove/re-add).
     EXPECT_NE(Find(out, 17942), nullptr) << "Quagmirran must remain";
+}
+
+// The Underbog (546): the post-Ghaz'an two-hop drop objective shares Swamplord's
+// bit (2); the objective-before-boss tie-break must order it after Ghaz'an (bit 1)
+// and before Swamplord, so the party is teleported down the navmesh break before
+// boss-nav routes to Swamplord. (No boss surgery — all four bosses auto-derive.)
+TEST(BossRosterRegistryTest, UnderbogDropSortsBetweenGhazanAndSwamplord)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(17770, 0, "Hungarfen", 546),
+        Boss(18105, 1, "Ghaz'an", 546),
+        Boss(17826, 2, "Swamplord Musel'ek", 546),
+        Boss(17882, 3, "The Black Stalker", 546),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(546, base);
+
+    int ghazanIdx = -1, dropIdx = -1, swamplordIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 18105)
+            ghazanIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective)
+            dropIdx = i;
+        if (out[i].entry == 17826)
+            swamplordIdx = i;
+    }
+    ASSERT_GE(dropIdx, 0) << "drop-down objective missing";
+    ASSERT_GE(ghazanIdx, 0);
+    ASSERT_GE(swamplordIdx, 0);
+    EXPECT_LT(ghazanIdx, dropIdx) << "drop must follow Ghaz'an";
+    EXPECT_LT(dropIdx, swamplordIdx) << "drop must precede Swamplord";
+    EXPECT_EQ(out[dropIdx].encounterIndex, 2u);
+    EXPECT_EQ(out[dropIdx].eventId, 1u);
+    // The four real bosses survive untouched (no remove/re-add).
+    EXPECT_NE(Find(out, 17882), nullptr) << "The Black Stalker must remain";
 }
 
 // Dire Maul East: the Ironbark / Conservatory Door objective (orderOverride 40,

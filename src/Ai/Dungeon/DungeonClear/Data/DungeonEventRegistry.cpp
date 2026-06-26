@@ -324,6 +324,7 @@ namespace
             RegisterHellfireRampartsEvents(t);
             RegisterBloodFurnaceEvents(t);
             RegisterSlavePensEvents(t);
+            RegisterUnderbogEvents(t);
             return t;
         }();
         return kEvents;

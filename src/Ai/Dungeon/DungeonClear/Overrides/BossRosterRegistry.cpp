@@ -853,6 +853,36 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- The Underbog (map 546) ----------------------------------
+            // The auto-roster derives all four bosses (Hungarfen 17770 / bit 0,
+            // Ghaz'an 18105 / bit 1, Swamplord Musel'ek 17826 / bit 2, The Black
+            // Stalker 17882 / bit 3) from their static spawns, so no boss surgery
+            // is needed. But the path from Ghaz'an down to Swamplord crosses a
+            // navmesh BREAK — a tiered slope whose lower tiers sit on disconnected
+            // mesh islands boss-nav can't route to.
+            //
+            // Add a travel OBJECTIVE at the upper ledge, ordered between Ghaz'an
+            // and Swamplord. It borrows encounterIndex 2 (Swamplord's bit): the
+            // Objective-before-Boss tie-break in Apply() sorts it AHEAD of
+            // Swamplord at the shared key, so after Ghaz'an (bit 1) the tank
+            // visits this objective and only then Swamplord. Sharing the bit is
+            // safe — an objective is filtered by the cleared-anchor latch, never
+            // the completion mask. Its eventId 1 (UnderbogEvents.cpp) does a TWO-
+            // hop teleport (with a 5s pause between hops) down the break the
+            // instant the tank reaches the ledge.
+            {
+                BossRosterPatch p;
+                p.mapId = 546;
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 2, 546,
+                                  "Drop down past Ghaz'an",
+                                  274.72f, -462.60f, 81.37f,
+                                  /*arriveRadius*/ 6.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 1),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;

@@ -82,6 +82,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out);
 void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out);
 void RegisterBloodFurnaceEvents(std::vector<DungeonEvent>& out);
 void RegisterSlavePensEvents(std::vector<DungeonEvent>& out);
+void RegisterUnderbogEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);

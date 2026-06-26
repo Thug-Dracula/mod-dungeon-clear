@@ -605,6 +605,52 @@ TEST(DungeonEventRegistryTest, SlavePensDropDownEventShape)
     EXPECT_TRUE(DungeonEventRegistry::Conditional(547).empty());
 }
 
+// The Underbog (546) post-Ghaz'an drop: a TWO-hop TeleportParty with a 5s pause
+// between, relocating the party down a tiered navmesh break (upper ledge -> mid
+// landing -> lower landing). Anchored on the ledge objective and PERSISTENT (the
+// first hop moves the leader far from the anchor, so the at-objective trigger
+// must stay sticky for the Wait + second hop to run).
+TEST(DungeonEventRegistryTest, UnderbogDropDownEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(546, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 2u);  // between Ghaz'an (bit 1) and Swamplord (bit 2)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 3u);
+
+    // Hop 1: upper ledge -> mid landing.
+    EventStep const& hop1 = e->steps[0];
+    EXPECT_EQ(hop1.kind, EventStepKind::TeleportParty);
+    EXPECT_FLOAT_EQ(hop1.x, 274.72f);
+    EXPECT_FLOAT_EQ(hop1.y, -462.60f);
+    EXPECT_FLOAT_EQ(hop1.z, 81.37f);
+    EXPECT_FLOAT_EQ(hop1.landX, 333.63f);
+    EXPECT_FLOAT_EQ(hop1.landY, -471.46f);
+    EXPECT_FLOAT_EQ(hop1.landZ, 52.10f);
+    EXPECT_GT(hop1.radius, 6.0f);  // comfortably exceeds the 6yd objective arrive
+
+    // Pause between hops.
+    EventStep const& wait = e->steps[1];
+    EXPECT_EQ(wait.kind, EventStepKind::Wait);
+    EXPECT_EQ(wait.durationMs, 5000u);
+
+    // Hop 2: mid landing (the prior hop's landing, now the checkpoint) -> lower.
+    EventStep const& hop2 = e->steps[2];
+    EXPECT_EQ(hop2.kind, EventStepKind::TeleportParty);
+    EXPECT_FLOAT_EQ(hop2.x, 333.63f);
+    EXPECT_FLOAT_EQ(hop2.y, -471.46f);
+    EXPECT_FLOAT_EQ(hop2.z, 52.10f);
+    EXPECT_FLOAT_EQ(hop2.landX, 355.71f);
+    EXPECT_FLOAT_EQ(hop2.landY, -471.68f);
+    EXPECT_FLOAT_EQ(hop2.landZ, 24.32f);
+
+    // Anchored, so it is not in the map's conditional set.
+    EXPECT_TRUE(DungeonEventRegistry::Conditional(546).empty());
+}
+
 // Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
 // (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
 // before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead
