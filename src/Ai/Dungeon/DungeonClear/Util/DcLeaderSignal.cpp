@@ -882,6 +882,113 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     }
     return false;
 }
+bool DcLeaderSignal::GetLeaderScoutTrail(Player* bot, float lag, std::vector<Position>& out)
+{
+    out.clear();
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader drives; only followers trail it
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    std::vector<Position> const& crumbs =
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+    if (crumbs.size() < 2)
+        return false;
+
+    Position const tankPos(leader->GetPositionX(), leader->GetPositionY(),
+                           leader->GetPositionZ());
+    Position const botPos(bot->GetPositionX(), bot->GetPositionY(),
+                          bot->GetPositionZ());
+
+    // Walk BACK along the trail (newest -> oldest) accumulating real walked
+    // distance, exactly like GetLeaderScoutTrailPoint. Two indices fall out of
+    // the walk:
+    //   * lagIdx  — the FIRST crumb at least `lag` yards behind the tank: the
+    //               forward (toward-tank) end of the follower's glide window.
+    //   * nearIdx — the crumb NEAREST the follower among the crumbs at/behind the
+    //               lag point: the near end the glide starts from.
+    // The window is then crumbs[nearIdx .. lagIdx] (increasing index == forward),
+    // so the follower rides the centered trail from where it stands up to `lag`
+    // behind the tank, never closing past the lag. A 3D segment > kJumpGuard is a
+    // drag/teleport seam — stop, nothing beyond it is contiguously behind the tank.
+    constexpr float kJumpGuard = 12.0f;
+    int lagIdx = -1;
+    int nearIdx = -1;
+    float nearDist = std::numeric_limits<float>::max();
+    Position prev = tankPos;
+    float along = 0.0f;
+    for (std::size_t i = crumbs.size(); i-- > 0; )
+    {
+        Position const& c = crumbs[i];
+        float const seg = prev.GetExactDist(&c);
+        prev = c;
+        if (seg > kJumpGuard)
+            break;  // discontinuity behind us — stop here
+        along += seg;
+        if (along < lag)
+            continue;  // still ahead of the lag point — not part of the window
+        if (lagIdx < 0)
+            lagIdx = static_cast<int>(i);
+        float const d = botPos.GetExactDist(&c);
+        if (d < nearDist)
+        {
+            nearDist = d;
+            nearIdx = static_cast<int>(i);
+        }
+    }
+
+    // No crumb as far back as `lag` (trail shorter than the lag), or the follower
+    // is at/ahead of the lag crumb (already caught up): nothing to glide. Let the
+    // caller fall back to the single-point step / Follow fan.
+    if (lagIdx < 0 || nearIdx < 0 || nearIdx >= lagIdx)
+        return false;
+
+    // Follower too far off the trail for a safe straight entry leg to the nearest
+    // crumb — fall back to the point step, whose PathGenerator build routes the
+    // off-trail approach properly instead of straight-lining it.
+    if (nearDist > kJumpGuard)
+        return false;
+
+    // Build the forward window: live follower position, then the contiguous
+    // crumbs from the near end up to the lag crumb. Skip the near crumb when the
+    // follower is basically standing on it (avoids a degenerate first leg).
+    out.push_back(botPos);
+    int startK = nearIdx;
+    if (botPos.GetExactDist(&crumbs[nearIdx]) < 2.0f)
+        ++startK;
+    for (int k = startK; k <= lagIdx; ++k)
+        out.push_back(crumbs[k]);
+
+    if (out.size() < 2)
+        return false;
+
+    // Probe ONLY the entry leg (follower -> first crumb): the rest of the window
+    // is the tank's own contiguous walked ground. One PathGenerator build, the
+    // same cost the point variant pays. A straight entry across a navmesh seam
+    // would glide the follower under the map, so reject it here.
+    if (!IsNavReachable(bot, out[1]))
+    {
+        out.clear();
+        return false;
+    }
+
+    // Cap the window for client safety (a long spline packet is a factor in the
+    // 3.3.5 client's DC-burst heap sensitivity). The window is naturally short —
+    // it spans only the follower's overshoot past the lag — but bound it anyway.
+    // Trimming keeps the near portion; the glide simply continues next window.
+    constexpr std::size_t kFollowerWindowCap = 24;  // ~ cap * crumb spacing (4yd)
+    if (out.size() > kFollowerWindowCap)
+        out.resize(kFollowerWindowCap);
+
+    return true;
+}
 bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
                                              float& radiusOut)
 {

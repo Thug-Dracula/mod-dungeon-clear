@@ -9,6 +9,8 @@
 #include "Define.h"
 #include "Position.h"
 
+#include <vector>
+
 class Player;
 
 class DcLeaderSignal
@@ -156,6 +158,26 @@ public:
     // crumb `bot` can reach over a complete generated path. False if there is no
     // leader, the trail is empty, or no reachable point lies far enough back.
     static bool GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out);
+
+    // Multi-point variant of GetLeaderScoutTrailPoint: the centered breadcrumb
+    // POLYLINE a follower should glide to catch up to the tank, rather than the
+    // single crumb the point variant returns. `out` is filled with the spline
+    // window [follower live pos, ...intermediate crumbs..., the crumb `lag` yards
+    // behind the tank] in forward (toward-tank) order, ready to hand to
+    // DcMovement::SplinePath. This lets followers ride ONE continuous escort
+    // spline along the centered trail instead of re-issuing a per-tick single-
+    // point MoveTo to each crumb — the per-crumb relaunch made followers visibly
+    // half-step (accel/decel at every waypoint), the same stutter the tank's
+    // advance shed when it moved to MoveSplinePath. The window only spans from
+    // the follower up to the lag crumb (never up to the tank), so the glide
+    // preserves the lag instead of closing it. Reachability of the entry leg is
+    // probed (one PathGenerator build, as the point variant does); the rest of
+    // the window is the tank's own contiguous walked ground. Returns false (out
+    // cleared) when there is no leader, the trail is empty, the follower is at or
+    // ahead of the lag crumb (nothing to glide — caller falls back to the point
+    // step / Follow fan), the follower is too far off-trail for a safe entry leg,
+    // or fewer than two window points result.
+    static bool GetLeaderScoutTrail(Player* bot, float lag, std::vector<Position>& out);
 
     // --- Room-aggro clear ----------------------------------------------------
     // True when `bot`'s elected leader tank is mid room-aggro clear (a flagged

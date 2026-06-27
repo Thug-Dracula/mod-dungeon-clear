@@ -63,6 +63,39 @@
 
 using namespace DcActionShared;
 
+namespace
+{
+    // True while a continuous escort-spline glide is in flight. The follower trail
+    // re-issue guards key off this (NOT the LastMovement wait) so a healthy glide
+    // is left to finish and chain seamlessly into the next window, exactly as
+    // DcAdvanceAction does for the tank — relaunching MoveSplinePath every tick is
+    // what made followers half-step.
+    bool TrailSplineRunning(Player* bot)
+    {
+        MotionMaster* mm = bot->GetMotionMaster();
+        return mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE &&
+               bot->isMoving();
+    }
+
+    // Issue the follower's centered breadcrumb window (live pos .. the crumb `lag`
+    // yards behind the tank) as ONE continuous escort spline — the same smooth
+    // glide the tank's advance uses, replacing the per-tick single-point MoveTo
+    // that made followers visibly half-step at each crumb. Returns true iff a
+    // spline was launched (a usable >= 2-point window existed and SplinePath took
+    // it); callers fall back to the single-point step / Follow fan on false.
+    bool IssueTrailGlide(PlayerbotAI* botAI, Player* bot, float lag)
+    {
+        std::vector<Position> trail;
+        if (!DcLeaderSignal::GetLeaderScoutTrail(bot, lag, trail) || trail.size() < 2)
+            return false;
+        Movement::PointsArray window;
+        window.reserve(trail.size());
+        for (Position const& p : trail)
+            window.emplace_back(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
+        return DcMovement::SplinePath(botAI, window);
+    }
+}
+
 bool DungeonClearFollowTankAction::Execute(Event /*event*/)
 {
     ObjectGuid& followedTank =
@@ -264,9 +297,23 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                               bot->GetName(), toTank, lag);
                 return false;
             }
+            // Smooth glide along the centered crumb trail. Leave a healthy escort
+            // glide in flight alone so it chains seamlessly instead of relaunching
+            // (and stuttering) every tick, then ride the whole crumb window as ONE
+            // continuous spline rather than the per-crumb single-point MoveTo below.
+            if (TrailSplineRunning(bot))
+                return true;
+            if (IssueTrailGlide(botAI, bot, lag))
+            {
+                DC_PULL_DEBUG("[DC:{}] scout-lag: gliding tank's centered breadcrumbs "
+                              "(was {:.1f}yd behind, lag {:.1f})",
+                              bot->GetName(), toTank, lag);
+                return true;
+            }
             // normal_only: reject (don't straight-line to) a point that isn't
             // reachable over a real navmesh path. Crumbs are already gated for
             // reachability, but keep the guard as a belt-and-braces backstop.
+            // Reached only when the glide window was too short / unreachable.
             if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
                        trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                        false, false, /*normal_only=*/true))
@@ -377,14 +424,30 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                 bot->GetExactDist(&trailPoint) > kTrailArrival)
             {
                 // Keep the teardown / orphan-reaper bookkeeping live; the point-
-                // move supersedes any MoveFollow a prior tick installed (same as
-                // the scout-lag trail / room-aggro skirt branches above — no
-                // explicit Stop needed).
+                // move / glide supersedes any MoveFollow a prior tick installed
+                // (same as the scout-lag trail / room-aggro skirt branches above —
+                // no explicit Stop needed).
                 followedTank = tank->GetGUID();
                 DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+                // Smooth glide along the centered crumb trail: leave a healthy
+                // escort glide alone (re-issue discipline keyed on splineRunning,
+                // not the LastMovement wait), then ride the whole crumb window as
+                // ONE continuous spline instead of the per-crumb single-point
+                // MoveTo below — the per-crumb relaunch is what made followers
+                // half-step the whole advance.
+                if (TrailSplineRunning(bot))
+                    return true;
+                if (IssueTrailGlide(botAI, bot, lag))
+                {
+                    DC_PULL_DEBUG("[DC:{}] follow-tank: gliding tank's centered "
+                                  "breadcrumbs ({:.1f}yd behind, lag {:.1f})",
+                                  bot->GetName(), toTank, lag);
+                    return true;
+                }
                 // normal_only: never straight-line to a crumb that isn't reachable
                 // over a real navmesh path (belt-and-braces — crumbs are already
-                // reachability-gated in GetLeaderScoutTrailPoint).
+                // reachability-gated in GetLeaderScoutTrailPoint). Reached only
+                // when the glide window was too short / unreachable.
                 if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
                            trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                            false, false, /*normal_only=*/true))
