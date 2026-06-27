@@ -5,7 +5,11 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
+#include <cstddef>
+#include <mutex>
 #include <unordered_map>
 
 #include "Config.h"
@@ -29,25 +33,83 @@ namespace
         return std::string("DungeonClear.") + keySuffix;
     }
 
-    // conf -> registry default, returned as a double regardless of type.
-    double ConfValue(DcSettingDef const& d)
+    // Read one registry key straight from conf (uncached), as a double.
+    //
+    // showLogs=false on every GetOption call: by default the core logs a
+    // "Config: Missing property ..." warning whenever a key is absent from the
+    // deployed conf, and EVERY one of these ~55 tunables is optional (the
+    // registry holds the authoritative default — a missing conf line is normal,
+    // expected operation, not an error). Read once per tick per bot, that
+    // warning floods the console. Suppressing it here is the definitive fix: the
+    // core never logs regardless of how often or from which thread we read. The
+    // ConfValue cache below still applies, so we also avoid the per-call config-
+    // map lookup / getenv() / string churn — that addresses the read COST; this
+    // flag addresses the LOG. Defaults are documented in the .conf.dist, so the
+    // admin loses no information.
+    double ConfValueUncached(DcSettingDef const& d)
     {
         std::string const full = FullKey(d.key);
         switch (d.type)
         {
             case DcType::Bool:
-                return sConfigMgr->GetOption<bool>(full, d.defVal != 0.0) ? 1.0 : 0.0;
+                return sConfigMgr->GetOption<bool>(full, d.defVal != 0.0, false) ? 1.0 : 0.0;
             case DcType::UInt:
                 return static_cast<double>(
-                    sConfigMgr->GetOption<uint32>(full, static_cast<uint32>(d.defVal)));
+                    sConfigMgr->GetOption<uint32>(full, static_cast<uint32>(d.defVal), false));
             case DcType::Int:
                 return static_cast<double>(
-                    sConfigMgr->GetOption<int32>(full, static_cast<int32>(d.defVal)));
+                    sConfigMgr->GetOption<int32>(full, static_cast<int32>(d.defVal), false));
             case DcType::Float:
             default:
                 return static_cast<double>(
-                    sConfigMgr->GetOption<float>(full, static_cast<float>(d.defVal)));
+                    sConfigMgr->GetOption<float>(full, static_cast<float>(d.defVal), false));
         }
+    }
+
+    // Process-wide cache of every key's conf-resolved value, indexed by the key's
+    // position in kDcSettings. ONE copy for the whole server (not thread_local),
+    // populated exactly once — lazily on the first read, re-populated on
+    // `.reload config` — so warmup costs ~kDcSettingCount config resolutions
+    // TOTAL rather than that many per map-update pool thread (the server runs a
+    // high MapUpdate.Threads for playerbots, so a per-thread cache multiplied the
+    // warmup by the pool size). Each slot is a lock-free atomic<double>: readers
+    // (the map-update pool, the centering workers, the path worker) just load,
+    // with no per-read locking once the table is warm.
+    std::array<std::atomic<double>, kDcSettingCount> g_confCache;
+    std::atomic<bool> g_confCacheReady{false};
+    std::mutex g_confCacheLoadMutex;
+
+    // Resolve every key from conf into g_confCache (relaxed stores; an individual
+    // slot's load can never tear, and the keys are independent so a reader seeing
+    // a half-applied reload for one tick is harmless). Caller holds the load mutex
+    // OR runs at a point where no reader races (config load on the world thread).
+    void PopulateConfCache()
+    {
+        for (std::size_t i = 0; i < kDcSettingCount; ++i)
+            g_confCache[i].store(ConfValueUncached(kDcSettings[i]), std::memory_order_relaxed);
+        g_confCacheReady.store(true, std::memory_order_release);
+    }
+
+    // conf -> registry default, returned as a double regardless of type, cached.
+    double ConfValue(DcSettingDef const& d)
+    {
+        // First read of the server's life warms the whole table under a one-shot
+        // lock; every read after the release-store sees ready and skips the lock.
+        if (!g_confCacheReady.load(std::memory_order_acquire))
+        {
+            std::lock_guard<std::mutex> lock(g_confCacheLoadMutex);
+            if (!g_confCacheReady.load(std::memory_order_relaxed))
+                PopulateConfCache();
+        }
+
+        // d always points into kDcSettings (every caller passes a row from
+        // FindDcSetting / kDcSettings). Guard the index defensively; an unknown
+        // row just reads uncached rather than risking an out-of-range cache slot.
+        std::ptrdiff_t const off = &d - &kDcSettings[0];
+        if (off < 0 || static_cast<std::size_t>(off) >= kDcSettingCount)
+            return ConfValueUncached(d);
+
+        return g_confCache[static_cast<std::size_t>(off)].load(std::memory_order_relaxed);
     }
 
     // The full resolution chain for one registry entry.
@@ -204,5 +266,17 @@ namespace DcSettings
     double GetEffectiveRaw(ObjectGuid runOwner, DcSettingDef const& def)
     {
         return GetRaw(runOwner, def);
+    }
+
+    void InvalidateConfCache()
+    {
+        // Called from WorldScript::OnAfterConfigLoad on `.reload config`, on the
+        // world thread between map updates. Re-resolve every key in place so an
+        // edited conf value takes effect live; the lock serialises against a
+        // concurrent first-read warm, and the per-slot atomic stores publish to
+        // readers without a generation dance. Also primes the table at startup so
+        // the first in-dungeon read never has to take the warm lock.
+        std::lock_guard<std::mutex> lock(g_confCacheLoadMutex);
+        PopulateConfCache();
     }
 }

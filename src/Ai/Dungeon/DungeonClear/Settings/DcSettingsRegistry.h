@@ -198,6 +198,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     // 0 disables the bypass (always honour the full lead). Healers always bypass.
     { "PullThreatLeadPanicHp",  DcType::Float, 60,   0, 100,  true  },
 
+    // Camp-safety valve for advanced pull mode (`dc pull`). While a pull is in
+    // progress the DPS and healer wait passive at the camp and can't defend
+    // themselves if a patrol clips the camp or the pull goes sideways. If a held,
+    // passive party member is in combat and drops below this health percent, the
+    // pull is aborted and the whole party is released to fight back. 0 disables
+    // the valve. See DcFollowerLifecycle::ReapStrandedPassives.
+    { "PullSafetyHpPct",        DcType::Float, 50,   0, 100,  true  },
+
     // Hysteresis (seconds) on the cross-bot "is the party fighting?" gate that
     // drives BOTH the dynamic scout-lag suppression and the fight-assist arm. A
     // bare leader->IsInCombat() read is a point-in-time check, and combat starts

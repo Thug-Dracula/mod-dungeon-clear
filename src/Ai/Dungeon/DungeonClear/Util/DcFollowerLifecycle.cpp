@@ -411,8 +411,6 @@ void DcFollowerLifecycle::ReapStrandedPassives()
         marked.assign(g_dcPassivePlayers.begin(), g_dcPassivePlayers.end());
     }
 
-    float const safetyHp = sConfigMgr->GetOption<float>("DungeonClear.PullSafetyHpPct", 50.0f);
-
     for (ObjectGuid guid : marked)
     {
         Player* player = ObjectAccessor::FindPlayer(guid);
@@ -492,6 +490,10 @@ void DcFollowerLifecycle::ReapStrandedPassives()
         // patrol clipped camp, or the pull went sideways) can't defend itself —
         // abort the pull so the whole party drops passive and fights back. This
         // is an emergency, so it bypasses the graceful release delay entirely.
+        // Through DcSettings (cached conf read + per-run override), not raw
+        // sConfigMgr — a per-tick GetOption here re-walks the config map and
+        // re-logs a missing-property warning every tick a pull is held.
+        float const safetyHp = DcSettings::GetFloat(player, "PullSafetyHpPct");
         if (player->IsInCombat() && safetyHp > 0.0f &&
             player->GetHealthPct() < safetyHp)
         {

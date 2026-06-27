@@ -8,8 +8,24 @@
  * The per-run override layer is keyed by the run's leader-tank GUID
  * (DcLeaderSignal::FindLeaderTank), so each dungeon run can carry its own
  * settings pushed from the companion addon while the conf file stays the
- * server-wide default. Reads are lazy (no caching), so an override applied
+ * server-wide default. The override layer is uncached, so an override applied
  * mid-run takes effect on the next tick with no reload.
+ *
+ * Two things protect the worldserver console / CPU from these per-tick reads:
+ *
+ *   1. Every conf read passes showLogs=false (see ConfValueUncached), so the
+ *      core never emits its "Config: Missing property ..." warning. Every DC
+ *      tunable is optional — the registry holds the authoritative default, so a
+ *      missing conf line is normal operation, not an error worth logging once
+ *      per tick per bot. This is the definitive spam fix.
+ *
+ *   2. The conf layer (the fallback when a key has no override) is cached in one
+ *      process-wide table — populated ONCE (at startup / on `.reload config`),
+ *      not per map-update thread — so a read avoids the config-map lookup /
+ *      getenv() / string churn GetOption does on every call, and warmup costs
+ *      ~one resolution per key total rather than that many times the (high)
+ *      MapUpdate.Threads pool size. Re-populated on `.reload config` via
+ *      InvalidateConfCache below, so edited values still take effect live.
  *
  * Only player-facing registry rows consult the override store; server-only rows
  * (e.g. PathCenter*) go straight to conf, which keeps them safe to read from the
@@ -65,6 +81,12 @@ namespace DcSettings
     // Effective value as a double, for building the addon sync payload by
     // iterating kDcSettings without a type switch at the call site.
     double GetEffectiveRaw(ObjectGuid runOwner, DcSettingDef const& def);
+
+    // Drop every thread's cached conf-layer value so the next read re-resolves
+    // from sConfigMgr. Call once after `.reload config` (WorldScript::
+    // OnAfterConfigLoad) so an edited conf takes effect without restart. Cheap:
+    // bumps an atomic generation counter that each thread compares lazily.
+    void InvalidateConfCache();
 }
 
 #endif

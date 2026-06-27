@@ -75,6 +75,7 @@
 #include "WarriorAiObjectContext.h"
 
 #include "Util/DcSpectator.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearActionContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
@@ -228,6 +229,17 @@ public:
     void OnShutdown() override
     {
         DcPathWorker::Instance().Stop();
+    }
+
+    // DcSettings caches each tunable's conf-resolved value per thread so the
+    // per-tick reads during a run don't re-walk the config map (and don't re-log
+    // sConfigMgr's "Missing property" warning every call). Drop those caches when
+    // an admin reloads the config so an edited conf value takes effect live. The
+    // `reload` flag is true only for `.reload config`; the initial load needs no
+    // invalidation (nothing cached yet), but bumping then is harmless.
+    void OnAfterConfigLoad(bool /*reload*/) override
+    {
+        DcSettings::InvalidateConfCache();
     }
 
 private:
