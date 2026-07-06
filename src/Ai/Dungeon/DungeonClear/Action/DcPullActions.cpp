@@ -197,7 +197,12 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // or the wait times out. Followers trail normally (pull mode is off).
             if (pull.decision == 3u)
             {
-                DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+                // Hold, not Soft: this branch is only reached at commit range,
+                // i.e. the tank arrives here mid escort-spline glide driven by
+                // Advance. Stop::Soft is not escort-aware and lets the tank coast
+                // on into the pack it is meant to be waiting out; Stop::Hold kills
+                // the glide (same reason the commit branch below uses Hold).
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
                 DC_PULL_TRACE("[DC:{}] pull idle: holding for patrol ({:.1f}yd to pack)",
                               bot->GetName(), bot->GetExactDist2d(trash));
                 return true;

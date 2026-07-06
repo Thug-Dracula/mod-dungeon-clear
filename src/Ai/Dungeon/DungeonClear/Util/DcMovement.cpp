@@ -113,6 +113,14 @@ namespace DcMovement
     {
         if (!botAI)
             return false;
+        // Re-check the paused flag at the movement-issuance boundary, mirroring
+        // DcMovementAction::DcMoveTo. Every caller today sits behind a top-of-Execute
+        // pause guard, so this is behaviorally inert now — but it closes the
+        // pause-walks-through-door race class at the mechanism (a mid-tick flip of
+        // "dungeon clear paused" can no longer launch a fresh escort glide) for every
+        // future caller, instead of by hand-pasted convention.
+        if (!DcMovementAllowed(botAI))
+            return false;
         Player* bot = botAI->GetBot();
         if (!bot || pts.size() < 2)
             return false;
