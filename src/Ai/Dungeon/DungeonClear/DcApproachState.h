@@ -95,6 +95,16 @@ struct DcApproachState
     uint64 pendingPathJob      = 0;  // in-flight async build job id (0 = none)
     uint32 pendingPathSinceMs  = 0;  // when the pending job was submitted (watchdog)
 
+    // Follower-cursor snapshot at the last install / TTL re-arm. EnsureLongPath
+    // defers the TTL rebuild while the cursor has advanced past this baseline
+    // (and the bot isn't position-stuck): a 15s TTL expiry on a route the bot is
+    // actively walking otherwise triggers a churny full A*+Finalize rebuild of a
+    // perfectly good path and resets the cursor. The TTL is honoured only once
+    // forward progress stalls. Reset to 0/0 by InstallLongPath (which also zeroes
+    // the follower state), so the baseline always matches a fresh cursor.
+    uint32 lastProgressSegmentIdx = 0;
+    uint32 lastProgressPointIdx   = 0;
+
     // Full reset: every approach AND long-path-cache field. Used on dc on/off,
     // death, all-cleared, and every pull interrupt — the run-state teardown.
     void Reset() { *this = DcApproachState{}; }
