@@ -239,6 +239,11 @@ namespace DcActionShared
 
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+
+        // Re-baseline the TTL-defer progress cursor to the freshly-reset follower
+        // (segment 0, point 0) so the first real advance reads as progress.
+        appr.lastProgressSegmentIdx = 0;
+        appr.lastProgressPointIdx = 0;
     }
 
 
@@ -334,7 +339,6 @@ namespace DcActionShared
 
         // ---- 2. Is a (re)build due? ----
         bool const targetChanged = cachedEntry != target.entry;
-        bool const expired = expiresAt == 0 || now >= expiresAt;
         // The live boss relocated (pool/wandering boss) or its live position
         // just streamed in far from the static anchor the current path was
         // built toward — retarget early instead of walking a stale route the
@@ -343,8 +347,41 @@ namespace DcActionShared
         bool const moved = expiresAt != 0 &&
             builtToward.GetExactDist(Position(target.x, target.y, target.z)) >
                 DC_LONG_PATH_RETARGET_DIST;
+
+        // TTL rebuild, deferred while the follower is visibly progressing. The
+        // three reasons the TTL is kept short are all now covered out-of-band:
+        // live-boss drift by `moved` above, boss change by `targetChanged`, and
+        // stuck recovery by the expiresAt=0 forced invalidations. So a bare TTL
+        // expiry on a route the bot is actively walking only triggers a full
+        // A* + Finalize rebuild of a perfectly good path (and resets the
+        // follower cursor). Honour the TTL only once forward progress has
+        // stalled: while the cursor has advanced past the last baseline AND the
+        // bot isn't position-stuck, treat the route as fresh and re-arm the
+        // deadline from now. expiresAt==0 (no usable path yet) always rebuilds.
+        DungeonFollowerState const& follower =
+            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+        bool const cursorAdvanced =
+            follower.segmentIdx > appr.lastProgressSegmentIdx ||
+            (follower.segmentIdx == appr.lastProgressSegmentIdx &&
+             follower.pointIdx > appr.lastProgressPointIdx);
+        bool const progressing = cursorAdvanced && appr.posStuckTicks == 0;
+        bool const ttlPassed = expiresAt != 0 && now >= expiresAt;
+        bool const expired = expiresAt == 0 || (ttlPassed && !progressing);
+
         if (!targetChanged && !expired && !moved)
+        {
+            // Not rebuilding this tick. If we deferred a lapsed TTL because the
+            // bot is progressing, re-arm the deadline and roll the progress
+            // baseline forward so the backstop measures the NEXT window and only
+            // fires a full TTL after progress actually stalls.
+            if (ttlPassed && progressing)
+            {
+                expiresAt = now + DC_LONG_PATH_TTL_MS;
+                appr.lastProgressSegmentIdx = follower.segmentIdx;
+                appr.lastProgressPointIdx = follower.pointIdx;
+            }
             return;
+        }
 
         // ---- 3. Anchor route OR sync mode → build inline ----
         // Anchor-route lookup is O(1)-ish and navmesh-only; a registered route
