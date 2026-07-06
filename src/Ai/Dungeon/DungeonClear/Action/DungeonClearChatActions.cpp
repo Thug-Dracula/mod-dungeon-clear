@@ -20,6 +20,7 @@
 #include "ObjectGuid.h"
 #include "Player.h"
 #include "InstanceScript.h"
+#include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
@@ -314,47 +315,25 @@ bool DcOffAction::Execute(Event event)
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
-    context->GetValue<bool>("dungeon clear enabled")->Set(false);
-    DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
-    context->GetValue<bool>("dungeon clear paused")->Set(false);
-    context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
-    context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
-    // Revert the pull preference to the default (Dynamic) rather than Off, so a
-    // fresh `dc on` after an off starts in the recommended mode just like a
-    // brand-new bot does (see DungeonClearPullSettingValue's 2u default).
-    context->GetValue<uint32>("dungeon clear pull setting")->Set(2u);
-    context->GetValue<bool>("dungeon clear pull mode")->Set(false);
-    DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
-    ResetPullTransient(context);
-    context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-    // Tear down the whole approach FSM (counters, latches, loot-yield anchor,
-    // position sentinel + committed boss, long-path cache) in one reset.
-    context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
-    context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
-    context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+    // The full run/pull teardown — enabled flag, pause state, pull setting→Dynamic,
+    // pull-mode bool, daze-immunity revoke, selected boss, approach + pull FSM
+    // resets, loot-skip/phase clears, long-path + follower-state resets, and the
+    // addon status push — now lives in ONE place so the chat `dc off` path stays in
+    // lockstep with the auto-disable paths (party death / all-cleared / map-exit),
+    // which all route through DisableDungeonClear. This closes the drift where
+    // those paths never revoked the leader's daze immunity. The same "CHAT\t<reason>"
+    // addon line and `dc status` refresh are emitted inside it.
+    DcActionShared::DisableDungeonClear(botAI, "Dungeon clear disabled.");
+
+    // dc-off-only extras the shared teardown doesn't cover: clear the fallback
+    // target, then hard-stop any in-flight advance/engage spline so the bot visibly
+    // halts the instant the player says `dc off` (without this a queued spline runs
+    // on to its endpoint and the bot looks like it ignored the command for several
+    // seconds). See HaltAllMovement for why this can't gate on isMoving(). The
+    // "dungeon clear" strategy stays installed but inert — it stays resident on
+    // every bot via the login script regardless.
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
-    context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-    context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
-    context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
-
-    // Cancel any in-flight advance/engage spline so the bot actually stops
-    // walking when the player says `dc off`. Without this, a previously
-    // queued spline keeps running to its endpoint even though the strategy is
-    // now disabled — the bot looks like it's ignoring the off command for
-    // several seconds. See HaltAllMovement for why this can't gate on isMoving().
     HaltAllMovement(bot);
-
-    // Leave the "dungeon clear" strategy installed. With the enabled flag now
-    // false, every trigger and the multiplier in it are inert, so the tank is
-    // already back to stock non-combat behavior — and this matches the
-    // auto-disable paths (death / all-cleared), which only flip the flag too.
-    // It stays resident on every bot via the login script regardless.
-
-    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear disabled.");
-
-    // Trigger instant status addon message update
-    botAI->DoSpecificAction("dc status", event, true);
     return true;
 }
 

@@ -15,6 +15,7 @@
 #include "Playerbots.h"
 #include "Timer.h"
 
+#include <atomic>
 #include <optional>
 
 // --- Uldaman (map 70) — the Ironaya seal, CONDITIONAL --------------------
@@ -120,9 +121,11 @@ namespace
         GameObject* seal = bot->FindNearestGameObject(ULD_SEAL_DOOR, ULD_SCAN);
         Creature* ironaya = bot->FindNearestCreature(ULD_IRONAYA, ULD_SCAN, /*alive*/ true);
 
-        // Throttled diagnostic (single-threaded world tick): one line / 5s so a
-        // live run shows WHY the event is/ isn't due. Lands in DungeonClear.log.
-        static uint32 lastLog = 0;
+        // Throttled diagnostic: one line / 5s so a live run shows WHY the event
+        // is/isn't due. Lands in DungeonClear.log. atomic because bot AI ticks run
+        // on the MapUpdate.Threads pool — the throttle stamp is read/written from
+        // multiple map threads (the check-then-set race is benign).
+        static std::atomic<uint32> lastLog{0};
         uint32 const now = getMSTime();
         if (getMSTimeDiff(lastLog, now) >= 5000)
         {

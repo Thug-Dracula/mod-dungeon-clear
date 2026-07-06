@@ -187,6 +187,14 @@ float DungeonPathFollower::RouteDeviation(Player* bot, ChunkedPathfinder::Result
     return std::sqrt(dist2);
 }
 
+std::optional<G3D::Vector3> DungeonPathFollower::CurrentPoint(ChunkedPathfinder::Result const& path,
+                                                              DungeonFollowerState const& state)
+{
+    if (path.segments.empty() || state.segmentIdx >= path.segments.size())
+        return std::nullopt;
+    return PointAt(path, state.segmentIdx, state.pointIdx);
+}
+
 bool DungeonPathFollower::IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state)
 {
     if (!bot || path.segments.empty() || state.segmentIdx >= path.segments.size() ||

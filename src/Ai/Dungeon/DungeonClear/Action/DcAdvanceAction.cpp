@@ -1240,7 +1240,16 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryOffLineRejoin(Adva
     DungeonPathFollower::Hop const& hop = st.hop;
 
     float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
-    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    // Vertical disjunct: RouteDeviation is 2D-only, so a bot knocked onto a
+    // different floor directly under/over its own route reads deviation ~= 0,
+    // skips this rejoin, and lets TrySplineWindowIssue launch a straight escort
+    // spline from the wrong level (through the floor/ceiling). Treat more than one
+    // corridor Z-band off the current route point's level as off-path too — the
+    // module's documented metric-mismatch repeat offender.
+    std::optional<G3D::Vector3> const curPt = DungeonPathFollower::CurrentPoint(path, follower);
+    bool const vertOff = curPt.has_value() &&
+                         std::fabs(bot->GetPositionZ() - curPt->z) > DC_CORRIDOR_Z_BAND;
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD || vertOff)
     {
         // DcMoveTo cancels any stale straight spline so it can't shadow the pathed re-entry.
         bool const rejoining =

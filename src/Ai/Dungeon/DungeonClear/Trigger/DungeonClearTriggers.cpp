@@ -18,6 +18,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
@@ -215,11 +216,16 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     // the log instead of inferred from spline distances.
     if (distToAnchor <= radius + 20.0f && DcLeaderSignal::IsDungeonClearLeader(bot))
     {
-        static uint32 lastLog = 0;
+        // Per-leader throttle held in the leader's own DcApproachState — not a
+        // function-local static, which would be shared across all leaders on all
+        // MapUpdate.Threads (a data race AND cross-instance suppression, where one
+        // instance's leader silences another's diagnostic).
+        DcApproachState& appr =
+            context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
         uint32 const nowMs = getMSTime();
-        if (getMSTimeDiff(lastLog, nowMs) >= 3000)
+        if (getMSTimeDiff(appr.lastObjectiveDiagMs, nowMs) >= 3000)
         {
-            lastLog = nowMs;
+            appr.lastObjectiveDiagMs = nowMs;
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] objective '{}': dist={:.1f} > arriveRadius={:.1f} "
                       "(NOT arrived; event not started)",

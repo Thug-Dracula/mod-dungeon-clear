@@ -14,6 +14,8 @@
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
+#include <atomic>
+
 // --- Shadowfang Keep (map 33) — CONDITIONAL, FACTION-SPECIFIC -------------
 // The Courtyard Door (GO 18895) gates the keep past the entry rooms and is
 // opened only by a freed prisoner, not by the party. The real mechanic
@@ -108,10 +110,13 @@ namespace
         bool const firstBossDead =
             DcTargeting::FindLiveCreatureOnMap(bot, SFK_FIRST_BOSS_RETHILGORE) == nullptr;
 
-        // Throttled diagnostic (single-threaded world tick): one line / 5s per
-        // faction so a live run shows WHY the event is or isn't due (door
-        // missing/open, no prisoner, first boss still up). Lands in DungeonClear.log.
-        static uint32 lastLog = 0;
+        // Throttled diagnostic: one line / 5s per faction so a live run shows WHY
+        // the event is or isn't due (door missing/open, no prisoner, first boss
+        // still up). Lands in DungeonClear.log. atomic because bot AI ticks run on
+        // the MapUpdate.Threads pool — the throttle stamp is read/written from
+        // multiple map threads (the check-then-set race is benign: at worst two
+        // lines in a window).
+        static std::atomic<uint32> lastLog{0};
         uint32 const now = getMSTime();
         if (getMSTimeDiff(lastLog, now) >= 5000)
         {

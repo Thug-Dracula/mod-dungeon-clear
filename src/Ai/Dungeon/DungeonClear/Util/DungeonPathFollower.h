@@ -104,6 +104,14 @@ public:
     static float RouteDeviation(Player* bot, ChunkedPathfinder::Result const& path,
                                 DungeonFollowerState const& state);
 
+    // The route point the follower cursor currently anchors to — the same point
+    // RouteDeviation measures its 2D perpendicular distance around. nullopt when
+    // the cursor is past the path end. Exposed so callers can add a vertical
+    // (Z) displacement check alongside the 2D-only deviation, since a bot on a
+    // different floor directly under/over its route reads deviation ~= 0.
+    static std::optional<G3D::Vector3> CurrentPoint(ChunkedPathfinder::Result const& path,
+                                                    DungeonFollowerState const& state);
+
     // Walks a window of polyline points AT OR AHEAD of the current state
     // (never behind it — the escort is one-way, so the cursor must not
     // regress to already-cleared corridor), picks the one closest to the

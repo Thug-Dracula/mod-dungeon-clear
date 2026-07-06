@@ -507,6 +507,19 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     if (!bot)
         return;
 
+    // Leader-only, active-run-only. The caller is now a per-bot value
+    // (DungeonClearPullModeCurrentValue::Calculate) that ANY consumer may read on
+    // ANY bot's context, and the pull-setting default is 2 (Dynamic) on every bot —
+    // so without this gate a follower-side read would run the full grid classifier
+    // on the follower, flip ITS pull-mode bool, seed ITS camp, and grant IT daze
+    // immunity. Gate here (leader election is 250ms-cached, cheap) rather than
+    // trusting every caller to be leader-gated. `enabled && !paused` also stops a
+    // disabled/paused run from mutating pull state on a stray read.
+    if (!context->GetValue<bool>("dungeon clear enabled")->Get() ||
+        context->GetValue<bool>("dungeon clear paused")->Get() ||
+        !DcLeaderSignal::IsDungeonClearLeader(bot))
+        return;
+
     // Off / On are driven by DcPullAction; only Dynamic auto-decides per pack.
     if (context->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
         return;
@@ -1119,7 +1132,12 @@ bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float
         PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
         if (!memberAI)
             continue;  // real player — never gate the pull on them
-        if (member->GetExactDist2d(&camp) > setRadius)
+        // 3D distance, matching DcPartyState::IsPartyReady's spread gate against the
+        // same camp anchor. A camp can land on a ramp/stairs via the breadcrumb
+        // walk; a 2D measure here would disagree with the 3D between-pulls gate about
+        // the same follower at the same camp — the module's repeat-offender
+        // metric-mismatch class ("arrived? test + target must share a metric").
+        if (member->GetExactDist(&camp) > setRadius)
             return false;
         // Healers are deliberately never made fully passive (ApplyFollowerPassive
         // pins them with "stay" instead so they can heal the tank through the

@@ -12,6 +12,8 @@
 #include "SharedDefines.h"
 #include "Timer.h"
 
+#include <atomic>
+
 // --- Dire Maul East (map 429) — Ironbark / Conservatory Door -------------
 // Alzzin the Wildshaper's grove is sealed behind the Conservatory Door (GO
 // 176907), which the party cannot open. Ironbark the Redeemed (14241), who
@@ -298,8 +300,10 @@ namespace
         GameObject* door = bot->FindNearestGameObject(doorEntry, DM_DOOR_SCAN);
 
         // Throttled diagnostic (one line / 5s) so a live run shows whether the
-        // door is in reach and its state. Lands in DungeonClear.log.
-        static uint32 lastLog = 0;
+        // door is in reach and its state. Lands in DungeonClear.log. atomic because
+        // bot AI ticks run on the MapUpdate.Threads pool — the throttle stamp is
+        // read/written from multiple map threads (the check-then-set race is benign).
+        static std::atomic<uint32> lastLog{0};
         uint32 const now = getMSTime();
         if (getMSTimeDiff(lastLog, now) >= 5000)
         {

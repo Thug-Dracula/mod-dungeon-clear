@@ -35,6 +35,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
@@ -119,8 +120,9 @@ namespace DcActionShared
     void DisableDungeonClear(PlayerbotAI* botAI, std::string const& reason)
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
+        Player* bot = botAI->GetBot();
         ctx->GetValue<bool>("dungeon clear enabled")->Set(false);
-        if (Player* bot = botAI->GetBot())
+        if (bot)
             DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
         ctx->GetValue<bool>("dungeon clear paused")->Set(false);
         ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
@@ -142,6 +144,16 @@ namespace DcActionShared
         // One reset clears the whole advanced-pull FSM (phase / dwell timer / camp /
         // breadcrumb trail / abort + tag latches / Dynamic verdict) in lockstep.
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
+        // Pull-session teardown, previously only on the chat `dc off` path: revert
+        // the pull preference to Dynamic, disarm the behavioral bool, and REVOKE the
+        // leader's pull-session daze immunity. Folding these in here is the fix for a
+        // party-death / dungeon-exit disable (which routes through this function)
+        // leaving the tank permanently daze-immune — the revoke was formerly
+        // reachable only via ApplyPullSetting and DcOffAction.
+        ctx->GetValue<uint32>("dungeon clear pull setting")->Set(2u);
+        ctx->GetValue<bool>("dungeon clear pull mode")->Set(false);
+        if (bot)
+            DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
     }
@@ -199,15 +211,23 @@ namespace DcActionShared
     // Commit a freshly-built path into the cache and reset the follower so we
     // don't index off the end of a shorter polyline. Shared by the sync and
     // async install sites.
+    // `builtToward` is the position the route was actually built to reach; the
+    // retarget baseline (longPathTargetPos, measured by EnsureLongPath's `moved`
+    // drift check) must be stamped from it, NOT the current-tick target coords.
+    // They differ on the async path: the route was built toward the submit-time
+    // coords (raw.tx/ty/tz) while `target` may have drifted during the pending
+    // window (a patrolling boss). nullptr = built toward the target's live coords
+    // (all synchronous sites).
     void InstallLongPath(Player* bot, AiObjectContext* ctx, DcApproachState& appr,
                          DungeonBossInfo const& target,
-                         ChunkedPathfinder::Result&& built, uint32 now, char const* how)
+                         ChunkedPathfinder::Result&& built, uint32 now, char const* how,
+                         Position const* builtToward = nullptr)
     {
         ChunkedPathfinder::Result& path =
             ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
         path = std::move(built);
         appr.longPathTargetEntry = target.entry;
-        appr.longPathTargetPos = Position(target.x, target.y, target.z);
+        appr.longPathTargetPos = builtToward ? *builtToward : Position(target.x, target.y, target.z);
         appr.longPathExpiresMs = now + DC_LONG_PATH_TTL_MS;
 
         size_t const firstSegPts = path.segments.empty() ? 0 : path.segments.front().polyline.size();
@@ -298,7 +318,12 @@ namespace DcActionShared
                     built = StridedPathfinder::Build(bot, target.mapId, target.entry,
                                                      target.x, target.y, target.z, 16, /*skipLongRange*/ true);
                 }
-                InstallLongPath(bot, ctx, appr, target, std::move(built), now, "async");
+                // Stamp the retarget baseline from the coords the route was BUILT
+                // toward (raw.tx/ty/tz), not target's possibly-drifted live coords,
+                // so EnsureLongPath's `moved` check measures live-boss drift against
+                // the right anchor.
+                Position const builtToward(raw.tx, raw.ty, raw.tz);
+                InstallLongPath(bot, ctx, appr, target, std::move(built), now, "async", &builtToward);
                 return;
             }
             LOG_DEBUG("playerbots.dungeonclear",

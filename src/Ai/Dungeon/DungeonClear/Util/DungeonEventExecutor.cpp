@@ -489,9 +489,17 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // The at-objective Hold keeps the leader on the checkpoint; with a
             // generous gate radius the objective's own arrival always satisfies this,
             // so the teleport never fires from mid-ramp. (Reached only if combat
-            // somehow displaced the leader; wait for it to settle back.)
+            // somehow displaced the leader.) Actively re-approach the checkpoint —
+            // mirroring the MoveTo step — instead of passively waiting on a hold
+            // nothing drives: without this a fight at the checkpoint that drags the
+            // leader >radius idles the (required) event until its timeout fails it
+            // into a stall. By construction the checkpoint is connected mesh the
+            // leader stood on seconds ago.
             if (bot->GetExactDist(step.x, step.y, step.z) > radius)
+            {
+                HopTo(bot, step.x, step.y, step.z);
                 return StepResult::Running;
+            }
             bot->GetMotionMaster()->Clear();
             bot->NearTeleportTo(step.landX, step.landY, step.landZ, bot->GetOrientation());
             PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);

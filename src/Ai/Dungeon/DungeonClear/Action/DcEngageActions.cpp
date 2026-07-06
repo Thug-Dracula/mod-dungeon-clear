@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -1774,6 +1775,15 @@ namespace DcHakkar
     std::map<uint32, std::unordered_set<ObjectGuid>> g_bloodTaken;
     std::map<uint32, uint32> g_lastStatusMs;  // leader-only status heartbeat throttle
 
+    // One lock covering all three registries. They are keyed by instance id, and
+    // two concurrent Sunken Temple instances tick on different MapUpdater threads
+    // (the realm runs a high MapUpdate.Threads pool), so the map *structure* —
+    // operator[] node insertion and erase — races across threads. Same discipline
+    // as g_leaderCache/g_leaderCombatSince in DcLeaderSignal. The per-instance set
+    // contents are only ever touched by that instance's own map thread, so callers
+    // that iterate a set copy it under the lock and scan the snapshot lock-free.
+    std::mutex g_hakkarMutex;
+
     // True while the Avatar encounter is live: in the Sanctum and the Shade (8440,
     // present only during the event) or a Suppressor is up nearby.
     bool EncounterLive(Player* bot)
@@ -1793,10 +1803,13 @@ namespace DcHakkar
         if (!bot || !DcLeaderSignal::IsDungeonClearLeader(bot))
             return;
         uint32 const now = getMSTime();
-        uint32& last = g_lastStatusMs[bot->GetInstanceId()];
-        if (last != 0 && (now - last) < 5000)
-            return;
-        last = now;
+        {
+            std::lock_guard<std::mutex> lock(g_hakkarMutex);
+            uint32& last = g_lastStatusMs[bot->GetInstanceId()];
+            if (last != 0 && (now - last) < 5000)
+                return;
+            last = now;
+        }
 
         std::list<Creature*> supps;
         bot->GetCreatureListWithEntryInGrid(supps, NPC_SUPPRESSOR, SCAN);
@@ -1809,9 +1822,14 @@ namespace DcHakkar
                     ++channelling;
             }
         bool const shade = bot->FindNearestCreature(NPC_SHADE, SCAN, /*alive*/ true) != nullptr;
+        uint32 dousedCount;
+        {
+            std::lock_guard<std::mutex> lock(g_hakkarMutex);
+            dousedCount = static_cast<uint32>(g_doused[bot->GetInstanceId()].size());
+        }
         LOG_INFO("playerbots.dungeonclear",
                  "[dungeon-clear] Hakkar status: flames {}/4 | suppressors {} alive ({} channelling) | shade {}",
-                 static_cast<uint32>(g_doused[bot->GetInstanceId()].size()), suppAlive, channelling,
+                 dousedCount, suppAlive, channelling,
                  shade ? "up" : "gone");
     }
 
@@ -1827,6 +1845,7 @@ namespace DcHakkar
         }
         if (bot)
         {
+            std::lock_guard<std::mutex> lock(g_hakkarMutex);
             g_doused.erase(bot->GetInstanceId());
             g_bloodTaken.erase(bot->GetInstanceId());
             g_lastStatusMs.erase(bot->GetInstanceId());
@@ -1866,7 +1885,11 @@ namespace DcHakkar
     {
         if (!bot)
             return nullptr;
-        std::unordered_set<ObjectGuid> const& taken = g_bloodTaken[bot->GetInstanceId()];
+        std::unordered_set<ObjectGuid> taken;
+        {
+            std::lock_guard<std::mutex> lock(g_hakkarMutex);
+            taken = g_bloodTaken[bot->GetInstanceId()];
+        }
         std::list<Creature*> keepers;
         bot->GetCreatureListWithEntryInGrid(keepers, NPC_BLOODKEEPER, SCAN);
         Creature* best = nullptr;
@@ -1890,7 +1913,11 @@ namespace DcHakkar
     {
         if (!bot)
             return nullptr;
-        std::unordered_set<ObjectGuid> const& used = g_doused[bot->GetInstanceId()];
+        std::unordered_set<ObjectGuid> used;
+        {
+            std::lock_guard<std::mutex> lock(g_hakkarMutex);
+            used = g_doused[bot->GetInstanceId()];
+        }
         GameObject* best = nullptr;
         float bestDist = 0.0f;
         for (uint32 entry : FLAMES)
@@ -1967,8 +1994,13 @@ bool DungeonClearHakkarFlameAction::Execute(Event /*event*/)
     // each douse costs a blood (4 gathered across the party) and the flame
     // trigger's HasItemCount gate re-arms so the carrier loots more once empty.
     bot->DestroyItemCount(DcHakkar::ITEM_HAKKARI_BLOOD, 1, /*update*/ true);
-    DcHakkar::g_doused[bot->GetInstanceId()].insert(flame->GetGUID());
-    uint32 const doused = DcHakkar::g_doused[bot->GetInstanceId()].size();
+    uint32 doused;
+    {
+        std::lock_guard<std::mutex> lock(DcHakkar::g_hakkarMutex);
+        auto& set = DcHakkar::g_doused[bot->GetInstanceId()];
+        set.insert(flame->GetGUID());
+        doused = static_cast<uint32>(set.size());
+    }
     LOG_INFO("playerbots.dungeonclear",
              "[dungeon-clear] {} doused Eternal Flame {} ({}/4 flames doused{})",
              bot->GetName(), flame->GetGUID().ToString(), doused,
@@ -2029,7 +2061,10 @@ bool DungeonClearHakkarLootBloodAction::Execute(Event /*event*/)
     if (!got && sawBlood)
         return false;
 
-    DcHakkar::g_bloodTaken[bot->GetInstanceId()].insert(keeper->GetGUID());
+    {
+        std::lock_guard<std::mutex> lock(DcHakkar::g_hakkarMutex);
+        DcHakkar::g_bloodTaken[bot->GetInstanceId()].insert(keeper->GetGUID());
+    }
     LOG_INFO("playerbots.dungeonclear",
              "[dungeon-clear] {} looted Hakkari Blood from Bloodkeeper {} (got={})",
              bot->GetName(), keeper->GetGUID().ToString(), got);

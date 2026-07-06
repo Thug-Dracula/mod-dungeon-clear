@@ -348,6 +348,32 @@ DungeonClear.RoomAggroPathPadding = 3.0
 DungeonClear.RoomAggroPartyMargin = 10.0
 
 #
+#    DungeonClear.ObjectiveArriveRadius
+#        Default arrival radius (yards) at which a non-combat TRAVEL objective
+#        (a BossRosterRegistry anchor, e.g. a Sunken Temple event waypoint) is
+#        marked reached and the clear advances. A roster row may override this
+#        per-anchor; when it doesn't, this value is used.
+#
+#        Default: 8.0
+#
+
+DungeonClear.ObjectiveArriveRadius = 8.0
+
+#
+#    DungeonClear.EventStepTimeout
+#        Per-step timeout (SECONDS) for the declarative dungeon-event executor
+#        (DungeonEventRegistry / DungeonEventExecutor). A single step that keeps
+#        returning Running for this long is treated as failed: a REQUIRED event
+#        then stalls for the human, an OPTIONAL one is skipped and the clear
+#        advances. Used only when a step doesn't set its own timeout. Kept
+#        generous so a slow approach plus a scripted sequence isn't cut short.
+#
+#        Default: 30
+#
+
+DungeonClear.EventStepTimeout = 30
+
+#
 #    DungeonClear.BossEngageRangeFloor / DungeonClear.BossEngageRangeCap
 #        Clamp the dynamic boss engage hand-off distance to [floor, cap] yards.
 #        The floor keeps the tank from having to reach point-blank melee on a
