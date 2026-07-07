@@ -183,6 +183,13 @@ namespace
     }
 }
 
+namespace
+{
+    bool StrZig1(Player* bot, AiObjectContext* context);
+    bool StrZig2(Player* bot, AiObjectContext* context);
+    bool StrZig3(Player* bot, AiObjectContext* context);
+}
+
 void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
 {
     // --- three ziggurat acolyte clears (conditional, fire on door-open) ----
@@ -209,21 +216,21 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                       .Build());
 
     out.push_back(EventBuilder(329, 1, "Ziggurat 1 acolytes (Baroness)")
-                      .Conditional(5)
+                      .Conditional(&StrZig1)
                       .PanelBeforeBoss(STR_NERUBENKAN)
                       .ClearRadius(STR_ZIG1_X, STR_ZIG1_Y, STR_ZIG1_Z,
                                    STR_ZIG_RADIUS, STR_ZIG_ZBAND)
                       .Build());
 
     out.push_back(EventBuilder(329, 2, "Ziggurat 2 acolytes (Nerub'enkan)")
-                      .Conditional(6)
+                      .Conditional(&StrZig2)
                       .PanelBeforeBoss(STR_MALEKI)
                       .ClearRadius(STR_ZIG2_X, STR_ZIG2_Y, STR_ZIG2_Z,
                                    STR_ZIG_RADIUS, STR_ZIG_ZBAND)
                       .Build());
 
     out.push_back(EventBuilder(329, 3, "Ziggurat 3 acolytes (Maleki)")
-                      .Conditional(7)
+                      .Conditional(&StrZig3)
                       // After Maleki's clear the next anchor is the Slaughterhouse
                       // objective; sort just before it (all three ziggurats must be
                       // cleared before that gate opens).
@@ -289,9 +296,3 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                       .Build());
 }
 
-void RegisterStratholmeConditions(EventConditionMap& out)
-{
-    out[5] = &StrZig1;
-    out[6] = &StrZig2;
-    out[7] = &StrZig3;
-}

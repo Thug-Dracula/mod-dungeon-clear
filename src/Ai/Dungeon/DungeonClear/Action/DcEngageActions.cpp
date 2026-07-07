@@ -442,7 +442,7 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
     // The old gate (IsRoomClearActive) ALSO required IsAtBossEngage, i.e. the
     // skirt only armed once the tank was already AT the boss's aggro edge. But
     // the room-aggro pre-clear event engages the nearest trash from far out (its
-    // condition has no distance gate — see EventConditionRegistry::RoomAggroPreClear),
+    // condition has no distance gate — see DcRoomAggroPreClearCondition),
     // so during the approach EngageDirect ran with the skirt OFF and bee-lined a
     // straight line that could cut clean through the boss's aggro sphere before
     // the skirt ever armed. That is the live SM Cathedral failure: the tank walks

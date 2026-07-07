@@ -25,7 +25,7 @@
 void RegisterScarletMonasteryEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(189, 1, "Clear the Cathedral (room-aggro pre-clear)")
-                      .Conditional(3)
+                      .Conditional(&DcRoomAggroPreClearCondition)
                       .KillCreature(/*room trash*/ 0)
                       .Build());
 }

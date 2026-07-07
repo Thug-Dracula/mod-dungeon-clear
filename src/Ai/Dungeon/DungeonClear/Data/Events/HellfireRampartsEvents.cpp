@@ -40,10 +40,15 @@
 // Vazruden's encounter bit is set (killed), ending the loop. Folded under
 // Vazruden in the panel.
 
+namespace
+{
+    bool HfrApproach(Player* bot, AiObjectContext* context);
+}
+
 void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(543, 1, "Approach Vazruden")
-                      .Conditional(16)
+                      .Conditional(&HfrApproach)
                       .Repeatable()
                       .PanelBeforeBoss(/*Vazruden*/ 17537)
                       // Dead centre between the two Hellfire Sentries
@@ -98,7 +103,3 @@ namespace
     }
 }
 
-void RegisterHellfireRampartsConditions(EventConditionMap& out)
-{
-    out[16] = &HfrApproach;
-}

@@ -11,7 +11,6 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
-#include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 
@@ -79,20 +78,20 @@ TEST(DungeonEventIntegrityTest, EventTableIsNonEmpty)
 
 // --- F2: dangling cross-references ----------------------------------------
 
-TEST(DungeonEventIntegrityTest, ConditionalEventsHaveRegisteredCondition)
+TEST(DungeonEventIntegrityTest, ConditionalEventsHaveBoundCondition)
 {
-    // An unregistered conditionId evaluates false forever, so a Required conditional
-    // event is a silent wall (the run stalls at a shut door, never naming the event).
+    // A Conditional event with no bound predicate never fires, so a Required one is
+    // a silent wall (the run stalls at a shut door, never naming the event). With
+    // the id space replaced by a function pointer (.Conditional(&Predicate)), a
+    // wrong name is now a compile error; this lint still catches the one remaining
+    // authoring slip — a Conditional() call that was never given a predicate.
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
     {
         if (ev.activation != EventActivation::Conditional)
             continue;
-        EXPECT_NE(ev.conditionId, 0u)
+        EXPECT_TRUE(static_cast<bool>(ev.condition))
             << "conditional event map " << ev.mapId << " id " << ev.id
-            << " (" << ev.name << ") has conditionId 0 — it can never fire";
-        EXPECT_TRUE(EventConditionRegistry::Has(ev.conditionId))
-            << "conditional event map " << ev.mapId << " id " << ev.id
-            << " (" << ev.name << ") references unregistered conditionId " << ev.conditionId;
+            << " (" << ev.name << ") has no bound condition — it can never fire";
     }
 }
 

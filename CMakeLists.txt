@@ -127,4 +127,7 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    a mapId) and screened in the StridedPathfinder fallback too.)
 # Action/DcHakkar.cpp (Sunken Temple Avatar of Hakkar orchestration split out of
 #   DcEngageActions.cpp — fable2 T2.5)
+# REMOVED Data/EventConditionRegistry.{h,cpp}: conditional-event activation is now
+#   a function pointer on DungeonEvent (.Conditional(&Predicate)), so the global
+#   condition-id registry + id ledger are gone (fable2 T2.3 / events F7)
 # (this comment bumps mtime to force CMake re-glob on next build)

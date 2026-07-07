@@ -172,10 +172,15 @@ namespace
     // conditional predicate is needed for either.
 }
 
+namespace
+{
+    bool UldamanIronayaSeal(Player* bot, AiObjectContext* context);
+}
+
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(70, 1, "Unseal Ironaya (Seal of Khaz'Mul)")
-                      .Conditional(8)
+                      .Conditional(&UldamanIronayaSeal)
                       // Render in the panel just before Ironaya (cosmetic; does not
                       // affect engine ordering — the seal is opened on her gate).
                       .PanelBeforeBoss(ULD_IRONAYA)
@@ -253,7 +258,3 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
                       .Build());
 }
 
-void RegisterUldamanConditions(EventConditionMap& out)
-{
-    out[8] = &UldamanIronayaSeal;
-}

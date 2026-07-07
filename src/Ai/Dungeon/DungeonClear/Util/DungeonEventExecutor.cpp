@@ -26,7 +26,6 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
-#include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
@@ -720,7 +719,7 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
         // Already done this run — its synthetic latch key is set.
         if (cleared.count(ConditionalLatchKey(ev->id)))
             continue;
-        if (EventConditionRegistry::Evaluate(ev->conditionId, bot, context))
+        if (ev->condition && ev->condition(bot, context))
             return ev;
     }
     return nullptr;
@@ -755,7 +754,7 @@ void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
         if (cleared.count(lk))
             continue;
 
-        if (EventConditionRegistry::Evaluate(ev->conditionId, bot, context))
+        if (ev->condition && ev->condition(bot, context))
         {
             // Currently due: remember we saw it active so a later transition to
             // not-due reads as completion rather than not-yet-started.
