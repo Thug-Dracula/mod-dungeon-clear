@@ -123,14 +123,38 @@ namespace
         return ObjectiveArriveResult::Running;  // door-state gate confirms it
     }
 
+    // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
+    // Brazen (18725) only offers his drake ride to Durnholde Keep when the player
+    // HOLDS the Pack of Incendiary Bombs (item 25853) — gossip menu 7959 option 0
+    // is condition-gated on that item. A player gets the pack by talking to Erozion
+    // (18723), but Erozion's grant option is quest-gated (quest 10283 "Taretha's
+    // Diversion" taken/rewarded), which a bot never has — so the bot can never
+    // select Erozion's gossip. Grant the pack directly (mechanically identical to
+    // Erozion's AddItem) so Brazen's ride option then appears. Idempotent: Done
+    // once the tank holds it. (The same pack is used to bomb the barrels in
+    // objective 2 — the UseItemOnGO step also self-grants as a backstop.)
+    constexpr uint32 OH_ITEM_INCENDIARY_BOMBS = 25853;
+
+    ObjectiveArriveResult GrantIncendiaryBombs(Player* bot, AiObjectContext* /*context*/,
+                                               DungeonBossInfo const& /*info*/)
+    {
+        if (bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS))
+            return ObjectiveArriveResult::Done;
+        bot->AddItem(OH_ITEM_INCENDIARY_BOMBS, 1);
+        return bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS)
+                   ? ObjectiveArriveResult::Done
+                   : ObjectiveArriveResult::Running;  // bags full this tick — retry
+    }
+
     // hookId -> behaviour. To give an objective on-arrival behaviour, add a row
     // here and reference its id from a BossRosterRegistry objective (onArriveHook)
     // or a Custom event step (DungeonEventRegistry).
     std::unordered_map<uint32, ObjectiveHookRegistry::Hook> const& Hooks()
     {
         static std::unordered_map<uint32, ObjectiveHookRegistry::Hook> const kHooks = {
-            { 1, &EnsureRingStarted },  // BRD Ring of Law — start the arena event
-            { 2, &FireDefiasCannon },   // Deadmines — fire the cannon, open the door
+            { 1, &EnsureRingStarted },       // BRD Ring of Law — start the arena event
+            { 2, &FireDefiasCannon },        // Deadmines — fire the cannon, open the door
+            { 3, &GrantIncendiaryBombs },    // Old Hillsbrad — pack of bombs (unlocks Brazen)
         };
         return kHooks;
     }

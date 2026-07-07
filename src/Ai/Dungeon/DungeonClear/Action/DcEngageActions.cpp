@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -795,8 +796,47 @@ namespace
     // trips this). Generous so a brief stutter never mis-fires.
     constexpr uint32 DC_ESCORT_DEAD_AIR_MS = 15000;
 
+    // Mirror the escortee's run speed onto every BOT in the party (the leader
+    // included) so the party keeps up when the escortee mounts and rides off. Old
+    // Hillsbrad's Thrall gallops to Tarren Mill at 1.6x and his npc_escortAI HARD-
+    // RESETS him if no party member stays within 100yd (DEFAULT_MAX_PLAYER_DISTANCE)
+    // — so without this the ride resets the escort every time. Never slows the party
+    // below normal (floored at 1.0) and never touches a human (client desync).
+    // Idempotent per tick: only re-sends when the rate actually changed, so it is a
+    // no-op for an un-mounted escort (Wailing Caverns' Disciple, always rate 1.0).
+    void ApplyEscortPartyRunSpeed(Player* leader, float rate)
+    {
+        if (!leader)
+            return;
+        if (rate < 1.0f)
+            rate = 1.0f;
+        auto boost = [rate](Player* p)
+        {
+            if (!p || !p->IsInWorld() || !GET_PLAYERBOT_AI(p))
+                return;
+            if (std::fabs(p->GetSpeedRate(MOVE_RUN) - rate) > 0.01f)
+                p->SetSpeed(MOVE_RUN, rate, /*forced*/ true);
+        };
+        boost(leader);
+        Group* group = leader->GetGroup();
+        if (!group)
+            return;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == leader)
+                continue;
+            if (member->GetMapId() != leader->GetMapId())
+                continue;
+            boost(member);
+        }
+    }
+
     // True once the escort's final boss exists (grid scan) or its encounter bit
-    // is set — mirrors the RunStep gate so the action and the gate agree.
+    // is set — mirrors the RunStep gate so the action and the gate agree. Also
+    // completes on the map's monotonic progress counter reaching a threshold
+    // (Old Hillsbrad's Thrall escort ends on DATA_ESCORT_PROGRESS == FINISHED,
+    // not on a boss going live).
     bool EscortComplete(Player* bot, EventStep const& step)
     {
         if (step.escortDoneEntry &&
@@ -807,6 +847,13 @@ namespace
             InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
             if (inst && (inst->GetCompletedEncounterMask() &
                          (1u << static_cast<uint32>(step.escortDoneBit))))
+                return true;
+        }
+        if (step.instanceDataId >= 0)
+        {
+            InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+            if (inst && inst->GetData(static_cast<uint32>(step.instanceDataId)) >=
+                            step.instanceDataMin)
                 return true;
         }
         return false;
@@ -868,21 +915,30 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
     // Final boss exists -> escort is over. Don't own the tick: the caller falls
     // through to Drive, whose RunStep gate returns Done and latches the objective.
     if (EscortComplete(bot, step))
+    {
+        ApplyEscortPartyRunSpeed(bot, 1.0f);  // drop any mounted-ride speed boost
         return false;
+    }
 
     float const searchR = step.radius > 0.0f ? step.radius : 80.0f;
     Creature* escortee = bot->FindNearestCreature(step.creatureEntry, searchR, /*alive*/ true);
 
     // Escortee absent (died and mid-respawn, or briefly out of the grid). Hold and
     // let the watchdog flag a genuine never-returns stall; the start branch below
-    // re-runs the gossip once he reappears idle at spawn.
+    // re-runs the gossip once he reappears idle at spawn. Drop any ride boost so a
+    // brief loss mid-ride can't strand a bot at 1.6x.
     if (!escortee)
     {
+        ApplyEscortPartyRunSpeed(bot, 1.0f);
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         SetPhase(context, "escort");
         EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false, "the escort");
         return true;
     }
+
+    // Keep the party at the escortee's pace so a mounted ride never outruns it (and
+    // resets his npc_escortAI). Mirrors his live run rate: 1.0 on foot, 1.6 mounted.
+    ApplyEscortPartyRunSpeed(bot, escortee->GetSpeedRate(MOVE_RUN));
 
     // (Re)start: idle at spawn (never started, or reset to idle after dying). Walk
     // to gossip range and start his scripted escort. Folded into the step (not a
@@ -907,6 +963,41 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
                      "[dungeon-clear] {} started the escort of {} (gossip option {})",
                      bot->GetName(), escortee->GetName(), step.gossipOption);
         prog.escortProgressMs = now;  // starting the escort IS progress
+        ClearStall(context);
+        return true;
+    }
+
+    // RESUME a paused, gossip-offering escortee. Old Hillsbrad's Thrall is not the
+    // WC idle-faction model: he keeps his real faction (1747) the whole way and
+    // instead raises UNIT_NPC_FLAG_GOSSIP at every checkpoint — freed from his cell,
+    // after Skarloc, outside the barn, at Taretha — and again after a death-reset
+    // (his AI repositions him to the last checkpoint, paused, awaiting a re-talk).
+    // Selecting his gossip routes by the instance's progress (release / mount-up /
+    // start-the-waves / Epoch cutscene), advances DATA_ESCORT_PROGRESS, and clears
+    // the flag — so this fires once per checkpoint and never loops. Gated on this
+    // being a progress-completed escort (instanceDataId >= 0) so the boss-gated WC
+    // escort is entirely unaffected. Requires him STILL so a mid-walk gossip (which
+    // is a no-op / could interrupt his path) is never attempted.
+    if (step.instanceDataId >= 0 && step.gossipOption >= 0 &&
+        escortee->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP) && !escortee->isMoving())
+    {
+        SetPhase(context, "escort");
+        if (!bot->IsWithinDistInMap(escortee, 5.0f))
+        {
+            DcMoveTo(bot->GetMapId(), escortee->GetPositionX(), escortee->GetPositionY(),
+                     escortee->GetPositionZ(), /*idle*/ false, /*react*/ false,
+                     /*normal_only*/ false, /*exact_waypoint*/ false,
+                     MovementPriority::MOVEMENT_NORMAL);
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ true, escortee->GetName());
+            return true;
+        }
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        if (DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} resumed the escort of {} at a checkpoint "
+                     "(gossip option {})",
+                     bot->GetName(), escortee->GetName(), step.gossipOption);
+        prog.escortProgressMs = now;  // resuming IS progress
         ClearStall(context);
         return true;
     }
@@ -1015,6 +1106,50 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
     return true;
 }
 
+bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
+{
+    if (!bot || step.goEntry == 0)
+        return false;
+
+    bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
+    float const castRange = step.radius > 0.0f ? step.radius : 8.0f;
+
+    // Resolve the target GO nearest the step's anchor (same pick as RunStep — the
+    // anchor sits on the specific barrel, so five same-entry barrels stay distinct).
+    std::list<GameObject*> gos;
+    bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
+    GameObject* target = nullptr;
+    float best = 1e18f;
+    for (GameObject* g : gos)
+    {
+        if (!g)
+            continue;
+        float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
+                                   : g->GetExactDist(bot);
+        if (d < best)
+        {
+            best = d;
+            target = g;
+        }
+    }
+
+    // Nothing to drive to, or already in cast range -> hand back to Drive; RunStep
+    // fires the GO (or, if the target is not loaded yet, HopTo's the anchor to load it).
+    if (!target || bot->IsWithinDistInMap(target, castRange))
+        return false;
+
+    // OWN THE TICK: drive a clean, sustained navigation to the barrel via the DC
+    // movement system, so the at-objective StopBot(Hold) — which cancels a plain
+    // MovePoint spline every tick — never chops the path and the tank actually
+    // threads the house doorway to the barrel inside.
+    SetPhase(context, "objective");
+    DcMoveTo(bot->GetMapId(), target->GetPositionX(), target->GetPositionY(),
+             target->GetPositionZ(), /*idle*/ false, /*react*/ false,
+             /*normal_only*/ false, /*exact_waypoint*/ false,
+             MovementPriority::MOVEMENT_NORMAL);
+    return true;
+}
+
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
@@ -1095,6 +1230,16 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             else if (step.kind == EventStepKind::DropInHole)
             {
                 if (DriveDropInHole(step))
+                    return true;
+            }
+            // UseItemOnGO: OWN THE TICK to drive the approach to the target GO with
+            // a sustained spline. Without this the StopBot(Hold) below cancels the
+            // approach every tick and the tank can't thread a house doorway to a
+            // barrel inside (it stalls "close but not inside"). Returns false once in
+            // cast range, so we fall through to Drive and RunStep fires the GO.
+            else if (step.kind == EventStepKind::UseItemOnGO)
+            {
+                if (DriveUseItemOnGO(step))
                     return true;
             }
         }

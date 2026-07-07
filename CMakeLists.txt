@@ -141,4 +141,11 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    RegroupInputs) -> RegroupVerdict — "reconnect only when a follower truly can't
 #    contribute". Engine-free, edge-pinned by t/TestCombatRegroup. Drives the
 #    rewritten DungeonClearRegroupCombat{Trigger,Action}.)
+# Data/Events/OldHillsbradEvents.cpp
+#   (Escape from Durnholde, map 560: Brazen ride -> bomb 5 barrels + Lt. Drake ->
+#    ONE EscortCreature step freeing Thrall and assisting him through Skarloc, the
+#    mounted Tarren Mill ride, the barn/church/inn waves and Epoch Hunter, gated on
+#    the instance progress counter. New step kind UseItemOnGO (cast a quest-item
+#    spell AT a positioned GO — the barrel-bomb SPELLHIT); EscortCreature gains an
+#    instance-data completion gate, a gossip-flag resume, and party mount speed-match.)
 # (this comment bumps mtime to force CMake re-glob on next build)

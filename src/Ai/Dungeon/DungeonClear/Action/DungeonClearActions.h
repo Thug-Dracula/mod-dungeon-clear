@@ -141,6 +141,15 @@ protected:
     // returns false once the leader is on the deep floor, so the caller falls
     // through to Drive and RunStep's gate pulls the followers down + latches.
     bool DriveDropInHole(EventStep const& step);
+
+    // Drive a UseItemOnGO step's APPROACH (Old Hillsbrad's barrels, one inside each
+    // house). Owns the tick (returns true) while walking the tank to the target GO
+    // via the DC movement system, because the normal at-objective StopBot(Hold)
+    // cancels a plain MovePoint spline every tick — which crawls over open ground
+    // but can never thread a house DOORWAY (the tank stalls at the threshold, "close
+    // but not inside"). Returns false once within cast range, so the caller falls
+    // through to Drive and RunStep fires the GO.
+    bool DriveUseItemOnGO(EventStep const& step);
 };
 
 class DungeonClearAdvanceAction : public DcMovementAction

@@ -119,6 +119,18 @@ enum class EventStepKind : uint8
                              // Done immediately if the leader is already on the landing,
                              // so a tick-gap restart never re-teleports. Anchored only
                              // (one-way — the bot can't path back up).
+    UseItemOnGO,             // USE a quest item ON a positioned GameObject: grant the
+                             // item (itemId) if the bags lack it, then fire its use-
+                             // spell (spellId) AT the GO of goEntry nearest (x,y,z),
+                             // TRIGGERED, so the GO's SmartAI SMART_EVENT_SPELLHIT
+                             // fires. This is the "plant a bomb on a barrel" mechanic
+                             // (Old Hillsbrad's Durnholde barrels — item 25853, spell
+                             // 32744, GO 182589 — whose SmartAI counts a spellhit, not
+                             // a Use()). Distinct from UseGameObject (Use()s the GO —
+                             // never delivers a SPELLHIT) and UseItem (self-cast — no
+                             // GO target). The (x,y,z) anchor picks a SPECIFIC GO, so
+                             // five same-entry barrels are hit as five DISTINCT GOs.
+                             // One-shot: cast and Done (the GO does not change state).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -389,14 +401,33 @@ public:
     EventBuilder& Wait(uint32 durationMs);
     EventBuilder& Custom(uint32 hookId);
     // Protect a moving escortee (see EventStepKind::EscortCreature). `escortee` is
-    // the NPC entry, `startGossipOption` the menu option that starts its scripted
-    // escort (re-run on self-heal), `doneEntry`/`doneBit` the final boss whose
-    // existence/kill completes the step. The geometry knobs carry sensible
-    // defaults; `searchRadius` is the live-escortee grid scan radius.
+    // the NPC entry, `startGossipOption` the menu option that starts (and, when the
+    // escortee re-offers a gossip mid-route, RESUMES) its scripted escort, and
+    // `doneEntry`/`doneBit` the final boss whose existence/kill completes the step.
+    //
+    // `doneDataId`/`doneDataMin` are an ALTERNATIVE completion gate for an escort
+    // whose end is not marked by a boss going live but by the map's monotonic
+    // progress counter reaching a value (Old Hillsbrad's whole Thrall escort — one
+    // step from freeing him through Epoch Hunter's death — completes when
+    // DATA_ESCORT_PROGRESS reaches FINISHED). -1 => unused (boss-entry gate only).
+    // The two gates are OR'd: either satisfies completion.
+    //
+    // The geometry knobs carry sensible defaults; `searchRadius` is the live-
+    // escortee grid scan radius (widen it for a mounted escort that outpaces the
+    // party so the escortee is never lost off-grid).
     EventBuilder& EscortCreature(uint32 escortee, int32 startGossipOption,
                                  uint32 doneEntry, int32 doneBit,
                                  float standoff = 5.0f, float threatRadius = 18.0f,
-                                 float threatZBand = 20.0f, float searchRadius = 80.0f);
+                                 float threatZBand = 20.0f, float searchRadius = 80.0f,
+                                 int32 doneDataId = -1, uint32 doneDataMin = 0);
+    // Use a quest item ON a positioned GameObject (see EventStepKind::UseItemOnGO):
+    // approach the `goEntry` GO nearest (x,y,z), then cast `spellId` (granting
+    // `itemId` first for the cast-item context) AT it, so its SmartAI SPELLHIT fires
+    // (the Durnholde barrel-bomb). `radius` is the CAST REACH (0 => ~8yd — tight so
+    // the tank fires the barrel it is AT, not distant ones). The approach INTO the
+    // house is driven tick-owning (DriveUseItemOnGO) so the tank threads the doorway.
+    EventBuilder& UseItemOnGO(uint32 itemId, uint32 spellId, uint32 goEntry,
+                              float x, float y, float z, float radius = 0.0f);
     // Drop the party down a narrow vertical hole (see EventStepKind::DropInHole).
     // (overX,overY,overZ) is the over-hole nudge target the leader glides to (a
     // point whose column is open straight to the deep floor — NOT the lip, whose

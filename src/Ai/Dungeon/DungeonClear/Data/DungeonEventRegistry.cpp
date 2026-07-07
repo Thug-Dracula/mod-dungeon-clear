@@ -248,7 +248,8 @@ EventBuilder& EventBuilder::Custom(uint32 hookId)
 EventBuilder& EventBuilder::EscortCreature(uint32 escortee, int32 startGossipOption,
                                            uint32 doneEntry, int32 doneBit,
                                            float standoff, float threatRadius,
-                                           float threatZBand, float searchRadius)
+                                           float threatZBand, float searchRadius,
+                                           int32 doneDataId, uint32 doneDataMin)
 {
     EventStep& s = Add(EventStepKind::EscortCreature);
     s.creatureEntry = escortee;
@@ -259,6 +260,24 @@ EventBuilder& EventBuilder::EscortCreature(uint32 escortee, int32 startGossipOpt
     s.escortThreatRadius = threatRadius;
     s.zBand = threatZBand;
     s.radius = searchRadius;
+    // Reuse the shared instance-data fields as the alternative completion gate:
+    // the EscortCreature RunStep/driver read GetData(instanceDataId) >= min.
+    s.instanceDataId = doneDataId;
+    s.instanceDataMin = doneDataMin;
+    return *this;
+}
+
+EventBuilder& EventBuilder::UseItemOnGO(uint32 itemId, uint32 spellId, uint32 goEntry,
+                                        float x, float y, float z, float radius)
+{
+    EventStep& s = Add(EventStepKind::UseItemOnGO);
+    s.itemId = itemId;
+    s.spellId = spellId;
+    s.goEntry = goEntry;
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
     return *this;
 }
 
@@ -325,6 +344,7 @@ namespace
             RegisterBloodFurnaceEvents(t);
             RegisterSlavePensEvents(t);
             RegisterUnderbogEvents(t);
+            RegisterOldHillsbradEvents(t);
             return t;
         }();
         return kEvents;

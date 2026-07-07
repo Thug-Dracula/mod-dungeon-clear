@@ -6,6 +6,7 @@
 #include "DungeonEventExecutor.h"
 
 #include <cmath>
+#include <list>
 #include <optional>
 #include <unordered_set>
 
@@ -159,11 +160,39 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     // Send the NPC's OWN guid: HandleGossipSelectOptionOpcode rejects the select
     // unless the packet guid equals the open menu's sender GUID, and a real bot's
     // master isn't targeting this NPC. See the Gossip step note below.
-    WorldPacket select;
-    select << npc->GetGUID() << menu.GetMenuId()
-           << static_cast<uint32>(option);
-    select << std::string();  // no coded box
-    bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    auto sendSelect = [&](uint32 menuId, uint32 opt)
+    {
+        WorldPacket select;
+        select << npc->GetGUID() << menuId << opt;
+        select << std::string();  // no coded box
+        bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    };
+
+    // Capture the id BEFORE selecting: the select rebuilds PlayerTalkClass's menu
+    // in place (opening a submenu), so `menu.GetMenuId()` would already read the
+    // submenu's id afterward.
+    uint32 lastMenuId = menu.GetMenuId();
+    sendSelect(lastMenuId, static_cast<uint32>(option));
+
+    // DRILL DOWN through submenus: some scripted NPCs put the option that fires
+    // their action behind one or more nested gossip menus (Old Hillsbrad's Thrall,
+    // post-Skarloc: menu 7830 -> 7829 -> 7831, and only 7831's option triggers his
+    // DoAction). A single select would just open the next submenu into
+    // PlayerTalkClass and never reach the terminal option — so keep selecting
+    // option 0 of whatever menu is now open until it CLOSES (the terminal select
+    // ClearGossipMenuFor's it). Bounded, and bails if the menu stops changing, so a
+    // self-referential menu can't loop. A plain single-level gossip (the common
+    // case) closes on the first select and skips the loop entirely.
+    for (int guard = 0; guard < 6; ++guard)
+    {
+        GossipMenu& sub = bot->PlayerTalkClass->GetGossipMenu();
+        if (sub.GetMenuItems().empty() || !sub.GetItem(0))
+            break;  // menu closed -> the terminal option fired
+        if (sub.GetMenuId() == lastMenuId)
+            break;  // no new submenu opened -> nothing more to drill
+        lastMenuId = sub.GetMenuId();
+        sendSelect(sub.GetMenuId(), 0);
+    }
     return true;
 }
 
@@ -436,6 +465,17 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                              (1u << static_cast<uint32>(step.escortDoneBit))))
                     return StepResult::Done;
             }
+            // Instance-data completion (Old Hillsbrad's Thrall escort ends not on a
+            // boss going live but on the map's monotonic progress counter reaching
+            // FINISHED). Monotonic, so a >= gate can't be missed while the engine is
+            // dormant in combat.
+            if (step.instanceDataId >= 0)
+            {
+                InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+                if (inst && inst->GetData(static_cast<uint32>(step.instanceDataId)) >=
+                                step.instanceDataMin)
+                    return StepResult::Done;
+            }
             return StepResult::Running;
         }
 
@@ -559,6 +599,71 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             SpellCastTargets targets;
             targets.SetUnitTarget(bot);
             bot->CastItemUseSpell(item, targets, 0, 0);
+            return StepResult::Done;
+        }
+
+        case EventStepKind::UseItemOnGO:
+        {
+            // Plant a bomb on the barrel the step's (x,y,z) anchor sits on. The
+            // barrel's only interaction is SMART_EVENT_SPELLHIT of the bomb spell
+            // (a plain Use() does nothing), so we cast the spell AT the GO, triggered.
+            // The approach INTO the house is driven tick-owning (DriveUseItemOnGO);
+            // this RunStep resolves the target and fires once the tank is at it.
+            //
+            // Target the goEntry GO NEAREST THE ANCHOR (not nearest the tank): the
+            // party bombs one barrel per house and the barrels share an entry, so an
+            // anchor-relative pick keeps five barrels five DISTINCT targets.
+            if (step.spellId == 0 || step.goEntry == 0)
+                return StepResult::Done;
+
+            bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
+            float const castRange = step.radius > 0.0f ? step.radius : 8.0f;
+
+            std::list<GameObject*> gos;
+            bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
+            GameObject* target = nullptr;
+            float best = 1e18f;
+            for (GameObject* g : gos)
+            {
+                if (!g)
+                    continue;
+                float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
+                                           : g->GetExactDist(bot);
+                if (d < best)
+                {
+                    best = d;
+                    target = g;
+                }
+            }
+            if (!target)
+            {
+                // Barrel not in grid range yet — walk toward the anchor to load it.
+                if (haveAnchor)
+                    HopTo(bot, step.x, step.y, step.z);
+                return StepResult::Running;
+            }
+            if (!bot->IsWithinDistInMap(target, castRange))
+            {
+                HopTo(bot, target->GetPositionX(), target->GetPositionY(),
+                      target->GetPositionZ());
+                return StepResult::Running;
+            }
+
+            // At the barrel. Grant the quest item so the cast carries its item
+            // context (bots never ran the questline that awards it), then fire the
+            // bomb spell AT the GO — the SmartAI SPELLHIT counts it.
+            Item* item = step.itemId ? bot->GetItemByEntry(step.itemId) : nullptr;
+            if (step.itemId && !item)
+            {
+                bot->AddItem(step.itemId, 1);
+                item = bot->GetItemByEntry(step.itemId);
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} event-step UseItemOnGO: cast {} on GO {} '{}' "
+                     "(dist {:.1f})",
+                     bot->GetName(), step.spellId, target->GetGUID().ToString(),
+                     target->GetName(), bot->GetExactDist(target));
+            bot->CastSpell(target, step.spellId, /*triggered*/ true, item);
             return StepResult::Done;
         }
 

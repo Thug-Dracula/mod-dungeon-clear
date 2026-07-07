@@ -48,6 +48,7 @@ namespace
             RegisterHellfireRampartsRoster(t);
             RegisterSlavePensRoster(t);
             RegisterUnderbogRoster(t);
+            RegisterOldHillsbradRoster(t);
             return t;
         }();
         return kPatches;
