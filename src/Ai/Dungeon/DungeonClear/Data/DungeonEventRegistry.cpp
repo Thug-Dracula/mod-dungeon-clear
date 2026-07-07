@@ -33,10 +33,10 @@ EventBuilder& EventBuilder::Anchored(uint32 orderIndex)
     return *this;
 }
 
-EventBuilder& EventBuilder::Conditional(uint32 conditionId)
+EventBuilder& EventBuilder::Conditional(EventCondition condition)
 {
     _ev.activation = EventActivation::Conditional;
-    _ev.conditionId = conditionId;
+    _ev.condition = std::move(condition);
     return *this;
 }
 

@@ -123,7 +123,7 @@ public:
     }
 
     // IMPURE: the first un-latched Conditional event registered for `mapId`
-    // whose EventConditionRegistry predicate is currently true; nullptr if none
+    // whose activation predicate (DungeonEvent::condition) is currently true; nullptr if none
     // is due. Shared by the conditional-event trigger (gate) and DcRunEventAction
     // (driver) so the two never disagree about which event is active.
     static DungeonEvent const* FindDueConditionalEvent(Player* bot, AiObjectContext* context,

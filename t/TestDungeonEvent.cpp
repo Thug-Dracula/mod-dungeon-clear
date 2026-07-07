@@ -6,7 +6,6 @@
 #include "gtest/gtest.h"
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
-#include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
@@ -84,9 +83,9 @@ TEST(EventBuilderTest, JumpStepDefaultRadius)
 
 TEST(EventBuilderTest, OptionalAndConditionalFlags)
 {
-    DungeonEvent e = EventBuilder(1, 1, "c").Conditional(42).Wait(500).Optional().Build();
+    DungeonEvent e = EventBuilder(1, 1, "c").Conditional([](Player*, AiObjectContext*) { return false; }).Wait(500).Optional().Build();
     EXPECT_EQ(e.activation, EventActivation::Conditional);
-    EXPECT_EQ(e.conditionId, 42u);
+    EXPECT_TRUE(static_cast<bool>(e.condition));
     EXPECT_FALSE(e.required);
     ASSERT_EQ(e.steps.size(), 1u);
     EXPECT_EQ(e.steps[0].kind, EventStepKind::Wait);
@@ -746,8 +745,7 @@ TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
     {
         DungeonEvent const* e = DungeonEventRegistry::Find(329, id);
         ASSERT_NE(e, nullptr);
-        EXPECT_EQ(e->conditionId, id + 4u);
-        EXPECT_TRUE(EventConditionRegistry::Has(id + 4u));
+        EXPECT_TRUE(static_cast<bool>(e->condition));
     }
 
     // Each acolyte clear sorts in the panel just before the next anchor (so it
@@ -770,8 +768,7 @@ TEST(DungeonEventConditional, UldamanIronayaSeal)
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 1);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 8u);
-    EXPECT_TRUE(EventConditionRegistry::Has(8u));
+    EXPECT_TRUE(static_cast<bool>(e->condition));
     EXPECT_TRUE(e->required);
     EXPECT_FALSE(e->repeatable);
 
@@ -809,8 +806,7 @@ TEST(DungeonEventConditional, HellfireRampartsApproachVazruden)
     DungeonEvent const* e = DungeonEventRegistry::Find(543, 1);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 16u);
-    EXPECT_TRUE(EventConditionRegistry::Has(16u));
+    EXPECT_TRUE(static_cast<bool>(e->condition));
     EXPECT_TRUE(e->repeatable);
     EXPECT_EQ(e->panelGatesBossEntry, 17537u);  // folded under Vazruden
 
@@ -835,8 +831,7 @@ TEST(DungeonEventConditional, BloodFurnaceBroggokCellDoor)
     DungeonEvent const* lever = DungeonEventRegistry::Find(542, 1);
     ASSERT_NE(lever, nullptr);
     EXPECT_EQ(lever->activation, EventActivation::Conditional);
-    EXPECT_EQ(lever->conditionId, 17u);
-    EXPECT_TRUE(EventConditionRegistry::Has(17u));
+    EXPECT_TRUE(static_cast<bool>(lever->condition));
     EXPECT_TRUE(lever->repeatable);
     EXPECT_EQ(lever->panelGatesBossEntry, 17380u);   // folded under Broggok
 
@@ -848,8 +843,7 @@ TEST(DungeonEventConditional, BloodFurnaceBroggokCellDoor)
     DungeonEvent const* hold = DungeonEventRegistry::Find(542, 2);
     ASSERT_NE(hold, nullptr);
     EXPECT_EQ(hold->activation, EventActivation::Conditional);
-    EXPECT_EQ(hold->conditionId, 18u);
-    EXPECT_TRUE(EventConditionRegistry::Has(18u));
+    EXPECT_TRUE(static_cast<bool>(hold->condition));
     EXPECT_TRUE(hold->repeatable);
     EXPECT_EQ(hold->panelGatesBossEntry, 17380u);    // folded under Broggok
 
@@ -875,7 +869,6 @@ TEST(DungeonEventAnchored, UldamanStoneKeepers)
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 2);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Anchored);
-    EXPECT_FALSE(EventConditionRegistry::Has(9u));       // condition 9 retired
     EXPECT_TRUE(e->required);
     EXPECT_TRUE(e->persistent);
 
@@ -901,7 +894,6 @@ TEST(DungeonEventAnchored, UldamanArchaedasAltar)
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 3);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Anchored);
-    EXPECT_FALSE(EventConditionRegistry::Has(10u));      // condition 10 retired
     EXPECT_TRUE(e->required);
 
     ASSERT_EQ(e->steps.size(), 2u);
@@ -987,9 +979,9 @@ TEST(DungeonEventConditional, ConditionalListFiltersByActivation)
     std::vector<DungeonEvent const*> sfk = DungeonEventRegistry::Conditional(33);
     ASSERT_EQ(sfk.size(), 2u);
     EXPECT_EQ(sfk[0]->id, 1u);
-    EXPECT_EQ(sfk[0]->conditionId, 1u);  // Alliance
+    EXPECT_TRUE(static_cast<bool>(sfk[0]->condition));  // Alliance
     EXPECT_EQ(sfk[1]->id, 2u);
-    EXPECT_EQ(sfk[1]->conditionId, 2u);  // Horde
+    EXPECT_TRUE(static_cast<bool>(sfk[1]->condition));  // Horde
     for (DungeonEvent const* e : sfk)
         EXPECT_EQ(e->activation, EventActivation::Conditional);
 }
@@ -1038,22 +1030,6 @@ TEST(DungeonEventConditional, ConditionalLatchKeyIsHighAndInjective)
     EXPECT_GT(DungeonEventExecutor::ConditionalLatchKey(1), 1000000u);
 }
 
-// EventConditionRegistry dispatch guards: id 0 and unregistered ids are false;
-// a null bot is false (so a mis-authored event simply never activates); the
-// shipped SFK condition (1) is registered.
-TEST(DungeonEventConditionRegistry, DispatchGuards)
-{
-    EXPECT_FALSE(EventConditionRegistry::Has(0));
-    EXPECT_FALSE(EventConditionRegistry::Has(9999));
-    EXPECT_TRUE(EventConditionRegistry::Has(1));   // SFK Alliance
-    EXPECT_TRUE(EventConditionRegistry::Has(2));   // SFK Horde
-    EXPECT_TRUE(EventConditionRegistry::Has(3));   // room-aggro pre-clear (M3)
-
-    EXPECT_FALSE(EventConditionRegistry::Evaluate(0, nullptr, nullptr));
-    EXPECT_FALSE(EventConditionRegistry::Evaluate(9999, nullptr, nullptr));
-    EXPECT_FALSE(EventConditionRegistry::Evaluate(1, nullptr, nullptr));  // null bot
-}
-
 // --- Milestone 3: room-aggro pre-clear -----------------------------------
 
 // The SM Cathedral (189) room-aggro pre-clear is a Conditional gate (condition 3)
@@ -1064,7 +1040,7 @@ TEST(DungeonEventRoomAggro, ScarletCathedralEventShape)
     DungeonEvent const* e = DungeonEventRegistry::Find(189, 1);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 3u);
+    EXPECT_TRUE(static_cast<bool>(e->condition));
     EXPECT_TRUE(e->required);
     ASSERT_EQ(e->steps.size(), 1u);
     EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
@@ -1078,7 +1054,7 @@ TEST(DungeonEventRoomAggro, ScholomanceMardukVectusEventShape)
     DungeonEvent const* e = DungeonEventRegistry::Find(289, 1);
     ASSERT_NE(e, nullptr);
     EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 3u);
+    EXPECT_TRUE(static_cast<bool>(e->condition));
     EXPECT_TRUE(e->required);
     ASSERT_EQ(e->steps.size(), 1u);
     EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
@@ -1176,13 +1152,13 @@ TEST(DungeonEventAnchored, DireMaulWestEntranceSweepShape)
 // ignores the lock, so no Crescent Key is needed.
 TEST(DungeonEventConditional, DireMaulWestCrescentDoorEventShape)
 {
-    struct Door { uint32 eventId; uint32 conditionId; uint32 goEntry; };
-    for (Door const& d : { Door{9, 14, 177221}, Door{10, 15, 179550} })
+    struct Door { uint32 eventId; uint32 goEntry; };
+    for (Door const& d : { Door{9, 177221}, Door{10, 179550} })
     {
         DungeonEvent const* e = DungeonEventRegistry::Find(429, d.eventId);
         ASSERT_NE(e, nullptr) << "missing crescent door event " << d.eventId;
         EXPECT_EQ(e->activation, EventActivation::Conditional);
-        EXPECT_EQ(e->conditionId, d.conditionId);
+        EXPECT_TRUE(static_cast<bool>(e->condition));
         EXPECT_FALSE(e->required);  // Optional
         ASSERT_EQ(e->steps.size(), 2u);
         EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
@@ -1191,7 +1167,6 @@ TEST(DungeonEventConditional, DireMaulWestCrescentDoorEventShape)
         EXPECT_EQ(e->steps[1].goEntry, d.goEntry);
         EXPECT_EQ(e->steps[1].wantState, 0u);  // GO_STATE_ACTIVE (open)
 
-        EXPECT_TRUE(EventConditionRegistry::Has(d.conditionId));
     }
 }
 

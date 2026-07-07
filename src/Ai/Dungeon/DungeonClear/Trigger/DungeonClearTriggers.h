@@ -39,7 +39,7 @@ public:
 
 // Leader-only, non-combat. Fires when an off-path CONDITIONAL event
 // (DungeonEventRegistry, EventActivation::Conditional) for this map is DUE — its
-// EventConditionRegistry predicate is true and it has not yet latched. Drives
+// bound activation predicate (DungeonEvent::condition) is true and it has not yet latched. Drives
 // DcRunEventAction, which runs the event's steps (walk to a lever/NPC, gossip,
 // wait for the gate to open). Relevance 31 — just above at-boss (30) — so a due
 // pre-boss gate (e.g. "free the prisoner to open the courtyard door") preempts

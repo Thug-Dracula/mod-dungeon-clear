@@ -24,7 +24,7 @@
 void RegisterScholomanceEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(289, 1, "Clear the room (Marduk & Vectus)")
-                      .Conditional(3)
+                      .Conditional(&DcRoomAggroPreClearCondition)
                       .KillCreature(/*room trash*/ 0)
                       .Build());
 }

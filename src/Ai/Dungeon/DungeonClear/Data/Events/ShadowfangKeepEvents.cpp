@@ -35,6 +35,12 @@
 // boss pull / door-blocked stall. Optional so a non-firing script degrades to
 // the normal door-blocked stall.
 
+namespace
+{
+    bool SfkCourtyardAlliance(Player* bot, AiObjectContext* context);
+    bool SfkCourtyardHorde(Player* bot, AiObjectContext* context);
+}
+
 void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
 {
     // After freeing the prisoner, walk up to the courtyard door and wait THERE
@@ -48,7 +54,7 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
     // already team-gates execution; .PanelTeam mirrors that on the panel so the
     // other faction's row is hidden.
     out.push_back(EventBuilder(33, 1, "Free Ashcrombe (Courtyard Door, Alliance)")
-                      .Conditional(1)
+                      .Conditional(&SfkCourtyardAlliance)
                       .MoveTo(-248.0f, 2122.0f, 81.3f, /*radius*/ 6.0f)
                       .UseGO(/*lever*/ 18901, /*searchRadius*/ 14.0f)
                       .Gossip(/*Sorcerer Ashcrombe*/ 3850, /*option*/ 0, /*searchRadius*/ 16.0f)
@@ -61,7 +67,7 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
                       .Build());
 
     out.push_back(EventBuilder(33, 2, "Free Adamant (Courtyard Door, Horde)")
-                      .Conditional(2)
+                      .Conditional(&SfkCourtyardHorde)
                       .MoveTo(-251.0f, 2115.0f, 81.3f, /*radius*/ 6.0f)
                       .UseGO(/*lever*/ 18900, /*searchRadius*/ 14.0f)
                       .Gossip(/*Deathstalker Adamant*/ 3849, /*option*/ 0, /*searchRadius*/ 16.0f)
@@ -144,10 +150,4 @@ namespace
     {
         return SfkCourtyard(bot, TEAM_HORDE, SFK_PRISONER_ADAMANT, "H");
     }
-}
-
-void RegisterShadowfangKeepConditions(EventConditionMap& out)
-{
-    out[1] = &SfkCourtyardAlliance;
-    out[2] = &SfkCourtyardHorde;
 }

@@ -6,11 +6,24 @@
 #ifndef _PLAYERBOT_DUNGEONEVENTREGISTRY_H
 #define _PLAYERBOT_DUNGEONEVENTREGISTRY_H
 
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "Common.h"
 #include "SharedDefines.h"  // TeamId
+
+class Player;
+class AiObjectContext;
+
+// A Conditional event's activation predicate: a pure-ish read-only test over the
+// live world, evaluated each tick. When it returns true (and the event is not yet
+// latched) the conditional-event trigger drives the event's steps. The predicate
+// lives next to the event that uses it (one file per dungeon under Data/Events/,
+// cross-dungeon shared predicates in SharedConditions.cpp) and is handed to the
+// builder directly by pointer — there is no global id space to keep collision-
+// free (a typo is now a compile error, not a silently-never-firing event).
+using EventCondition = std::function<bool(Player*, AiObjectContext*)>;
 
 // Declarative framework for scripted dungeon EVENTS the party must perform to
 // progress — pull a lever, click an altar, talk to an NPC and pick a gossip
@@ -209,7 +222,7 @@ struct EventStep
 enum class EventActivation : uint8
 {
     Anchored,     // referenced by a boss-list objective anchor (orderIndex)
-    Conditional,  // fired by a predicate (conditionId) each tick
+    Conditional,  // fired by a predicate (condition) each tick
 };
 
 struct DungeonEvent
@@ -220,7 +233,7 @@ struct DungeonEvent
 
     EventActivation activation{EventActivation::Anchored};
     uint32 orderIndex{0};    // Anchored: the objective's encounter slot (doc only)
-    uint32 conditionId{0};   // Conditional: predicate id (milestone 2)
+    EventCondition condition{};  // Conditional: the per-tick activation predicate
 
     std::vector<EventStep> steps;
 
@@ -291,7 +304,7 @@ public:
     EventBuilder(uint32 mapId, uint32 id, std::string name);
 
     EventBuilder& Anchored(uint32 orderIndex);
-    EventBuilder& Conditional(uint32 conditionId);
+    EventBuilder& Conditional(EventCondition condition);
     EventBuilder& Optional();
     EventBuilder& Repeatable();
     EventBuilder& Persistent();

@@ -6,19 +6,22 @@
 #ifndef _PLAYERBOT_DUNGEONEVENTTABLES_H
 #define _PLAYERBOT_DUNGEONEVENTTABLES_H
 
-#include <unordered_map>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
-#include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
+
+class Player;
+class AiObjectContext;
 
 // Internal registration seam for the per-dungeon event tables.
 //
 // Each dungeon owns one .cpp in this folder that defines its event rows
-// (Register<Dungeon>Events) and, when it has conditional events, its activation
-// predicates (Register<Dungeon>Conditions). The two central registries
-// (DungeonEventRegistry / EventConditionRegistry) call these aggregators
-// EXPLICITLY so every per-dungeon translation unit stays referenced.
+// (Register<Dungeon>Events). A Conditional event's activation predicate is a
+// free function defined in the SAME file, handed to the builder by pointer
+// (.Conditional(&MyPredicate)) — there is no separate condition registry and no
+// global id space to keep collision-free. The central DungeonEventRegistry calls
+// the Register<Dungeon>Events aggregators EXPLICITLY so every per-dungeon
+// translation unit stays referenced.
 //
 // Why explicit calls and not self-registering static initializers: the module
 // compiles into a static lib, and a TU whose only output is constructor
@@ -30,41 +33,17 @@
 //
 // Adding a dungeon:
 //   1. Create <Dungeon>Events.cpp here.
-//   2. Define Register<Dungeon>Events (and Conditions, if it has any).
-//   3. Declare them below.
-//   4. Add the call in the matching aggregator (EventTable() in
-//      DungeonEventRegistry.cpp / Conditions() in EventConditionRegistry.cpp).
-//
-// Condition id allocation — the global id space referenced by .Conditional(id).
-// Keep this list authoritative when adding rows so ids never collide:
-//   1  Shadowfang Keep  — courtyard door, Alliance
-//   2  Shadowfang Keep  — courtyard door, Horde
-//   3  (shared)         — room-aggro pre-clear (every RoomAggroRegistry boss:
-//                         SM Cathedral, Scholomance Marduk & Vectus, ...)
-//   4  Razorfen Downs   — the gong
-//   5  Stratholme       — ziggurat 1 acolytes (Baroness, door open)
-//   6  Stratholme       — ziggurat 2 acolytes (Nerub'enkan, door open)
-//   7  Stratholme       — ziggurat 3 acolytes (Maleki, door open)
-//   8  Uldaman          — Ironaya seal (clear room + keystone)
-//   9  (free)           — was Uldaman Altar of the Keepers; now an ANCHORED event
-//                         (70/2) on a roster objective (BossRosterRegistry map 70)
-//  10  (free)           — was Uldaman Altar of Archaedas; now an ANCHORED event
-//                         (70/3) on a roster objective
-//  11  Razorfen Downs   — approach Tuten'kash (walk to his combat spot once the
-//                         gong summons him, so the party enters aggro range)
-//  12  Dire Maul North  — Gordok Courtyard Door (on-path; click to open)
-//  13  Dire Maul North  — Gordok Inner Door (on-path; click to open)
-//  14  Dire Maul West   — Crescent Key Door, lower (on-path; click to open)
-//  15  Dire Maul West   — Crescent Key Door, upper (on-path; click to open)
-//  16  Hellfire Ramparts— approach Vazruden (walk onto the platform between the
-//                         two Hellfire Sentries; killing them flies the summoned
-//                         boss down, who has no static spawn)
-//  17  Blood Furnace    — pull Broggok's Cell Door Lever (start the wave event)
-//  18  Blood Furnace    — hold at the lever through the four cell waves until the
-//                         rear gate opens and Broggok becomes attackable
-//   -- next free: 19 (9 and 10 may be reused)
-using EventConditionMap =
-    std::unordered_map<uint32, EventConditionRegistry::Condition>;
+//   2. Define Register<Dungeon>Events; for any Conditional event, define its
+//      predicate as a static free function in that file and pass &Predicate to
+//      .Conditional() (a typo is a compile error, not a silent never-fire).
+//   3. Declare the appender below.
+//   4. Add the call in EventTable() (DungeonEventRegistry.cpp).
+
+// Shared, cross-dungeon activation predicate — external linkage so several
+// dungeon files can pass &DcRoomAggroPreClearCondition to .Conditional().
+// DUE while the room-trash value still has anything to clear (every
+// RoomAggroRegistry boss: SM Cathedral, Scholomance Marduk & Vectus, ...).
+bool DcRoomAggroPreClearCondition(Player* bot, AiObjectContext* context);
 
 // --- event rows (one appender per dungeon) -------------------------------
 void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out);
@@ -83,15 +62,5 @@ void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out);
 void RegisterBloodFurnaceEvents(std::vector<DungeonEvent>& out);
 void RegisterSlavePensEvents(std::vector<DungeonEvent>& out);
 void RegisterUnderbogEvents(std::vector<DungeonEvent>& out);
-
-// --- activation conditions (only for dungeons with Conditional events) ----
-void RegisterSharedEventConditions(EventConditionMap& out);
-void RegisterShadowfangKeepConditions(EventConditionMap& out);
-void RegisterRazorfenDownsConditions(EventConditionMap& out);
-void RegisterStratholmeConditions(EventConditionMap& out);
-void RegisterUldamanConditions(EventConditionMap& out);
-void RegisterDireMaulConditions(EventConditionMap& out);
-void RegisterHellfireRampartsConditions(EventConditionMap& out);
-void RegisterBloodFurnaceConditions(EventConditionMap& out);
 
 #endif

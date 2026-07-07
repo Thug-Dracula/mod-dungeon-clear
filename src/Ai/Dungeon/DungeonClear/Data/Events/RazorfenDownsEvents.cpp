@@ -65,10 +65,16 @@
 // walks back to reset. The condition reads false once his encounter bit is set
 // (killed), ending the loop. Folded under Tuten'kash in the panel (he gates it).
 
+namespace
+{
+    bool RfdGong(Player* bot, AiObjectContext* context);
+    bool RfdApproach(Player* bot, AiObjectContext* context);
+}
+
 void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(129, 1, "Ring the Gong")
-                      .Conditional(4)
+                      .Conditional(&RfdGong)
                       .Repeatable()
                       .PanelBeforeBoss(/*Tuten'kash*/ 7355)
                       // searchRadius must cover condition 4's ring range (30yd)
@@ -78,7 +84,7 @@ void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out)
                       .Build());
 
     out.push_back(EventBuilder(129, 2, "Approach Tuten'kash")
-                      .Conditional(11)
+                      .Conditional(&RfdApproach)
                       .Repeatable()
                       .PanelBeforeBoss(/*Tuten'kash*/ 7355)
                       // His SmartAI "On Reset - Move Point" target — the spot he
@@ -172,10 +178,4 @@ namespace
         return bot->FindNearestCreature(RFD_TUTENKASH, RFD_TUTENKASH_SCAN,
                                         /*alive*/ true) != nullptr;
     }
-}
-
-void RegisterRazorfenDownsConditions(EventConditionMap& out)
-{
-    out[4] = &RfdGong;
-    out[11] = &RfdApproach;
 }

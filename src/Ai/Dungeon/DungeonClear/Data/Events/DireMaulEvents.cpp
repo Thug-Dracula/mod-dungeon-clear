@@ -44,6 +44,14 @@
 // once he has walked off / despawned; Optional degrades a non-firing script to
 // the normal door-blocked stall (the door still opens, driven by his own AI).
 
+namespace
+{
+    bool GordokCourtyardDoor(Player* bot, AiObjectContext* context);
+    bool GordokInnerDoor(Player* bot, AiObjectContext* context);
+    bool CrescentDoorLower(Player* bot, AiObjectContext* context);
+    bool CrescentDoorUpper(Player* bot, AiObjectContext* context);
+}
+
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(429, 1, "Ironbark opens the Conservatory Door")
@@ -102,7 +110,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // surface in the Dire Maul East/West panels (the boss list is wing-filtered;
     // an event whose anchor boss isn't in it is hidden). See DungeonClearChatActions.
     out.push_back(EventBuilder(429, 2, "Open the Gordok Courtyard Door")
-                      .Conditional(/*conditionId*/ 12)
+                      .Conditional(&GordokCourtyardDoor)
                       .UseGO(/*Gordok Courtyard Door*/ 177219, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177219, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
@@ -111,7 +119,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .Build());
 
     out.push_back(EventBuilder(429, 3, "Open the Gordok Inner Door")
-                      .Conditional(/*conditionId*/ 13)
+                      .Conditional(&GordokInnerDoor)
                       .UseGO(/*Gordok Inner Door*/ 177217, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177217, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
@@ -261,7 +269,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // route short of it). Same shape as the Gordok doors. (The third lock-1562
     // door, 179549 at the entrance, is off the West boss path and is ignored.)
     out.push_back(EventBuilder(429, 9, "Open the Crescent Key Door (lower)")
-                      .Conditional(/*conditionId*/ 14)
+                      .Conditional(&CrescentDoorLower)
                       .UseGO(/*after Tendris*/ 177221, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177221, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
@@ -270,7 +278,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .Build());
 
     out.push_back(EventBuilder(429, 10, "Open the Crescent Key Door (upper)")
-                      .Conditional(/*conditionId*/ 15)
+                      .Conditional(&CrescentDoorUpper)
                       .UseGO(/*before Immol'thar*/ 179550, /*searchRadius*/ 25.0f)
                       .WaitForGOState(179550, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
@@ -341,10 +349,3 @@ namespace
     }
 }
 
-void RegisterDireMaulConditions(EventConditionMap& out)
-{
-    out[12] = &GordokCourtyardDoor;
-    out[13] = &GordokInnerDoor;
-    out[14] = &CrescentDoorLower;
-    out[15] = &CrescentDoorUpper;
-}
