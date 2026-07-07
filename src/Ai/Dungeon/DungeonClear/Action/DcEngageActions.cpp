@@ -1629,14 +1629,12 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         bool const lastPosValid =
             appr.lastPos.m_positionX != 0.0f || appr.lastPos.m_positionY != 0.0f ||
             appr.lastPos.m_positionZ != 0.0f;
-        if (lastPosValid && bot->isMoving() &&
-            cur.GetExactDist(appr.lastPos) < DC_STUCK_DISPLACEMENT)
-            ++appr.doorWalkInStuckTicks;
-        else
-            appr.doorWalkInStuckTicks = 0;
+        float const moved = lastPosValid ? cur.GetExactDist(appr.lastPos) : 0.0f;
+        uint32 const wedgeTicks = appr.doorWalkInWatch.TickDisplacement(
+            lastPosValid && bot->isMoving(), moved, DC_STUCK_DISPLACEMENT);
         appr.lastPos = cur;
 
-        if (appr.doorWalkInStuckTicks >= DC_STUCK_TICK_LIMIT)
+        if (wedgeTicks >= DC_STUCK_TICK_LIMIT)
         {
             // Wedged against geometry. Halt the stuck spline and re-anchor the
             // cursor onto the nearest forward route point; the fresh NextHop +
@@ -1644,8 +1642,8 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] door walk-in wedged ({} ticks, {:.1f}yd to door) "
                       "-> halt + re-anchor",
-                      bot->GetName(), appr.doorWalkInStuckTicks, distToDoor);
-            appr.doorWalkInStuckTicks = 0;
+                      bot->GetName(), wedgeTicks, distToDoor);
+            appr.doorWalkInWatch.stuckTicks = 0;
             DcMovement::ResolveEscortConflict(bot);
             DungeonPathFollower::Resnap(bot, path, follower);
         }

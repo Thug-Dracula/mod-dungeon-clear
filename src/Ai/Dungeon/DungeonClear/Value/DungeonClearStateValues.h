@@ -475,8 +475,11 @@ struct DungeonClearSwimState
     uint32 cursor{0};
     uint32 targetEntry{0};        // boss entry the leg was built toward (0 = none)
     G3D::Vector3 buildStart;
-    uint32 lastProgressMs{0};
-    float lastDistToPoint{0.0f};
+    // Closing-distance wedge detector for the leg (nav review F11): tracks the
+    // nearest approach to the current swim point + the wall-clock of the last
+    // gain, so a leg making no headway underwater is abandoned. Was the inline
+    // lastProgressMs/lastDistToPoint pair.
+    DcProgressWatchdog progressWatch;
 
     void Reset()
     {
@@ -485,8 +488,7 @@ struct DungeonClearSwimState
         cursor = 0;
         targetEntry = 0;
         buildStart = G3D::Vector3();
-        lastProgressMs = 0;
-        lastDistToPoint = 0.0f;
+        progressWatch.Reset();
     }
 };
 

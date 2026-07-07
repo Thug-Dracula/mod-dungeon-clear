@@ -9,6 +9,7 @@
 #include "Define.h"
 #include "ObjectGuid.h"
 #include "Position.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
 
 // All transient per-approach state for one boss-approach run, owned as a single
 // value (DungeonClearApproachStateValue, "dungeon clear approach state") so the
@@ -30,9 +31,14 @@
 // inline ->Set(0u) clusters.
 struct DcApproachState
 {
-    // --- per-approach stuck / recovery counters ---------------------------
-    uint32 posStuckTicks       = 0;  // no-displacement ticks (was "stuck ticks")
-    uint32 doorWalkInStuckTicks = 0; // door-blocked walk-in's own wedge counter
+    // --- per-approach stuck / recovery watchdogs --------------------------
+    // Displacement wedge detectors (nav review F11): the route glide and the
+    // door-blocked walk-in each watch their escort spline grinding against
+    // geometry via the shared DcProgressWatchdog (was two byte-identical inline
+    // no-displacement counters). Separate instances because the two run in
+    // different actions/phases and reset independently.
+    DcProgressWatchdog routeGlideWatch;  // advance route-glide wedge (was posStuckTicks)
+    DcProgressWatchdog doorWalkInWatch;  // door walk-in wedge (was doorWalkInStuckTicks)
     uint32 stuckCount          = 0;  // MoveTo-returned-false backup (was "stuck count")
     uint32 rebuildAttempts     = 0;  // consecutive rebuilds w/o progress ("stride rebuild attempts")
     uint32 pursuitFailTicks    = 0;  // direct-pursuit give-up latch ("pursuit fail ticks")
@@ -118,8 +124,8 @@ struct DcApproachState
     {
         lastTargetEntry     = newEntry;
         stuckCount          = 0;
-        posStuckTicks       = 0;
-        doorWalkInStuckTicks = 0;
+        routeGlideWatch.Reset();
+        doorWalkInWatch.Reset();
         rebuildAttempts     = 0;
         doneNotEngagedTicks = 0;
         pursuitFailTicks    = 0;

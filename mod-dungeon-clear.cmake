@@ -10,6 +10,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"
             "${MOD_PATH}/t/TestApproachDecisions.cpp"
+            "${MOD_PATH}/t/TestDcProgressWatchdog.cpp"
             "${MOD_PATH}/t/TestPullDecisions.cpp"
             "${MOD_PATH}/t/TestScenarioDriver.cpp"
             "${MOD_PATH}/t/TestRoomAggro.cpp"

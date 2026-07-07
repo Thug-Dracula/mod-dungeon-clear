@@ -330,8 +330,10 @@ namespace
         swim.cursor = 0;
         swim.targetEntry = targetEntry;
         swim.buildStart = start;
-        swim.lastProgressMs = getMSTime();
-        swim.lastDistToPoint = (swim.points.front() - start).length();
+        // Arm the closing-distance watchdog at the initial distance to the first
+        // point (swim.Reset() above cleared it), so the stale clock runs from now.
+        swim.progressWatch.TickClosing((swim.points.front() - start).length(),
+                                       /*minClose*/ 0.5f, getMSTime());
 
         DcMovement::ResolveEscortConflict(bot);  // drop any stale navmesh glide before swimming
         LOG_INFO("playerbots.dungeonclear",
@@ -405,19 +407,17 @@ namespace
             return false;
         }
 
-        // Progress watchdog. posStuck can't see a non-moving bot, so track the
-        // closing distance to the current point ourselves.
+        // Progress watchdog (closing distance to the current point). Displacement
+        // can't see a non-moving bot underwater, so the shared watchdog tracks the
+        // nearest approach; a leg making no headway for DC_SWIM_STUCK_MS is
+        // abandoned. The wrap-safe stale check stays here (getMSTimeDiff).
         uint32 const now = getMSTime();
-        if (distToPoint < swim.lastDistToPoint - 0.5f)
-        {
-            swim.lastDistToPoint = distToPoint;
-            swim.lastProgressMs = now;
-        }
-        else if (getMSTimeDiff(swim.lastProgressMs, now) > DC_SWIM_STUCK_MS)
+        if (!swim.progressWatch.TickClosing(distToPoint, /*minClose*/ 0.5f, now) &&
+            getMSTimeDiff(swim.progressWatch.lastProgressMs, now) > DC_SWIM_STUCK_MS)
         {
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] swim leg wedged (no progress {}ms) -> abandoning",
-                     bot->GetName(), getMSTimeDiff(swim.lastProgressMs, now));
+                     bot->GetName(), getMSTimeDiff(swim.progressWatch.lastProgressMs, now));
             swim.Reset();
             DcMovement::ResolveEscortConflict(bot);
             StallDungeonClear(botAI,
@@ -735,28 +735,25 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStal
 void DungeonClearAdvanceAction::FillStuckObs(AdvanceState& st, DungeonClearApproach::Observation& obs)
 {
     DcApproachState& appr = *st.appr;
-    uint32& posStuck = appr.posStuckTicks;
     uint32& rebuildAttempts = appr.rebuildAttempts;
     Position& lastPos = appr.lastPos;
 
-    // Position-based stuck check. Sample current world position; if the
-    // bot is supposedly moving but barely shifted since the previous tick,
-    // increment posStuck. The (0,0,0) lastPos is the not-yet-sampled
-    // sentinel — no real dungeon map has a (0,0,0) walkable point.
+    // Position-based stuck check via the shared route-glide watchdog. Sample the
+    // current world position; a wedge is a tick that is moving yet barely shifted
+    // since the previous one. The (0,0,0) lastPos is the not-yet-sampled sentinel
+    // — no real dungeon map has a (0,0,0) walkable point — so the first tick reads
+    // as "not moving" to the watchdog (no false wedge before a baseline exists).
     Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     bool const lastPosValid =
         lastPos.m_positionX != 0.0f || lastPos.m_positionY != 0.0f || lastPos.m_positionZ != 0.0f;
-    if (lastPosValid && bot->isMoving() && cur.GetExactDist(lastPos) < DC_STUCK_DISPLACEMENT)
-        ++posStuck;
-    else
-    {
-        posStuck = 0;
-        // Real forward progress clears any prior consecutive-rebuild count.
-        // (Lastposvalid + movement above DC_STUCK_DISPLACEMENT is the
-        // strongest signal we have that the route just resumed working.)
-        if (lastPosValid && bot->isMoving())
-            rebuildAttempts = 0;
-    }
+    float const moved = lastPosValid ? cur.GetExactDist(lastPos) : 0.0f;
+    bool const moving = lastPosValid && bot->isMoving();
+    uint32 const posStuck =
+        appr.routeGlideWatch.TickDisplacement(moving, moved, DC_STUCK_DISPLACEMENT);
+    // Real forward progress (moving AND displaced past the threshold) clears any
+    // prior consecutive-rebuild count — the strongest signal the route resumed.
+    if (moving && moved >= DC_STUCK_DISPLACEMENT)
+        rebuildAttempts = 0;
 
     // Per-tick advance telemetry — the three signals the spline-issue lines
     // can't show on their own: did the bot physically move since the last
@@ -801,7 +798,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoStuckRecover(Advanc
     DcApproachState& appr = *st.appr;
     uint32& rebuildAttempts = appr.rebuildAttempts;
 
-    appr.posStuckTicks = 0;
+    appr.routeGlideWatch.stuckTicks = 0;
     // Wedged and replanning — surface "recovering" to the status poll.
     SetPhase(context, "recovering");
 

@@ -363,7 +363,7 @@ namespace DcActionShared
             follower.segmentIdx > appr.lastProgressSegmentIdx ||
             (follower.segmentIdx == appr.lastProgressSegmentIdx &&
              follower.pointIdx > appr.lastProgressPointIdx);
-        bool const progressing = cursorAdvanced && appr.posStuckTicks == 0;
+        bool const progressing = cursorAdvanced && appr.routeGlideWatch.stuckTicks == 0;
         bool const ttlPassed = expiresAt != 0 && now >= expiresAt;
         bool const expired = expiresAt == 0 || (ttlPassed && !progressing);
 
