@@ -67,6 +67,62 @@ namespace
     {
         return mapId == 329 && eventId == 5;
     }
+
+    // An "arrival" step forces the tank to a specific spot before it can report
+    // Done: MoveTo/Jump HopTo until within radius, UseGameObject/Gossip approach
+    // their target, and the escort/drop/teleport primitives all pin the leader to
+    // a checkpoint. A conditional event that contains ONE of these can never
+    // complete while the tank is far from the anchor. Everything else (ClearRadius,
+    // KillCreature, WaitForSpawn/GOState, Wait, CastSpell, UseItem, Custom) can
+    // report Done from wherever the tank stands the instant the condition turns
+    // true — so an event built ONLY from those latches "done" from afar.
+    bool HasArrivalStep(DungeonEvent const& ev)
+    {
+        for (EventStep const& s : ev.steps)
+            switch (s.kind)
+            {
+                case EventStepKind::MoveTo:
+                case EventStepKind::Jump:
+                case EventStepKind::UseGameObject:
+                case EventStepKind::Gossip:
+                case EventStepKind::EscortCreature:
+                case EventStepKind::DropInHole:
+                case EventStepKind::TeleportParty:
+                    return true;
+                default:
+                    break;
+            }
+        return false;
+    }
+
+    // Conditional events that legitimately complete WITHOUT any arrival step —
+    // their single/all-gate step list is safe ONLY because their activation
+    // predicate can't read true while the tank is far from the anchor. That
+    // near-only guarantee lives in the opaque condition function (a test can't
+    // inspect it), so each such event is vetted by hand and listed here with the
+    // mechanism that makes it near-only. Keyed by {mapId, eventId}. See the
+    // ConditionalEventsWithoutArrivalStepAreProximityVetted tripwire.
+    bool IsNearGatedConditionalWhitelisted(uint32 mapId, uint32 eventId)
+    {
+        struct Row { uint32 mapId; uint32 eventId; };
+        static constexpr Row kRows[] = {
+            // Stratholme Timmy pre-clear: StrTimmyGated returns false until the
+            // tank is within 60yd of Timmy's spawn (the #5 fix — a creature-
+            // presence condition read true from map load and false-latched at the
+            // instance entrance without this gate).
+            {329, 6},
+            // Stratholme ziggurat acolyte clears: gated on monotonic instance data
+            // (GetData(TYPE_ZIGGURATx) == 1), which flips only when the ziggurat
+            // boss dies right at the chamber — never true from afar.
+            {329, 1},
+            {329, 2},
+            {329, 3},
+        };
+        for (Row const& r : kRows)
+            if (r.mapId == mapId && r.eventId == eventId)
+                return true;
+        return false;
+    }
 }
 
 // --- sanity ---------------------------------------------------------------
@@ -92,6 +148,42 @@ TEST(DungeonEventIntegrityTest, ConditionalEventsHaveBoundCondition)
         EXPECT_TRUE(static_cast<bool>(ev.condition))
             << "conditional event map " << ev.mapId << " id " << ev.id
             << " (" << ev.name << ") has no bound condition — it can never fire";
+    }
+}
+
+// Tripwire for the Stratholme #5 bug class: a Conditional event whose steps can
+// ALL report Done from wherever the tank stands (no arrival step) latches
+// "complete" the instant its condition turns true — even with the tank at the
+// far end of the map. The executor evaluates its first ClearRadius/KillCreature
+// gate from that far position, finds nothing engage-reachable, returns Done, and
+// the event is marked done with nothing accomplished (Timmy's room "already
+// cleared" at the instance entrance). Such an event is sound ONLY if its
+// condition can't read true while the tank is far — a property that lives in the
+// opaque predicate a test can't inspect. So force a conscious opt-in: any such
+// event must be either a room-aggro pre-clear (condition proximity-gated inside
+// RoomTrashRemaining) or hand-vetted on IsNearGatedConditionalWhitelisted. A NEW
+// no-arrival conditional event trips this until its author does one of those —
+// or, better, gives it an arrival step / proximity-gated condition.
+TEST(DungeonEventIntegrityTest, ConditionalEventsWithoutArrivalStepAreProximityVetted)
+{
+    for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
+    {
+        if (ev.activation != EventActivation::Conditional || ev.steps.empty())
+            continue;
+        if (HasArrivalStep(ev))
+            continue;  // an arrival step forces the tank on-site before completion
+        if (DungeonEventRegistry::IsRoomAggroPreClear(ev))
+            continue;  // condition is proximity-gated inside RoomTrashRemaining
+
+        EXPECT_TRUE(IsNearGatedConditionalWhitelisted(ev.mapId, ev.id))
+            << "conditional event map " << ev.mapId << " id " << ev.id << " ("
+            << ev.name << ") has no arrival step (MoveTo/UseGO/Gossip/...), so every "
+            << "step can report Done from afar and it false-latches 'complete' the "
+            << "instant its condition turns true with the tank far from the anchor "
+            << "(the Stratholme #5 'Timmy room already cleared at the entrance' bug). "
+            << "Fix: give it a proximity-gated condition (like StrTimmyGated's 60yd "
+            << "check) or an arrival step; then, if verified near-only, add it to "
+            << "IsNearGatedConditionalWhitelisted with the gating mechanism noted.";
     }
 }
 
