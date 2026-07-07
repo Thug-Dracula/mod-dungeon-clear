@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 
 // --- Blackrock Depths (map 230) — the RING OF LAW, ANCHORED + PERSISTENT ---
 // A sealed arena gauntlet that gates the way between Houndmaster Grebmar and
@@ -81,4 +82,36 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
                                          /*minValue*/ BRD_RING_DONE)
             .Timeout(600000)
             .Build());
+}
+
+// --- roster patch (relocated from BossRosterRegistry) --------------------
+void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
+{
+    using namespace DcRoster;
+
+    // --- Blackrock Depths (map 230) — Ring of Law arena gauntlet --
+    // The Ring of Law is its OWN DungeonEncounter (bit 3, between
+    // Houndmaster Grebmar at 2 and Pyromancer Loregrain at 4), credited
+    // to Grimstone (10096) — but Grimstone has NO static spawn (he is
+    // summoned only when the centre area trigger fires), so BossSpawnIndex
+    // can't emit him, exactly like Razorfen Downs' Tuten'kash. Add the
+    // Ring of Law as an OBJECTIVE anchor at the arena centre (area trigger
+    // 1526, x/y from AreaTrigger.dbc; floor z) so boss-nav drives the tank
+    // into the sealed arena and the event (eventId 1) runs the gauntlet:
+    // walk in -> the trigger fires -> hold dead-centre until DONE while
+    // the random waves + boss are fought reactively. encounterIndex 3
+    // slots it after Grebmar and before Loregrain; the objective-before-
+    // boss tie-break + the picker's strictly-greater advance order it
+    // correctly. No gateEntry (the boss is random; the event owns
+    // completion via TYPE_RING_OF_LAW == DONE, see BlackrockDepthsEvents).
+    {
+        BossRosterPatch p;
+        p.mapId = 230;
+        p.add = {
+            MakeObjective(OBJ(1), /*encounterIndex*/ 3, 230, "Ring of Law",
+                          596.432f, -188.498f, -53.9f, /*arriveRadius*/ 12.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+        };
+        t.push_back(std::move(p));
+    }
 }

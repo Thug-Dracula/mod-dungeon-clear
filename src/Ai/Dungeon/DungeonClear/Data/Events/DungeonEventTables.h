@@ -12,6 +12,7 @@
 
 class Player;
 class AiObjectContext;
+struct BossRosterPatch;
 
 // Internal registration seam for the per-dungeon event tables.
 //
@@ -38,6 +39,11 @@ class AiObjectContext;
 //      .Conditional() (a typo is a compile error, not a silent never-fire).
 //   3. Declare the appender below.
 //   4. Add the call in EventTable() (DungeonEventRegistry.cpp).
+//   5. If the dungeon corrects the auto-derived boss list, define its roster
+//      patch as Register<Dungeon>Roster in the SAME file (using the DcRoster
+//      builders in DungeonRosterBuilders.h), declare it below, and add the call
+//      in PatchTable() (BossRosterRegistry.cpp). One file owns all of a
+//      dungeon's clear data: event rows + conditions + roster patch.
 
 // Shared, cross-dungeon activation predicate — external linkage so several
 // dungeon files can pass &DcRoomAggroPreClearCondition to .Conditional().
@@ -62,5 +68,26 @@ void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out);
 void RegisterBloodFurnaceEvents(std::vector<DungeonEvent>& out);
 void RegisterSlavePensEvents(std::vector<DungeonEvent>& out);
 void RegisterUnderbogEvents(std::vector<DungeonEvent>& out);
+
+// --- roster patches (one appender per dungeon that corrects the boss list) -
+// Each relocates that dungeon's BossRosterPatch out of BossRosterRegistry.cpp
+// so a dungeon's whole clear definition lives in one file. Aggregated by
+// PatchTable() (BossRosterRegistry.cpp). Only dungeons that patch the derived
+// roster appear here (e.g. Shadowfang Keep / Blood Furnace have events but no
+// patch, so no roster appender).
+void RegisterScarletMonasteryRoster(std::vector<BossRosterPatch>& t);
+void RegisterScholomanceRoster(std::vector<BossRosterPatch>& t);
+void RegisterSunkenTempleRoster(std::vector<BossRosterPatch>& t);
+void RegisterRazorfenDownsRoster(std::vector<BossRosterPatch>& t);
+void RegisterZulFarrakRoster(std::vector<BossRosterPatch>& t);
+void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t);
+void RegisterDeadminesRoster(std::vector<BossRosterPatch>& t);
+void RegisterWailingCavernsRoster(std::vector<BossRosterPatch>& t);
+void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t);
+void RegisterDireMaulRoster(std::vector<BossRosterPatch>& t);
+void RegisterUldamanRoster(std::vector<BossRosterPatch>& t);
+void RegisterHellfireRampartsRoster(std::vector<BossRosterPatch>& t);
+void RegisterSlavePensRoster(std::vector<BossRosterPatch>& t);
+void RegisterUnderbogRoster(std::vector<BossRosterPatch>& t);
 
 #endif

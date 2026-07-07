@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 
 #include "InstanceScript.h"
 #include "Player.h"
@@ -296,3 +297,86 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                       .Build());
 }
 
+
+// --- roster patch (relocated from BossRosterRegistry) --------------------
+void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t)
+{
+    using namespace DcRoster;
+
+    // --- Stratholme (map 329) — the Slaughterhouse / Baron run --------
+    // Ramstein the Gorger (DBC bit 11) is SUMMONED once the Slaughter
+    // Square abominations die — he has no creature.sql spawn, so
+    // BossSpawnIndex (which walks spawns) never lists him and the tank
+    // can't anchor on him. Add ONE objective at the Slaughter Square
+    // (SlaughterPos from instance_stratholme.cpp), ordered at Ramstein's
+    // bit 11 (after the ziggurats 7/8/9 + Barthilas 10, before Baron 12),
+    // carrying the persistent slaughter event (eventId 4): clear the
+    // abominations -> Ramstein -> 33 Mindless Undead -> 5 Black Guards,
+    // which opens Baron's door. The event's KillCreatureEngage(Ramstein)
+    // flips his real bit when he dies (objectives skip the completion-mask
+    // check, so the orderIndex is a pure ordering hint that can't collide).
+    //
+    // The three ziggurat bosses and Baron need NO roster change — they
+    // have static spawns and real bits and are pulled normally; their
+    // in-ziggurat acolyte follow-ups are conditional events (5/6/7).
+    //
+    // ORDER FIX. The DBC bits put the ziggurats (Baroness 7, Nerub'enkan
+    // 8, Maleki 9) BEFORE Magistrate Barthilas (10), but the dead-side
+    // path runs Barthilas FIRST (he flees the entrance to warn the Baron),
+    // then the ziggurats, then the slaughterhouse, then Baron. So re-add
+    // Barthilas with orderOverride 6 — just after the live side (Balnazzar
+    // 6) and before Baroness 7 — while keeping his real kill-bit 10
+    // (completionFrom = his own entry). Net dead-side order: Barthilas ->
+    // ziggurats 7/8/9 -> Slaughterhouse 11 -> Baron 12.
+    //
+    // Both the live (Scarlet) and dead (Undead) sides stay in the list so
+    // one run does both; only Barthilas's slot moves. Barthilas's spawn
+    // coords are his static creature.sql spawn (he relocates at run-time,
+    // but the auto-list anchored on this spawn and the engage pipeline
+    // handles his flee). See StratholmeEvents.
+    //
+    // LIVE-SIDE BALNAZZAR. The Balnazzar encounter (DBC bit 6) credits
+    // creature 10813 (Balnazzar), which has NO creature.sql spawn — it
+    // exists only via Grand Crusader Dathrohan's (10812) on-aggro SmartAI,
+    // which at <=40% HP casts Balnazzar Transform and UpdateEntry's the
+    // SAME creature 10812 -> 10813. So BossSpawnIndex (which matches credit
+    // entries to spawns) drops the encounter and the clear jumps straight
+    // from Archivist Galford (bit 5) to the dead side — the live boss is
+    // never fought. Same class as Ramstein. Fix: an OBJECTIVE at Dathrohan's
+    // static spawn ordered at bit 6 (right after Galford, sharing key 6 with
+    // the reordered Barthilas — Apply's Objective-before-Boss tie-break +
+    // PickTarget's equal-index loop run Dathrohan then Barthilas), carrying
+    // event 5 (KillCreatureEngage 10812 -> 10813). Completion is the event
+    // ("Balnazzar dead"), not the mask, so objectives' bit-6 ordering hint
+    // can't collide with the real bit-6 the encounter sets. See
+    // StratholmeEvents.
+    {
+        BossRosterPatch p;
+        p.mapId = 329;
+        p.remove = { 10435 };  // Barthilas — re-added below, reordered
+        p.add = {
+            MakeBoss(10435, 329, "Magistrate Barthilas",
+                     3663.23f, -3619.14f, 137.98f,
+                     /*completionFrom*/ 10435, /*orderOverride*/ 6),
+            // Grand Crusader Dathrohan -> Balnazzar (live side). Objective
+            // at his static spawn (creature.sql, map 329), bit 6 so it slots
+            // right after Galford; event 5 seeks + engages him and finishes
+            // the transformed Balnazzar. See the LIVE-SIDE BALNAZZAR note.
+            MakeObjective(OBJ(2), /*encounterIndex*/ 6, 329,
+                          "Grand Crusader Dathrohan",
+                          3415.8f, -3044.5f, 136.8f, /*arriveRadius*/ 30.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 5),
+            // Anchor pulled ~37yd SOUTH of SlaughterPos into the abomination
+            // hall: SlaughterPos (4032,-3378) sits at the still-closed Baron
+            // door (175796 @ -3364), so the approach hit the door and stalled
+            // ("closed door blocking path"). This spot is in the open hall,
+            // reachable from the south entrance gate without crossing a closed
+            // door; the event's ClearRadius (r70) covers the whole hall.
+            MakeObjective(OBJ(1), /*encounterIndex*/ 11, 329,
+                          "Slaughterhouse (Baron run)",
+                          4032.0f, -3415.0f, 118.0f, /*arriveRadius*/ 30.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 4),
+        };
+        t.push_back(std::move(p));
+    }
+}

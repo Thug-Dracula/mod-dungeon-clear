@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 
 // --- ZulFarrak (map 209) — the TEMPLE (pyramid) event --------------------
 // The scripted set-piece between Witch Doctor Zum'rah and the final boss Chief
@@ -174,4 +175,71 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                           .Timeout(ZF_GAHZRILLA_SPAWN_TIMEOUT)
                       .KillCreatureEngage(ZF_GAHZRILLA, /*count*/ 1, /*searchRadius*/ 100.0f)
                       .Build());
+}
+
+// --- roster patch (relocated from BossRosterRegistry) --------------------
+void RegisterZulFarrakRoster(std::vector<BossRosterPatch>& t)
+{
+    using namespace DcRoster;
+
+    // --- ZulFarrak (map 209) -------------------------------------
+    // ORDER FIX. The DBC encounter order does NOT match the travel path:
+    // Hydromancer Velratha carries bit 0, so the auto path sent the tank
+    // straight to the far sacred pool FIRST, before anything else. The
+    // sensible (and Blizzard-intended) clear sweeps the dungeon front to
+    // back and saves the pool for last:
+    //   1. Theka the Martyr      (DBC bit 3)
+    //   2. Antu'sul              (DBC bit 2)
+    //   3. Witch Doctor Zum'rah  (DBC bit 4)
+    //   4. Temple Summit         (objective — the Executioner event)
+    //   5. Chief Ukorz Sandscalp (DBC bit 7 — opens after the event)
+    //   6. Hydromancer Velratha  (DBC bit 0 — at the sacred pool)
+    //   7. Sacred Pool           (objective — the Gahz'rilla gong)
+    // Reorder the five auto-derived bosses in place (orderOverride keys
+    // 1..6 on a contiguous scale shared with the two objectives) so each
+    // sorts into its path slot while its real DBC kill-bit is untouched.
+    //
+    // The temple event (Executioner / Bly's Band) at the top of the great
+    // staircase opens the door to Chief Ukorz; the tank must trigger it
+    // before heading to Ukorz or it bee-lines into his closed door and
+    // stalls. The Temple Summit objective (key 4) sits just before Ukorz
+    // (key 5). eventId 1 is the full PERSISTENT temple step list (see
+    // ZulFarrakEvents.cpp): kill the executioner, crack a cage, survive
+    // the waves, descend to help kill the temple bosses, gossip Weegli
+    // (door) and Bly (final fight). Only when Bly dies does the event
+    // complete and latch this objective, after which the clear proceeds
+    // to Ukorz with the door open.
+    {
+        BossRosterPatch p;
+        p.mapId = 209;
+        p.reorder = {
+            { 7272, 1 },  // Theka the Martyr      (DBC bit 3)
+            { 8127, 2 },  // Antu'sul              (DBC bit 2)
+            { 7271, 3 },  // Witch Doctor Zum'rah  (DBC bit 4)
+            { 7267, 5 },  // Chief Ukorz Sandscalp (DBC bit 7)
+            { 7795, 6 },  // Hydromancer Velratha  (DBC bit 0)
+        };
+        p.add = {
+            MakeObjective(OBJ(1), /*encounterIndex*/ 7, 209,
+                          "Temple Summit (Executioner event)",
+                          1886.8f, 1289.9f, 46.0f,
+                          /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                          /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 4),
+            // The optional Gahz'rilla gong, ordered LAST (key 7): the
+            // strictly-ordinal picker only routes the tank to the sacred
+            // pool once every real boss is dead. Anchor sits ON the gong
+            // (GO 141832 spawn coords) so boss-nav delivers the tank right
+            // to it; eventId 2 (see ZulFarrakEvents.cpp) rings it and kills
+            // the summoned boss. gateEntry 0: the event owns completion
+            // (Gahz'rilla dead), not "boss alive". The objective carries no
+            // real kill-bit, so its key can't collide with a set encounter
+            // bit.
+            MakeObjective(OBJ(2), /*encounterIndex*/ 8, 209,
+                          "Sacred Pool (Gahz'rilla gong)",
+                          1650.91f, 1171.88f, 10.901f,
+                          /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                          /*hook*/ 0, /*eventId*/ 2, /*orderOverride*/ 7),
+        };
+        t.push_back(std::move(p));
+    }
 }

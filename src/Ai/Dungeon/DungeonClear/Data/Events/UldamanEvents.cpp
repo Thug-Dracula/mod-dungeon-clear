@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "AiObjectContext.h"
@@ -258,3 +259,52 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
                       .Build());
 }
 
+
+// --- roster patch (relocated from BossRosterRegistry) --------------------
+void RegisterUldamanRoster(std::vector<BossRosterPatch>& t)
+{
+    using namespace DcRoster;
+
+    // --- Uldaman (map 70) — Altar of the Keepers + Altar of Archaedas ---
+    // The path to Archaedas runs through two GAMEOBJECT summoning rituals:
+    // the Altar of the Keepers (wake + kill the 4 Stone Keepers to open the
+    // temple door) and the Altar of Archaedas (wake the stoned final boss).
+    // Both altars are FAR from any conditional gate and surrounded only by
+    // dormant, immune statues — so a conditional event (HopTo-only, no
+    // long-range nav) fires the instant the tank nears the room and then
+    // can't reach the altar (the live "never clicks the altar" bug). Make
+    // them travel OBJECTIVES so the boss-nav LongRangePathfinder delivers
+    // the tank ONTO each altar first; the anchored events (UldamanEvents
+    // 70/2 and 70/3) then fire the rituals. Mirrors Dire Maul's Ironbark
+    // and Stratholme's Slaughterhouse.
+    //
+    // Encounter order is Grimlok (bit 6) -> Archaedas (bit 7) with no
+    // integer slot between them, so bump Archaedas's clear ORDER to 10
+    // (his real DBC kill-bit 7 is untouched — completion keys on
+    // encounterIndex, never on the order override) and slot the keeper
+    // altar at 8, the Archaedas altar at 9. The keeper altar sits a full
+    // floor ABOVE Archaedas (z -26.5 vs -51.7) at nearly the same x/y, so
+    // visiting it as an explicit waypoint also stops the boss-nav from
+    // dragging the tank straight down to the stoned boss below.
+    {
+        BossRosterPatch p;
+        p.mapId = 70;
+        p.reorder = { { 2748, 10 } };  // Archaedas — order only, bit 7 kept
+        p.add = {
+            // arriveRadius 30 so the tank "arrives" on reaching the hall
+            // and the event's ClearRadius (r40) drives the trash clear from
+            // the entrance inward, rather than shoving to the altar first.
+            MakeObjective(OBJ(1), /*encounterIndex*/ 7, 70,
+                          "Altar of the Keepers",
+                          104.85f, 272.45f, -26.53f, /*arriveRadius*/ 30.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2,
+                          /*orderOverride*/ 8),
+            MakeObjective(OBJ(2), /*encounterIndex*/ 7, 70,
+                          "Altar of Archaedas",
+                          96.48f, 269.05f, -52.15f, /*arriveRadius*/ 10.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 3,
+                          /*orderOverride*/ 9),
+        };
+        t.push_back(std::move(p));
+    }
+}
