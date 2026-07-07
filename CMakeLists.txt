@@ -136,4 +136,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # REMOVED Data/EventConditionRegistry.{h,cpp}: conditional-event activation is now
 #   a function pointer on DungeonEvent (.Conditional(&Predicate)), so the global
 #   condition-id registry + id ledger are gone (fable2 T2.3 / events F7)
+# Util/DcRegroupDecision.{h,cpp}
+#   (combat-regroup Option B: pure contribution-gate kernel DecideCombatRegroup(
+#    RegroupInputs) -> RegroupVerdict — "reconnect only when a follower truly can't
+#    contribute". Engine-free, edge-pinned by t/TestCombatRegroup. Drives the
+#    rewritten DungeonClearRegroupCombat{Trigger,Action}.)
 # (this comment bumps mtime to force CMake re-glob on next build)

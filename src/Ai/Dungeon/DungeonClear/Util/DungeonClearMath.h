@@ -45,19 +45,32 @@ namespace DungeonClearMath
     std::size_t SelectHealTarget(std::vector<HealCandidate> const& members,
                                  float hpFloor, float tankBias);
 
-    // Pure standoff-point generator for heal repositioning. Produces candidate 2D
-    // points on a circle of radius `standoffRadius` around `target`, ORDERED so the
-    // first is on the side the bot already stands (shortest move / most likely to
-    // round the same corner) and the rest fan out alternately to either side. The
-    // caller snaps each to the navmesh and keeps the first that has line of sight
-    // and a clear path to the target. `ringPoints` extra points are generated past
-    // the first (so the result has `ringPoints + 1` entries). Z is left at the
-    // target's Z; the caller re-grounds via navmesh snap. With a degenerate
-    // bot-on-target input the bias direction falls back to +X.
-    std::vector<Position> HealStandoffCandidates(Position const& target,
-                                                 Position const& bot,
-                                                 float standoffRadius,
-                                                 std::uint32_t ringPoints);
+    // Pure standoff-point generator. Produces candidate 2D points on a circle of
+    // radius `standoffRadius` around `center`, ORDERED so the first is on the side
+    // the bot already stands (shortest move / most likely to round the same corner)
+    // and the rest fan out alternately to either side. The caller snaps each to the
+    // navmesh and keeps the first that has line of sight and a clear path to the
+    // center. `ringPoints` extra points are generated past the first (so the result
+    // has `ringPoints + 1` entries). Z is left at the center's Z; the caller
+    // re-grounds via navmesh snap. With a degenerate bot-on-center input the bias
+    // direction falls back to +X. Nothing here is heal-specific: the healer LOS
+    // reposition and the contribution-gated combat regroup both sample a role-range
+    // ring around a fight anchor with it (see DcActionShared::FindStandoffPoint).
+    std::vector<Position> StandoffCandidates(Position const& center,
+                                             Position const& bot,
+                                             float standoffRadius,
+                                             std::uint32_t ringPoints);
+
+    // Deprecated heal-specific alias for StandoffCandidates, kept so the existing
+    // heal-reposition call site and t/TestDungeonClearMath / t/TestHealReposition
+    // compile unchanged. Prefer StandoffCandidates in new code.
+    inline std::vector<Position> HealStandoffCandidates(Position const& target,
+                                                        Position const& bot,
+                                                        float standoffRadius,
+                                                        std::uint32_t ringPoints)
+    {
+        return StandoffCandidates(target, bot, standoffRadius, ringPoints);
+    }
 
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is

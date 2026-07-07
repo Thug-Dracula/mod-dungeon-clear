@@ -419,16 +419,16 @@ std::size_t DungeonClearMath::SelectHealTarget(std::vector<HealCandidate> const&
     return best;
 }
 
-std::vector<Position> DungeonClearMath::HealStandoffCandidates(Position const& target,
-                                                               Position const& bot,
-                                                               float standoffRadius,
-                                                               std::uint32_t ringPoints)
+std::vector<Position> DungeonClearMath::StandoffCandidates(Position const& target,
+                                                           Position const& bot,
+                                                           float standoffRadius,
+                                                           std::uint32_t ringPoints)
 {
     std::vector<Position> out;
     out.reserve(ringPoints + 1);
 
-    // Base direction: from the target toward the bot's current side, so the first
-    // candidate is the shortest reposition. Degenerate (bot on target) -> +X.
+    // Base direction: from the center toward the bot's current side, so the first
+    // candidate is the shortest reposition. Degenerate (bot on center) -> +X.
     float dx = bot.GetPositionX() - target.GetPositionX();
     float dy = bot.GetPositionY() - target.GetPositionY();
     float const len = std::sqrt(dx * dx + dy * dy);
