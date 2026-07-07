@@ -24,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -43,6 +44,12 @@ namespace
     // (otherwise it regroups to the tank's garrison spot first). See
     // RestTargetIfActive.
     constexpr float DC_EVENT_REST_REGROUP_DIST = 12.0f;
+
+    // Combat-regroup debounce: the contribution predicate must hold continuously
+    // for this long before the (non-emergency) reconnect fires, so a one-tick LOS
+    // flicker can't launch a follower. The trigger ticks at interval 1. See
+    // DungeonClearRegroupCombatTrigger + DcRegroupDecision.
+    constexpr uint32 DC_REGROUP_DEBOUNCE_MS = 2000;
 
     // DC must be enabled AND not paused for the driving ladder to fire. Pause
     // is a soft stop: `enabled` (and all boss progress) stays set, but every
@@ -929,20 +936,103 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
     // the party is held PASSIVE at a camp (Forming/Advancing/Returning) it must
     // not chase the moving tank or it would break the pull. Once released (Engage,
     // passive == false) or in any non-camp fight, regroup runs — including the
-    // healer-LOS case the camp-fight assist (which only engages the pack) misses.
+    // healer pre-position case the camp-fight assist (which only engages the pack)
+    // misses.
     Position camp;
     bool passive = false;
     if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive) && passive)
         return false;
 
-    float const dist = bot->GetExactDist2d(tank);
-    float const maxLeash = DcSettings::GetFloat(bot, "CombatRegroupDistance");
+    // Gather the game-state reads the pure contribution kernel needs. The verdict
+    // (§1) is role-aware: a DPS "can contribute" while its stock LOS-filtered
+    // attacker list is non-empty; a healer with a hurt heal target is owned by
+    // HealReposition (rel 41), so this only handles its pre-position case.
+    DcRegroupDecision::RegroupInputs in;
+    in.isHealer = PlayerbotAI::IsHeal(bot);
+    in.isMelee  = botAI->IsMelee(bot);
+    in.casting  = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL) != nullptr ||
+                  bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL) != nullptr;
+    in.ccd      = bot->HasUnitState(UNIT_STATE_STUNNED | UNIT_STATE_FLEEING |
+                                    UNIT_STATE_CONFUSED | UNIT_STATE_ROOT);
+    in.hasVisibleAttacker = !botAI->GetAiObjectContext()
+                                 ->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty();
+    // Only meaningful for healers (the kernel ignores it for DPS); skip the party
+    // scan otherwise. Non-empty = someone is below the heal floor -> HealReposition
+    // owns the reposition, so regroup must stand down (its ownership invariant).
+    in.hasHurtHealTarget = in.isHealer &&
+                           !AI_VALUE(ObjectGuid, DcKey::HealTarget).IsEmpty();
+    in.tankLos     = bot->IsWithinLOSInMap(tank);
+    in.tankDist2d  = bot->GetExactDist2d(tank);
+    in.healRange   = botAI->GetRange("heal");
+    in.hardTether  = DcSettings::GetFloat(bot, "CombatRegroupDistance");
+    in.slack       = DcSettings::GetFloat(bot, "CombatRegroupSlack");
 
-    // Any follower closes back in once it drifts past the leash. The healer
-    // out-of-LOS case (which used to live here as an extra clause) is now owned by
-    // DungeonClearHealRepositionTrigger — it repositions toward the actual hurt
-    // heal target (not just the tank) and runs in both engines.
-    return dist > maxLeash;
+    DcRegroupDecision::RegroupVerdict const verdict =
+        DcRegroupDecision::DecideCombatRegroup(in);
+
+    uint32 const now = getMSTime();
+    bool const wasLatched = _latched;
+
+    // Emergency path: drifted past the hard outer tether. Fire at once, ignore
+    // debounce and cooldown, and latch so the close-in is treated as one intent.
+    if (verdict == DcRegroupDecision::RegroupVerdict::HardTether)
+    {
+        _latched = true;
+        _pendingSince = 0;
+        if (!wasLatched)
+            DC_PULL_TRACE("[DC:{}] regroup: verdict=hardtether why=hard-tether "
+                          "({:.1f}yd > tether {:.1f}, healer={})",
+                          bot->GetName(), in.tankDist2d, in.hardTether, in.isHealer ? 1 : 0);
+        return true;
+    }
+
+    // Predicate cleared: the bot can contribute (or must not move). Release the
+    // latch and, if we were mid-reconnect, start the cooldown so the rung can't
+    // immediately re-arm and stutter the bot.
+    if (verdict == DcRegroupDecision::RegroupVerdict::None)
+    {
+        if (wasLatched)
+        {
+            uint32 const cdMs =
+                uint32(DcSettings::GetFloat(bot, "CombatRegroupCooldown") * 1000.0f);
+            _cooldownUntil = now + cdMs;
+            if (_cooldownUntil == 0)  // reserve 0 as the "no cooldown" sentinel
+                _cooldownUntil = 1;
+        }
+        _latched = false;
+        _pendingSince = 0;
+        return false;
+    }
+
+    // verdict == Reconnect (non-emergency): the bot can't contribute from here.
+    // Keep firing if a move is already underway (latched) — one continuous intent.
+    if (_latched)
+        return true;
+
+    // Suppressed during the post-reconnect cooldown (only HardTether fires then).
+    // Signed wrap-safe compare: still cooling while now has not reached the deadline.
+    bool const inCooldown = _cooldownUntil != 0 && int32(_cooldownUntil - now) > 0;
+    if (inCooldown)
+    {
+        _pendingSince = 0;  // restart debounce fresh once the cooldown lapses
+        return false;
+    }
+
+    // Debounce in: the predicate must hold continuously for DC_REGROUP_DEBOUNCE_MS
+    // before the first fire, so a one-tick LOS flicker (the tank stepping past a
+    // pillar) never launches anyone.
+    if (_pendingSince == 0)
+        _pendingSince = now ? now : 1;
+    if (getMSTimeDiff(_pendingSince, now) >= DC_REGROUP_DEBOUNCE_MS)
+    {
+        _latched = true;
+        DC_PULL_TRACE("[DC:{}] regroup: verdict=reconnect why={} "
+                      "({:.1f}yd, los={}, healRange={:.1f})",
+                      bot->GetName(), in.isHealer ? "healer-prepos" : "dps-no-attackers",
+                      in.tankDist2d, in.tankLos ? 1 : 0, in.healRange);
+        return true;
+    }
+    return false;
 }
 
 bool DungeonClearHealRepositionTrigger::IsActive()

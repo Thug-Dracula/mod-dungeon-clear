@@ -343,16 +343,23 @@ public:
     bool IsActive() override;
 };
 
-// Follower-only, COMBAT engine. Keeps the party grouped on the leader tank during
-// ANY fight (not just an advanced-pull camp) once the leash has loosened: fires
-// while DC is active on the group, this bot is a non-leader follower in combat,
-// and it has drifted beyond DungeonClear.CombatRegroupDistance from the tank.
-// Drives DungeonClearRegroupCombatAction. The healer out-of-LOS case it used to
-// also cover is now owned by DungeonClearHealRepositionTrigger (which aims at the
-// hurt heal target, not just the tank, and runs in both engines). Deliberately
-// INERT while the party is held passive at an advanced-pull camp (GetLeaderCamp-
-// Hold passive) — the camp/assist actions own positioning there. Gated by
-// DungeonClear.CombatRegroup.
+// Follower-only, COMBAT engine. A CONTRIBUTION-GATED reconnector (Option B): it no
+// longer tethers on distance. It fires only when a follower in combat has no useful
+// work it can do from where it stands — a DPS with an empty LOS attacker list, or a
+// healer parked where it could not heal the tank when damage starts (nobody hurt
+// yet) — and drives DungeonClearRegroupCombatAction to a role-correct standoff point
+// with LOS on the fight, never onto the tank's cell. The verdict is the pure
+// DcRegroupDecision::DecideCombatRegroup kernel; this trigger gathers the game-state
+// reads, then layers debounce (predicate must hold DC_REGROUP_DEBOUNCE_MS before
+// firing) + a latch (keep firing until it clears) + a post-fire cooldown
+// (DungeonClear.CombatRegroupCooldown) so it cannot flap on an LOS flicker.
+// DungeonClear.CombatRegroupDistance survives as a HARD OUTER TETHER: beyond it the
+// bot reconnects regardless of the contribution test, bypassing debounce/cooldown
+// (the drifted-into-nowhere emergency path). The hurt-heal-target case is owned by
+// DungeonClearHealRepositionTrigger (rel 41); this stands down whenever it holds.
+// Deliberately INERT while the party is held passive at an advanced-pull camp
+// (GetLeaderCampHold passive) — the camp/assist actions own positioning there.
+// Gated by DungeonClear.CombatRegroup.
 class DungeonClearRegroupCombatTrigger : public Trigger
 {
 public:
@@ -361,6 +368,13 @@ public:
     {
     }
     bool IsActive() override;
+
+private:
+    // Flap control. Per-bot (the context creates one trigger object per bot); the
+    // action never reads these — the move is stateless and re-derives everything.
+    uint32 _pendingSince  = 0;  // first getMSTime the contribution predicate held (0 = not pending)
+    uint32 _cooldownUntil = 0;  // no non-emergency re-fire before this getMSTime
+    bool   _latched       = false;  // currently firing: keep firing until the predicate clears
 };
 
 // Healer-only, BOTH engines. The real fix for the long-standing "healer stops
