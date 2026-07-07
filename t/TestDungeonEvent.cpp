@@ -667,34 +667,50 @@ TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
     EXPECT_TRUE(e->persistent);
     EXPECT_TRUE(e->required);
 
-    ASSERT_EQ(e->steps.size(), 6u);
+    ASSERT_EQ(e->steps.size(), 9u);
 
-    // 1. clear the hall: abominations + the synchronously-summoned Ramstein.
+    // 1. clear the hall of the pre-spawned abominations (bulk).
     EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
     EXPECT_TRUE(e->steps[0].engage);
     EXPECT_FLOAT_EQ(e->steps[0].x, 4032.0f);
     EXPECT_FLOAT_EQ(e->steps[0].y, -3415.0f);
 
+    // 1b/1c. actively seek any straggler abomination the centre clear couldn't
+    //    reach (Bile Spewer 10416 / Venom Belcher 10417) — a bot-centred,
+    //    reachability-filtered ClearRadius can leave far ones, and Ramstein spawns
+    //    only when EVERY abomination dies (issue #5).
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(e->steps[1].engage);
+    EXPECT_EQ(e->steps[1].creatureEntry, 10416u);
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(e->steps[2].engage);
+    EXPECT_EQ(e->steps[2].creatureEntry, 10417u);
+
+    // 1d. all abominations dead -> seek + kill the summoned Ramstein (10439).
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(e->steps[3].engage);
+    EXPECT_EQ(e->steps[3].creatureEntry, 10439u);
+
     // 2. wave 1: wait for the mindless undead, then ClearRadius them.
-    EXPECT_EQ(e->steps[1].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[1].creatureEntry, 11030u);
-    EXPECT_TRUE(e->steps[1].wantAlive);
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::ClearRadius);
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[4].creatureEntry, 11030u);
+    EXPECT_TRUE(e->steps[4].wantAlive);
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::ClearRadius);
 
     // 3. wave 2: wait for the black guards, then actively seek+kill them
     //    (KillCreatureEngage) — they post far off, so a bot-centred ClearRadius
     //    can't see them.
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[3].creatureEntry, 10394u);
-    EXPECT_EQ(e->steps[4].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[4].creatureEntry, 10394u);
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[6].creatureEntry, 10394u);
+    EXPECT_EQ(e->steps[7].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[7].creatureEntry, 10394u);
 
     // 4. monotonic completion gate: the Baron door (175796) opens when the guards
     //    die. GO_STATE_ACTIVE (0) = open.
-    EXPECT_EQ(e->steps[5].kind, EventStepKind::WaitForGameObjectState);
-    EXPECT_EQ(e->steps[5].goEntry, 175796u);
-    EXPECT_EQ(e->steps[5].wantState, 0u);
-    EXPECT_GT(e->steps[5].radius, 100.0f);  // reaches the door from across the hall
+    EXPECT_EQ(e->steps[8].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[8].goEntry, 175796u);
+    EXPECT_EQ(e->steps[8].wantState, 0u);
+    EXPECT_GT(e->steps[8].radius, 100.0f);  // reaches the door from across the hall
 }
 
 // Stratholme (329) live side: Grand Crusader Dathrohan -> Balnazzar (eventId 5),
@@ -730,7 +746,8 @@ TEST(DungeonEventRegistryTest, StratholmeDathrohanBalnazzarEventShape)
 TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
 {
     std::vector<DungeonEvent const*> str = DungeonEventRegistry::Conditional(329);
-    ASSERT_EQ(str.size(), 3u);  // the 3 ziggurats; the Slaughterhouse is anchored
+    // the 3 ziggurats + Timmy's pack pre-clear (id 6); the Slaughterhouse is anchored
+    ASSERT_EQ(str.size(), 4u);
     for (DungeonEvent const* e : str)
     {
         EXPECT_EQ(e->activation, EventActivation::Conditional);
@@ -756,6 +773,14 @@ TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
     EXPECT_EQ(DungeonEventRegistry::Find(329, 2)->panelGatesBossEntry, 10438u);
     EXPECT_EQ(DungeonEventRegistry::Find(329, 3)->panelGatesBossEntry,
               BossRosterRegistry::ObjectiveEntry(1));
+
+    // Timmy's pre-clear (id 6) is conditional too and sorts in the panel just
+    // before Timmy himself (10808).
+    DungeonEvent const* timmy = DungeonEventRegistry::Find(329, 6);
+    ASSERT_NE(timmy, nullptr);
+    EXPECT_EQ(timmy->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(timmy->condition));
+    EXPECT_EQ(timmy->panelGatesBossEntry, 10808u);
 
     // These are NOT room-aggro pre-clears (ClearRadius, not KillCreature(0)).
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(329));

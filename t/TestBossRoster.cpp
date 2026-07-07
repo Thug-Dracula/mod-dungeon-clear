@@ -219,20 +219,28 @@ TEST(BossRosterRegistryTest, HellfireRampartsAddsFinalBoss)
     EXPECT_EQ(out[2].entry, 17537u);
 }
 
-// Stratholme dead side: the DBC puts the ziggurats (Baroness 7, Nerub'enkan 8,
-// Maleki 9) before Magistrate Barthilas (10), but the path runs Barthilas FIRST.
-// The patch re-adds Barthilas with orderOverride 6 (keeping kill-bit 10) so the
-// clear order becomes Barthilas -> ziggurats -> Slaughterhouse (11) -> Baron (12).
-//
-// The live side here is just Archivist Galford (bit 5). Balnazzar (bit 6) is NOT
-// auto-derived in production: its credit creature 10813 has no creature.sql spawn
-// (it exists only via Dathrohan's UpdateEntry), so BossSpawnIndex drops it — the
-// base list jumps Galford(5) -> Baroness(7). The patch fills the gap with a
-// Dathrohan objective (OBJ(2), eventId 5, bit 6).
-TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
+// Stratholme full clear-path order (issue #5). The DBC order is
+//   Unforgiven 0, Hearthsinger 1, Timmy 2, Cannon 3, Malor 4, Galford 5,
+//   Baroness 7, Nerub'enkan 8, Maleki 9, Barthilas 10, Baron 12
+// (Balnazzar bit 6 is NOT auto-derived: its credit creature 10813 has no
+// creature.sql spawn, so BossSpawnIndex drops it and the patch fills the gap
+// with a Dathrohan objective). Two structural problems: the DBC runs the
+// ziggurats before Barthilas though the path runs Barthilas first, and it lists
+// The Unforgiven / Hearthsinger Forresten first, forcing a full circle before
+// the live side. The patch stamps a contiguous 1..13 order key so the clear runs
+//   Timmy(1) -> Cannon(2) -> Malor(3) -> Galford(4) -> Dathrohan/Balnazzar(5) ->
+//   Unforgiven(6) -> Hearthsinger(7) -> Barthilas(8) -> Baroness(9) ->
+//   Nerub'enkan(10) -> Maleki(11) -> Slaughterhouse(12) -> Baron(13)
+// while every boss keeps its real DBC kill-bit (encounterIndex) untouched.
+TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
 {
     std::vector<DungeonBossInfo> base = {
-        Boss(10811, 5, "Archivist Galford", 329),  // live side, last auto-derived
+        Boss(10516, 0, "The Unforgiven", 329),
+        Boss(10558, 1, "Hearthsinger Forresten", 329),
+        Boss(10808, 2, "Timmy the Cruel", 329),
+        Boss(10997, 3, "Cannon Master Willey", 329),
+        Boss(11032, 4, "Malor the Zealous", 329),
+        Boss(10811, 5, "Archivist Galford", 329),
         Boss(10436, 7, "Baroness Anastari", 329),
         Boss(10437, 8, "Nerub'enkan", 329),
         Boss(10438, 9, "Maleki the Pallid", 329),
@@ -241,10 +249,14 @@ TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, base);
 
-    int galfordIdx = -1, dathrohanIdx = -1, barthIdx = -1, baronessIdx = -1,
-        malekiIdx = -1, slaughterIdx = -1, baronIdx = -1;
+    int timmyIdx = -1, unforgivenIdx = -1, hearthIdx = -1, galfordIdx = -1,
+        dathrohanIdx = -1, barthIdx = -1, baronessIdx = -1, malekiIdx = -1,
+        slaughterIdx = -1, baronIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
+        if (out[i].entry == 10808) timmyIdx = i;
+        if (out[i].entry == 10516) unforgivenIdx = i;
+        if (out[i].entry == 10558) hearthIdx = i;
         if (out[i].entry == 10811) galfordIdx = i;
         if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 5u) dathrohanIdx = i;
         if (out[i].entry == 10435) barthIdx = i;
@@ -253,6 +265,9 @@ TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
         if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 4u) slaughterIdx = i;
         if (out[i].entry == 10440) baronIdx = i;
     }
+    ASSERT_GE(timmyIdx, 0);
+    ASSERT_GE(unforgivenIdx, 0);
+    ASSERT_GE(hearthIdx, 0);
     ASSERT_GE(galfordIdx, 0);
     ASSERT_GE(dathrohanIdx, 0) << "Dathrohan (Balnazzar) objective missing";
     ASSERT_GE(barthIdx, 0);
@@ -260,22 +275,38 @@ TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
     ASSERT_GE(slaughterIdx, 0) << "slaughterhouse objective missing";
     ASSERT_GE(baronIdx, 0);
 
-    // Galford -> Dathrohan/Balnazzar -> Barthilas -> ziggurats -> slaughter -> Baron.
+    // Timmy leads: he comes before The Unforgiven and Hearthsinger (issue #5).
+    EXPECT_LT(timmyIdx, unforgivenIdx) << "Timmy must precede The Unforgiven";
+    EXPECT_LT(timmyIdx, hearthIdx) << "Timmy must precede Hearthsinger";
+
+    // Live side (Timmy -> ... -> Galford -> Dathrohan/Balnazzar) before the two
+    // relocated bosses, which in turn precede the dead side.
     EXPECT_LT(galfordIdx, dathrohanIdx) << "Dathrohan follows Galford on the live side";
-    EXPECT_LT(dathrohanIdx, barthIdx) << "live side (Balnazzar) before the dead side";
+    EXPECT_LT(dathrohanIdx, unforgivenIdx) << "live side before The Unforgiven";
+    EXPECT_LT(unforgivenIdx, hearthIdx) << "Unforgiven before Hearthsinger";
+    EXPECT_LT(hearthIdx, barthIdx) << "relocated bosses before the dead side";
     EXPECT_LT(barthIdx, baronessIdx) << "Barthilas must precede the ziggurats";
     EXPECT_LT(malekiIdx, slaughterIdx) << "ziggurats before the slaughterhouse";
     EXPECT_LT(slaughterIdx, baronIdx) << "slaughterhouse before Baron";
 
-    // The Dathrohan objective slots at bit 6 (after Galford 5) and is an Objective
-    // (no real kill-bit — completion is its event, not the mask).
+    // The contiguous 1..13 order keys.
+    EXPECT_EQ(BossOrderKey(out[timmyIdx]), 1u);
+    EXPECT_EQ(BossOrderKey(out[galfordIdx]), 4u);
     EXPECT_EQ(out[dathrohanIdx].kind, DungeonAnchorKind::Objective);
-    EXPECT_EQ(BossOrderKey(out[dathrohanIdx]), 6u);
+    EXPECT_EQ(BossOrderKey(out[dathrohanIdx]), 5u);
+    EXPECT_EQ(BossOrderKey(out[unforgivenIdx]), 6u);
+    EXPECT_EQ(BossOrderKey(out[hearthIdx]), 7u);
+    EXPECT_EQ(BossOrderKey(out[slaughterIdx]), 12u);
+    EXPECT_EQ(BossOrderKey(out[baronIdx]), 13u);
 
-    // Reordering must NOT disturb Barthilas's real kill-bit: completion still keys on 10.
+    // Reordering must NOT disturb real kill-bits: completion still keys on the DBC
+    // encounterIndex, only the order key moves.
     EXPECT_EQ(out[barthIdx].encounterIndex, 10u);
-    EXPECT_EQ(out[barthIdx].orderOverride, 6);
-    EXPECT_EQ(BossOrderKey(out[barthIdx]), 6u);
+    EXPECT_EQ(out[barthIdx].orderOverride, 8);
+    EXPECT_EQ(BossOrderKey(out[barthIdx]), 8u);
+    EXPECT_EQ(out[unforgivenIdx].encounterIndex, 0u) << "Unforgiven keeps kill-bit 0";
+    EXPECT_EQ(out[hearthIdx].encounterIndex, 1u) << "Hearthsinger keeps kill-bit 1";
+    EXPECT_EQ(out[baronIdx].encounterIndex, 12u) << "Baron keeps kill-bit 12";
 }
 
 // Blackrock Depths: the Ring of Law objective (its own DungeonEncounter bit 3,
