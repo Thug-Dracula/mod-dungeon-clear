@@ -438,8 +438,8 @@ void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t)
         // (keys 6/7), on the way to the dead side.
         //
         //   1  Timmy the Cruel        (10808, DBC bit 2)  — first, live side
-        //   2  Cannon Master Willey   (10997, bit 3)
-        //   3  Malor the Zealous      (11032, bit 4)
+        //   2  Malor the Zealous      (11032, bit 4)
+        //   3  Cannon Master Willey   (10997, bit 3)
         //   4  Archivist Galford      (10811, bit 5)
         //   5  Dathrohan/Balnazzar    (OBJ(2), event 5)   — live-side final
         //   6  The Unforgiven         (10516, bit 0)      — moved here
@@ -452,8 +452,8 @@ void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t)
         //   13 Baron Rivendare        (10440, bit 12)
         p.reorder = {
             { 10808, 1 },   // Timmy the Cruel
-            { 10997, 2 },   // Cannon Master Willey
-            { 11032, 3 },   // Malor the Zealous
+            { 11032, 2 },   // Malor the Zealous     — before the Cannon Master
+            { 10997, 3 },   // Cannon Master Willey
             { 10811, 4 },   // Archivist Galford
             { 10516, 6 },   // The Unforgiven         — after the live side
             { 10558, 7 },   // Hearthsinger Forresten — after the live side

@@ -228,7 +228,7 @@ TEST(BossRosterRegistryTest, HellfireRampartsAddsFinalBoss)
 // ziggurats before Barthilas though the path runs Barthilas first, and it lists
 // The Unforgiven / Hearthsinger Forresten first, forcing a full circle before
 // the live side. The patch stamps a contiguous 1..13 order key so the clear runs
-//   Timmy(1) -> Cannon(2) -> Malor(3) -> Galford(4) -> Dathrohan/Balnazzar(5) ->
+//   Timmy(1) -> Malor(2) -> Cannon(3) -> Galford(4) -> Dathrohan/Balnazzar(5) ->
 //   Unforgiven(6) -> Hearthsinger(7) -> Barthilas(8) -> Baroness(9) ->
 //   Nerub'enkan(10) -> Maleki(11) -> Slaughterhouse(12) -> Baron(13)
 // while every boss keeps its real DBC kill-bit (encounterIndex) untouched.
@@ -249,12 +249,14 @@ TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, base);
 
-    int timmyIdx = -1, unforgivenIdx = -1, hearthIdx = -1, galfordIdx = -1,
-        dathrohanIdx = -1, barthIdx = -1, baronessIdx = -1, malekiIdx = -1,
-        slaughterIdx = -1, baronIdx = -1;
+    int timmyIdx = -1, malorIdx = -1, cannonIdx = -1, unforgivenIdx = -1,
+        hearthIdx = -1, galfordIdx = -1, dathrohanIdx = -1, barthIdx = -1,
+        baronessIdx = -1, malekiIdx = -1, slaughterIdx = -1, baronIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
         if (out[i].entry == 10808) timmyIdx = i;
+        if (out[i].entry == 11032) malorIdx = i;
+        if (out[i].entry == 10997) cannonIdx = i;
         if (out[i].entry == 10516) unforgivenIdx = i;
         if (out[i].entry == 10558) hearthIdx = i;
         if (out[i].entry == 10811) galfordIdx = i;
@@ -266,6 +268,8 @@ TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
         if (out[i].entry == 10440) baronIdx = i;
     }
     ASSERT_GE(timmyIdx, 0);
+    ASSERT_GE(malorIdx, 0);
+    ASSERT_GE(cannonIdx, 0);
     ASSERT_GE(unforgivenIdx, 0);
     ASSERT_GE(hearthIdx, 0);
     ASSERT_GE(galfordIdx, 0);
@@ -279,6 +283,11 @@ TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
     EXPECT_LT(timmyIdx, unforgivenIdx) << "Timmy must precede The Unforgiven";
     EXPECT_LT(timmyIdx, hearthIdx) << "Timmy must precede Hearthsinger";
 
+    // Malor the Zealous clears before Cannon Master Willey (issue #5 follow-up).
+    EXPECT_LT(timmyIdx, malorIdx) << "Timmy still leads the live side";
+    EXPECT_LT(malorIdx, cannonIdx) << "Malor must precede the Cannon Master";
+    EXPECT_LT(cannonIdx, galfordIdx) << "Cannon Master before Galford";
+
     // Live side (Timmy -> ... -> Galford -> Dathrohan/Balnazzar) before the two
     // relocated bosses, which in turn precede the dead side.
     EXPECT_LT(galfordIdx, dathrohanIdx) << "Dathrohan follows Galford on the live side";
@@ -291,6 +300,8 @@ TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
 
     // The contiguous 1..13 order keys.
     EXPECT_EQ(BossOrderKey(out[timmyIdx]), 1u);
+    EXPECT_EQ(BossOrderKey(out[malorIdx]), 2u);
+    EXPECT_EQ(BossOrderKey(out[cannonIdx]), 3u);
     EXPECT_EQ(BossOrderKey(out[galfordIdx]), 4u);
     EXPECT_EQ(out[dathrohanIdx].kind, DungeonAnchorKind::Objective);
     EXPECT_EQ(BossOrderKey(out[dathrohanIdx]), 5u);
