@@ -27,17 +27,16 @@
 //     resets. Blind to a fully stalled bot by design — that case belongs to other
 //     rungs (direct-pursuit / dead-end) — matching the original posStuck exactly.
 //
-//   * ClosingDistance — "am I getting nearer the target". The swim leg walks
-//     toward its current point; progress is the straight-line distance dropping
-//     below the closest seen so far. Works whether or not the bot is moving. The
-//     wall-clock stale check stays in the caller (getMSTimeDiff is wrap-safe and
-//     lives in the engine layer), reading lastProgressMs.
-//
-// Deliberately NOT covering pursuitFailTicks / doneNotEngagedTicks: those are
-// MoveTo-refusal / dead-end tick counters guarding the silent-freeze escalations,
-// and recasting them as closing-distance changes their give-up semantics on the
-// module's worst-symptom freezes — a live-validated tuning, not this
-// behavior-preserving extraction.
+//   * ClosingDistance — "am I getting nearer the target". Used by the swim leg,
+//     the direct-pursuit shortcut, and the dead-end final approach: progress is
+//     the straight-line distance to the objective dropping below the closest seen
+//     so far. Works whether or not the bot is moving, so it ALSO catches a fully
+//     stalled bot — the non-moving blind spot displacement can't see, which is
+//     exactly why pursuit and final-approach had grown their own MoveTo-refusal /
+//     tick counters. Each no-progress tick both increments stuckTicks (a TICK
+//     budget, for pursuit/final-approach) and leaves lastProgressMs unstamped (a
+//     wall-clock TIME budget, for the swim leg, checked by the caller with the
+//     wrap-safe getMSTimeDiff); a progress tick resets both.
 struct DcProgressWatchdog
 {
     std::uint32_t stuckTicks     = 0;      // consecutive no-progress ticks
@@ -64,19 +63,23 @@ struct DcProgressWatchdog
 
     // Closing-distance tick. distToTarget = current straight-line distance to the
     // objective point; nowMs = getMSTime(). Progress = the distance improved by
-    // >= minClose versus the closest seen so far (bestDist), which also re-arms
-    // bestDist and stamps lastProgressMs. The first sample (bestDist < 0) arms the
-    // tracker and counts as progress. Returns true iff progress was made this
-    // tick; the caller compares getMSTimeDiff(lastProgressMs, nowMs) to its time
-    // budget to decide when to give up.
+    // >= minClose versus the closest seen so far (bestDist); on progress it
+    // re-arms bestDist, stamps lastProgressMs and zeroes stuckTicks; otherwise it
+    // increments stuckTicks. The first sample (bestDist < 0) arms the tracker and
+    // counts as progress. Returns true iff progress was made this tick. A tick-
+    // budgeted caller (pursuit / final approach) compares stuckTicks to its
+    // budget; a time-budgeted caller (swim) compares getMSTimeDiff(lastProgressMs,
+    // nowMs) to its stale limit.
     bool TickClosing(float distToTarget, float minClose, std::uint32_t nowMs)
     {
         if (bestDist < 0.0f || distToTarget < bestDist - minClose)
         {
             bestDist = distToTarget;
             lastProgressMs = nowMs;
+            stuckTicks = 0;
             return true;
         }
+        ++stuckTicks;
         return false;
     }
 };

@@ -852,8 +852,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoStuckRecover(Advanc
 
 // Pursuit gate. Fills canPursue (a LIVE, visible boss past DC_ENGAGE_RANGE but
 // within LOS and DC_DIRECT_PURSUIT_RANGE) and the give-up latch value. When the
-// boss isn't pursuable this tick it also clears the latch so a later pursuit
-// starts with a fresh budget. The Pursue EFFECT is DoPursue.
+// boss isn't pursuable this tick it resets the closing-distance watchdog so a
+// later pursuit starts with a fresh baseline. The Pursue EFFECT is DoPursue.
 void DungeonClearAdvanceAction::FillPursuitObs(AdvanceState& st, DungeonClearApproach::Observation& obs)
 {
     Creature* const liveBoss = st.liveBoss;
@@ -863,10 +863,13 @@ void DungeonClearAdvanceAction::FillPursuitObs(AdvanceState& st, DungeonClearApp
     bool const canPursue =
         liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss);
     if (!canPursue)
-        appr.pursuitFailTicks = 0;  // fresh budget for a later pursuit
+        appr.pursuitWatch.Reset();  // fresh closing baseline for a later pursuit
 
     obs.canPursue = canPursue;
-    obs.pursuitFailTicks = appr.pursuitFailTicks;
+    // Latch = consecutive ticks that failed to close on the boss (nav F11). Read
+    // from last tick's DoPursue sample; DecideApproach selects Pursue while it is
+    // under the limit.
+    obs.pursuitFailTicks = appr.pursuitWatch.stuckTicks;
 }
 
 // Pursue effect: walk straight at the boss's current position with a per-tick
@@ -875,66 +878,58 @@ void DungeonClearAdvanceAction::FillPursuitObs(AdvanceState& st, DungeonClearApp
 // target). This is what stops the tank parking at the static spawn anchor and
 // waiting for the boss to wander back.
 //
-// pursuitFailTicks doubles as a latch: when a straight-line MoveTo can't resolve
-// (Z -> INVALID_HEIGHT, or a winding route past the raw 74-hop cap) the bot never
-// moves and posStuck can't see it. After DC_PURSUIT_FAIL_LIMIT dead ticks this
-// returns Step::Continue — pursuit abdicates and Execute hands the tick to the
-// long-path machinery (LongRangePathfinder, no hop cap). The refreshed latch
-// value keeps DecideApproach out of the Pursue rung on later ticks so the
-// long-path can travel. The latch clears on boss change / entering engage range.
+// The give-up latch is now the shared closing-distance watchdog (nav F11): a tick
+// that fails to get DC_STUCK_DISPLACEMENT nearer the boss is a no-progress tick.
+// This subsumes the old MoveTo-refusal counter (a frozen bot — Z->INVALID_HEIGHT,
+// or a route past the raw 74-hop cap — never moves, so it never closes) AND now
+// also catches a bot that IS moving but not gaining (bee-line grinding a corner,
+// LOS-flicker steering it sideways) — the non-moving/ not-closing blind spot the
+// old counter couldn't see. After DC_PURSUIT_FAIL_LIMIT no-closing ticks this
+// returns Step::Continue: pursuit abdicates and Execute hands the tick to the
+// wall-screened long-path (LongRangePathfinder targets the same live boss, no hop
+// cap). The latch stays closed until engage range / boss change so the long-path
+// can travel.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoPursue(AdvanceState& st)
 {
     DungeonBossInfo const* next = st.next;
     float const bossX = st.bossX, bossY = st.bossY, bossZ = st.bossZ;
     float const engageDist = st.engageDist;
     DcApproachState& appr = *st.appr;
-    uint32& pursuitFailTicks = appr.pursuitFailTicks;
-    uint32& stuck = appr.stuckCount;
 
-    // DcMoveTo drops any stale long-path escort glide (so it doesn't keep
-    // driving the bot toward the spawn anchor) before steering at the live boss.
+    // Sample closing progress BEFORE issuing this tick's move (engageDist is
+    // start-of-tick, reflecting prior ticks' movement). The first pursuit tick
+    // arms the baseline and reads as progress.
+    appr.pursuitWatch.TickClosing(engageDist, DC_STUCK_DISPLACEMENT, getMSTime());
+    if (appr.pursuitWatch.stuckTicks >= DC_PURSUIT_FAIL_LIMIT)
+    {
+        // Not closing on the boss for the whole budget — a doomed bee-line. Hand
+        // off without issuing another (the long-path drives from here).
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] direct pursuit of {} not closing ({:.0f}yd, {} ticks) -> "
+                 "long-path fallback (latched until engage range / boss change)",
+                 bot->GetName(), next->name, engageDist, DC_PURSUIT_FAIL_LIMIT);
+        return Step::Continue;
+    }
+
+    // DcMoveTo drops any stale long-path escort glide (so it doesn't keep driving
+    // the bot toward the spawn anchor) before steering at the live boss.
     bool const chasing = DcMoveTo(next->mapId, bossX, bossY, bossZ,
                                 /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                 /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    bool const moveAlive = chasing || bot->isMoving() ||
+                           IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL);
 
-    // A move was issued, is already in flight, or was just queued (MoveTo's
-    // own IsDuplicateMove / IsWaitingForLastMove return false while a prior
-    // move is still gliding) — pursuit is alive, let it ride. A move that is
-    // in flight but wedging in place is caught by the posStuck rebuild above,
-    // which runs before this branch.
-    if (chasing || bot->isMoving() ||
-        IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
-    {
-        pursuitFailTicks = 0;
-        stuck = 0;
-        ClearStall(context);
-        SetPhase(context, "pursuing");
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
-                  bot->GetName(), next->name, engageDist,
-                  chasing ? "issued" : "in flight");
-        return Step::ReturnTrue;
-    }
-
-    // MoveTo produced nothing and the bot is standing still. Count the dead
-    // tick; past a short grace, leave the latch set and hand off to the
-    // wall-screened long-path below (it carries its own dead-end -> stall).
-    ++pursuitFailTicks;
-    LOG_INFO("playerbots.dungeonclear",
-             "[DC:{}] direct pursuit of {} stalled ({:.0f}yd, MoveTo noop, not "
-             "moving) {}/{}",
-             bot->GetName(), next->name, engageDist, pursuitFailTicks,
-             DC_PURSUIT_FAIL_LIMIT);
-    if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
-        return Step::ReturnFalse;
-
-    LOG_INFO("playerbots.dungeonclear",
-             "[DC:{}] direct pursuit of {} unreachable -> long-path fallback "
-             "(latched until engage range / boss change)",
-             bot->GetName(), next->name);
-    // Hand off to the long-path machinery below; the latch keeps us out of the
-    // Pursue rung on subsequent ticks so the long-path can travel.
-    return Step::Continue;
+    appr.stuckCount = 0;
+    ClearStall(context);
+    SetPhase(context, "pursuing");
+    LOG_DEBUG("playerbots.dungeonclear",
+              "[DC:{}] pursuing live {} at {:.0f}yd (LOS, noClose={}/{}) -> MoveTo {}",
+              bot->GetName(), next->name, engageDist,
+              appr.pursuitWatch.stuckTicks, DC_PURSUIT_FAIL_LIMIT,
+              chasing ? "issued" : (moveAlive ? "in flight" : "noop"));
+    // Own the tick when a move is alive; else yield (a move that is in flight but
+    // wedging in place is caught by the posStuck/route-glide watchdog above).
+    return moveAlive ? Step::ReturnTrue : Step::ReturnFalse;
 }
 
 // ==== Tier B — path-level observation + effects (unreachable / off-path) ===
@@ -1125,24 +1120,29 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     if (hop.isDone)
     {
         // Route completed. Inside engage range this is a benign rebuild-and-yield
-        // and OnEnteredEngageRange already zeroed the counter; only when we're
-        // still SHORT of the boss does the dead-end escalation counter advance
-        // (the silent forever-loop guard). Match the old rung's ordering: the
-        // ++ happened only after the engageDist<engageRange case was ruled out.
+        // and OnEnteredEngageRange already reset the watchdog; only when we're
+        // still SHORT of the boss does the dead-end escalation advance (the silent
+        // forever-loop guard). Via the shared closing-distance watchdog (nav F11):
+        // each hop-done tick that fails to get DC_STUCK_DISPLACEMENT nearer the
+        // boss is a no-progress tick. This is more patient than the old pure tick
+        // counter — a final-approach MoveTo that IS slowly closing keeps its
+        // budget, and only a genuine dead-end (0-point path, bot not moving) or a
+        // boss stepping out of reach exhausts it. Match the old ordering: it only
+        // advances after the engageDist<engageRange case is ruled out.
         if (engageDist >= engageRange)
         {
-            ++appr.doneNotEngagedTicks;
+            appr.finalApproachWatch.TickClosing(engageDist, DC_STUCK_DISPLACEMENT, getMSTime());
             // Water escape (Swim vs Stall) is consulted only once the budget is
             // spent; probe it there so the captured verdict is honest, gated on
             // SwimEnable so it matches the effect when swimming is off.
-            if (appr.doneNotEngagedTicks >= obs.doneNotEngagedLimit)
+            if (appr.finalApproachWatch.stuckTicks >= obs.doneNotEngagedLimit)
                 obs.waterBetween =
                     DcSettings::GetBool(bot, "SwimEnable") &&
                     SwimPathfinder::WaterBetween(
                         bot, G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()),
                         G3D::Vector3(bossX, bossY, bossZ));
         }
-        obs.doneNotEngagedTicks = appr.doneNotEngagedTicks;
+        obs.doneNotEngagedTicks = appr.finalApproachWatch.stuckTicks;
         return;  // hopDone outranks jump / ride / off-line / window
     }
 
@@ -1213,7 +1213,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
                  "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "
                  "-> final-approach MoveTo",
                  bot->GetName(), engageDist, next->name, engageRange,
-                 appr.doneNotEngagedTicks, DC_DONE_NOT_ENGAGED_LIMIT);
+                 appr.finalApproachWatch.stuckTicks, DC_DONE_NOT_ENGAGED_LIMIT);
         bool const pushing = DcMoveTo(next->mapId, bossX, bossY, bossZ,
                                     /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                     /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
@@ -1222,10 +1222,10 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
         return pushing ? Step::ReturnTrue : Step::ReturnFalse;
     }
 
-    // Budget spent (Swim or Stall). Reset the counter and take the water-gate
+    // Budget spent (Swim or Stall). Reset the watchdog and take the water-gate
     // swim if one exists (submerged tunnel the surface-sheet navmesh can't
     // descend into), else stall for `dc skip`.
-    appr.doneNotEngagedTicks = 0;
+    appr.finalApproachWatch.Reset();
     if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
     {
         LOG_INFO("playerbots.dungeonclear",
@@ -1646,7 +1646,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // Pursuit abdicated this tick (give-up latch tripped). Refresh the latch
         // field so the ladder below sees the CLOSED latch (else the still-true
         // canPursue would re-select Pursue) and hand off to the long-path.
-        obs.pursuitFailTicks = appr.pursuitFailTicks;
+        obs.pursuitFailTicks = appr.pursuitWatch.stuckTicks;
     }
 
     // --- Tier B: resolve the long-path toward the boss's EFFECTIVE position

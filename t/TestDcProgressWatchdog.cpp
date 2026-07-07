@@ -113,6 +113,33 @@ TEST(DcProgressWatchdog, ClosingTracksGlobalMinimumAcrossPoints)
     EXPECT_EQ(w.lastProgressMs, 4000u);
 }
 
+// ---- TickClosing tick budget (pursuit / final approach) ------------------
+
+TEST(DcProgressWatchdog, ClosingNoProgressIncrementsStuckTicks)
+{
+    DcProgressWatchdog w;
+    ASSERT_TRUE(w.TickClosing(40.0f, MIN_CLOSE, 1000u));  // arms, stuck stays 0
+    EXPECT_EQ(w.stuckTicks, 0u);
+    // Not getting nearer (frozen bot, or bee-line grinding a corner) accrues the
+    // tick budget the pursuit / final-approach latches read.
+    EXPECT_FALSE(w.TickClosing(40.0f, MIN_CLOSE, 1100u));
+    EXPECT_EQ(w.stuckTicks, 1u);
+    EXPECT_FALSE(w.TickClosing(40.2f, MIN_CLOSE, 1200u));  // 0.2 < 0.5 epsilon
+    EXPECT_EQ(w.stuckTicks, 2u);
+}
+
+TEST(DcProgressWatchdog, ClosingProgressResetsStuckTicks)
+{
+    DcProgressWatchdog w;
+    w.TickClosing(40.0f, MIN_CLOSE, 1000u);
+    w.TickClosing(40.0f, MIN_CLOSE, 1100u);
+    w.TickClosing(40.0f, MIN_CLOSE, 1200u);
+    ASSERT_EQ(w.stuckTicks, 2u);
+    // A real gain toward the boss clears the latch.
+    EXPECT_TRUE(w.TickClosing(38.0f, MIN_CLOSE, 1300u));
+    EXPECT_EQ(w.stuckTicks, 0u);
+}
+
 // ---- Reset ---------------------------------------------------------------
 
 TEST(DcProgressWatchdog, ResetClearsEverything)

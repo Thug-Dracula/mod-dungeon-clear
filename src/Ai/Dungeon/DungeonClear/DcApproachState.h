@@ -31,18 +31,21 @@
 // inline ->Set(0u) clusters.
 struct DcApproachState
 {
-    // --- per-approach stuck / recovery watchdogs --------------------------
-    // Displacement wedge detectors (nav review F11): the route glide and the
-    // door-blocked walk-in each watch their escort spline grinding against
-    // geometry via the shared DcProgressWatchdog (was two byte-identical inline
-    // no-displacement counters). Separate instances because the two run in
-    // different actions/phases and reset independently.
-    DcProgressWatchdog routeGlideWatch;  // advance route-glide wedge (was posStuckTicks)
-    DcProgressWatchdog doorWalkInWatch;  // door walk-in wedge (was doorWalkInStuckTicks)
+    // --- per-approach stuck / recovery watchdogs (nav review F11) ---------
+    // Four instances of the shared DcProgressWatchdog replace the per-movement-
+    // mode stuck counters that had accreted one at a time. Two watch DISPLACEMENT
+    // (an escort spline grinding against geometry): the route glide and the
+    // door-blocked walk-in. Two watch CLOSING-DISTANCE to the boss (which also
+    // sees a fully STALLED bot — the non-moving blind spot displacement can't):
+    // the direct-pursuit give-up latch and the path-ends-short final approach.
+    // Separate instances because they run in different phases and reset
+    // independently. stuckCount / rebuildAttempts stay as the meta-layer.
+    DcProgressWatchdog routeGlideWatch;      // advance route-glide wedge (was posStuckTicks)
+    DcProgressWatchdog doorWalkInWatch;      // door walk-in wedge (was doorWalkInStuckTicks)
+    DcProgressWatchdog pursuitWatch;         // direct-pursuit give-up latch (was pursuitFailTicks)
+    DcProgressWatchdog finalApproachWatch;   // path-ends-short escalation (was doneNotEngagedTicks)
     uint32 stuckCount          = 0;  // MoveTo-returned-false backup (was "stuck count")
     uint32 rebuildAttempts     = 0;  // consecutive rebuilds w/o progress ("stride rebuild attempts")
-    uint32 pursuitFailTicks    = 0;  // direct-pursuit give-up latch ("pursuit fail ticks")
-    uint32 doneNotEngagedTicks = 0;  // path-ends-short escalation ("done-not-engaged ticks")
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
@@ -126,9 +129,9 @@ struct DcApproachState
         stuckCount          = 0;
         routeGlideWatch.Reset();
         doorWalkInWatch.Reset();
+        pursuitWatch.Reset();
+        finalApproachWatch.Reset();
         rebuildAttempts     = 0;
-        doneNotEngagedTicks = 0;
-        pursuitFailTicks    = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
         skirtOrbitTarget.Clear();
@@ -142,8 +145,8 @@ struct DcApproachState
     // re-pursued cleanly instead of staying latched off the pursuit shortcut.
     void OnEnteredEngageRange()
     {
-        doneNotEngagedTicks = 0;
-        pursuitFailTicks    = 0;
+        finalApproachWatch.Reset();
+        pursuitWatch.Reset();
     }
 };
 
