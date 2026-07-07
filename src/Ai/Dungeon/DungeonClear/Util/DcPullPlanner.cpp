@@ -180,7 +180,6 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     Player* bot = botAI->GetBot();
     if (!bot)
         return false;
-    AiObjectContext* ctx = botAI->GetAiObjectContext();
 
     // Search/broad-phase pad ONLY: widens the grid scan below so no mob whose
     // aggro reach could matter is missed. Pack identity in the estimate itself

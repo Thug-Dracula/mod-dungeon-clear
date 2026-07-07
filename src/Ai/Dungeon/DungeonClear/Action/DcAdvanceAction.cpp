@@ -350,7 +350,7 @@ namespace
     // just completed (caller falls through to normal navmesh navigation).
     bool DriveActiveSwim(Player* bot, PlayerbotAI* botAI, AiObjectContext* context,
                          DcApproachState& appr,
-                         uint32 targetEntry, float bx, float by, float bz,
+                         uint32 targetEntry,
                          float engageDist, float engageRange)
     {
         DungeonClearSwimState& swim =
@@ -1562,7 +1562,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // TryBossNotPresentStall and abort the swim. It self-clears on arrival
     // (engage range), on consuming the leg, or on going stale, then falls
     // through to normal navigation.
-    if (DriveActiveSwim(bot, botAI, context, appr, next->entry, bossX, bossY, bossZ,
+    if (DriveActiveSwim(bot, botAI, context, appr, next->entry,
                         engageDist, engageRange))
         return true;
 

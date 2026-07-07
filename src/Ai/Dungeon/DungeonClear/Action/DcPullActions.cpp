@@ -115,8 +115,6 @@ namespace
     constexpr uint32 DC_PULL_PARTY_SET_TIMEOUT_MS = 8000;
     // How close to camp the tank must get on the return before releasing.
     constexpr float DC_PULL_CAMP_ARRIVE = 5.0f;
-    // Follower camp tolerance — within this, hold; otherwise walk to camp.
-    constexpr float DC_PULL_HOLD_RADIUS = 4.0f;
     // "Party is set" tolerance for the Forming gate. A touch wider than the hold
     // radius so a follower parked at the boundary reliably counts as set instead
     // of flickering in/out and never letting the tank tag.
