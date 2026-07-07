@@ -5,6 +5,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 
 #include "GameObject.h"
 #include "Log.h"
@@ -14,6 +15,7 @@
 #include "Timer.h"
 
 #include <atomic>
+#include <unordered_map>
 
 // --- Dire Maul East (map 429) — Ironbark / Conservatory Door -------------
 // Alzzin the Wildshaper's grove is sealed behind the Conservatory Door (GO
@@ -523,4 +525,62 @@ void RegisterDireMaulRoster(std::vector<BossRosterPatch>& t)
         };
         t.push_back(std::move(p));
     }
+}
+
+// --- wing layout (relocated from DungeonWingRegistry) --------------------
+void RegisterDireMaulWings(std::unordered_map<uint32, DungeonWingLayout>& store)
+{
+    // --- Dire Maul (map 429) -------------------------------------
+    // Three wings, each entered through its own portal; no in-instance
+    // route connects them. Grouping verified against creature spawn
+    // coords (East sits at y < -100, West at x < 150 / y > 400, North
+    // at x > 300), which is also why nearest-boss wing detection is
+    // unambiguous. isolated == true: filter to the bot's wing.
+    store[429] = {true, {
+        {"Dire Maul (East)", {
+            11490,  // Zevrim Thornhoof
+            13280,  // Hydrospawn
+            14327,  // Lethtendris
+            11492,  // Alzzin the Wildshaper
+            // Ironbark / Conservatory Door travel objective (a synthetic
+            // entry, not a creature) — keep it in-wing so wing-filtering
+            // doesn't drop it. See BossRosterRegistry map-429 patch.
+            BossRosterRegistry::ObjectiveEntry(1),
+        }},
+        {"Dire Maul (West)", {
+            11489,  // Tendris Warpwood
+            11488,  // Illyanna Ravenoak
+            11487,  // Magister Kalendris
+            11496,  // Immol'thar
+            11486,  // Prince Tortheldrin
+            // Immol'thar's five Crystal Generator (pylon) travel
+            // objectives — synthetic entries, not creatures; keep them
+            // in-wing so wing-filtering doesn't drop them. See the
+            // map-429 West patch in BossRosterRegistry.
+            BossRosterRegistry::ObjectiveEntry(2),
+            BossRosterRegistry::ObjectiveEntry(3),
+            BossRosterRegistry::ObjectiveEntry(4),
+            BossRosterRegistry::ObjectiveEntry(5),
+            BossRosterRegistry::ObjectiveEntry(6),
+            BossRosterRegistry::ObjectiveEntry(7),  // barrier-skirt waypoint
+            // Warpwood entrance SWEEP grid (3 bands, 7 stops). See the
+            // map-429 West patch in BossRosterRegistry / DireMaulEvents.
+            BossRosterRegistry::ObjectiveEntry(8),   // entrance (W)
+            BossRosterRegistry::ObjectiveEntry(9),   // entrance (centre)
+            BossRosterRegistry::ObjectiveEntry(10),  // entrance (E)
+            BossRosterRegistry::ObjectiveEntry(11),  // mid hall (W)
+            BossRosterRegistry::ObjectiveEntry(12),  // mid hall (E)
+            BossRosterRegistry::ObjectiveEntry(13),  // approach (W)
+            BossRosterRegistry::ObjectiveEntry(14),  // approach (E)
+        }},
+        {"Dire Maul (North)", {
+            14326,  // Guard Mol'dar
+            14322,  // Stomper Kreeg
+            14321,  // Guard Fengus
+            14323,  // Guard Slip'kik
+            14325,  // Captain Kromcrush
+            14324,  // Cho'Rush the Observer
+            11501,  // King Gordok
+        }},
+    }};
 }

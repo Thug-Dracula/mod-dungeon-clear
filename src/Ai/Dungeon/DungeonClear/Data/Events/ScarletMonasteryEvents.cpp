@@ -5,6 +5,9 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
+
+#include <unordered_map>
 
 // --- Scarlet Monastery Cathedral (map 189) — ROOM-AGGRO PRE-CLEAR ---------
 // Highlord Mograine's engage fires a grid AttackStart that drags the WHOLE
@@ -72,4 +75,44 @@ void RegisterScarletMonasteryRoster(std::vector<BossRosterPatch>& t)
         };
         t.push_back(std::move(p));
     }
+}
+
+// --- wing layout (relocated from DungeonWingRegistry) --------------------
+void RegisterScarletMonasteryWings(std::unordered_map<uint32, DungeonWingLayout>& store)
+{
+    // --- Scarlet Monastery (map 189) -----------------------------
+    // Four wings, each entered through its own portal off the shared
+    // outdoor courtyard; you must leave to the courtyard to switch, so
+    // no in-instance route connects them. The wing clusters sit far
+    // apart in world space — Graveyard (x~1800, y~1270) and Cathedral
+    // (x~1160, y~1370) in the north half, Library (x~130, y~-345) and
+    // Armory (x~1965, y~-430) in the south half, each 600+ yds from the
+    // others — so nearest-boss wing detection is unambiguous.
+    // isolated == true: filter to the bot's wing.
+    //
+    // Entries are the kill-creature credit-entries from
+    // instance_encounters (what BossSpawnIndex emits) PLUS any boss
+    // injected by BossRosterRegistry. The Cathedral's tracked encounters
+    // are Fairbanks and Whitemane; the roster patch removes Whitemane
+    // (event-locked) and injects Scarlet Commander Mograine (3976), so
+    // 3976 is listed here too — otherwise the wing filter, which runs
+    // after the patch, would drop the injected boss.
+    store[189] = {true, {
+        {"Scarlet Monastery (Graveyard)", {
+            3983,   // Interrogator Vishas
+            4543,   // Bloodmage Thalnos
+        }},
+        {"Scarlet Monastery (Library)", {
+            3974,   // Houndmaster Loksey
+            6487,   // Arcanist Doan
+        }},
+        {"Scarlet Monastery (Armory)", {
+            3975,   // Herod
+        }},
+        {"Scarlet Monastery (Cathedral)", {
+            4542,   // High Inquisitor Fairbanks
+            3976,   // Scarlet Commander Mograine (injected by roster patch)
+            3977,   // High Inquisitor Whitemane (removed by patch; kept for wing detection)
+        }},
+    }};
 }

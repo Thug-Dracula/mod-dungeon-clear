@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DUNGEONEVENTTABLES_H
 #define _PLAYERBOT_DUNGEONEVENTTABLES_H
 
+#include <unordered_map>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
@@ -13,6 +14,7 @@
 class Player;
 class AiObjectContext;
 struct BossRosterPatch;
+struct DungeonWingLayout;
 
 // Internal registration seam for the per-dungeon event tables.
 //
@@ -89,5 +91,13 @@ void RegisterUldamanRoster(std::vector<BossRosterPatch>& t);
 void RegisterHellfireRampartsRoster(std::vector<BossRosterPatch>& t);
 void RegisterSlavePensRoster(std::vector<BossRosterPatch>& t);
 void RegisterUnderbogRoster(std::vector<BossRosterPatch>& t);
+
+// --- wing layouts (one appender per split map) ---------------------------
+// Records which boss credit-entries belong to which wing of a multi-wing map;
+// aggregated by DungeonWingRegistry. Only split maps appear here. Maraudon is
+// wings-only (no events/roster) and lives in MaraudonEvents.cpp.
+void RegisterDireMaulWings(std::unordered_map<uint32, DungeonWingLayout>& store);
+void RegisterScarletMonasteryWings(std::unordered_map<uint32, DungeonWingLayout>& store);
+void RegisterMaraudonWings(std::unordered_map<uint32, DungeonWingLayout>& store);
 
 #endif

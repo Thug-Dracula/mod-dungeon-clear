@@ -84,6 +84,12 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    each file's Register<Dungeon>Events/Conditions appender — explicit calls so
 #    every per-dungeon TU stays linked into the module static lib. Add a dungeon
 #    = one new file + one call.)
+#   (fable2 T2.3: the per-dungeon file is now the dungeon's whole "definition
+#    unit" — its BossRosterPatch (Register<Dungeon>Roster, aggregated by
+#    BossRosterRegistry) and any wing layout (Register<Dungeon>Wings, aggregated
+#    by DungeonWingRegistry) moved in alongside the event rows, built with the
+#    shared DcRoster helpers in Data/Events/DungeonRosterBuilders.h. NEW file:
+#    Data/Events/MaraudonEvents.cpp — wings-only definition unit for map 349.)
 # Action/DcActionShared.{h,cpp}, Action/DcAdvanceAction.cpp,
 # Action/DcEngageActions.cpp, Action/DcPullActions.cpp,
 # Action/DcFollowerActions.cpp
