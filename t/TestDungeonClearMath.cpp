@@ -1080,3 +1080,90 @@ TEST(DungeonClearWalkTrailBackTest, PointAtClampsOutsideSegment)
     EXPECT_FLOAT_EQ(mid.GetPositionX(), 2.0f);        // midpoint
     EXPECT_FLOAT_EQ(hi.GetPositionX(), 0.0f);         // clamped to crumb (far end)
 }
+
+// ===== Phantom-combat escape hatch (IsPhantomCombat / ShouldBreakStuckCombat) =====
+
+// The classifier is phantom ONLY when in combat with none of the three "real fight"
+// signals. Each signal independently rules phantom out.
+TEST(DungeonClearStuckCombatTest, PhantomOnlyWhenNothingFightable)
+{
+    // In combat, nothing meleeing, no victim, no legitimate (reachable) holder.
+    EXPECT_TRUE(DungeonClearMath::IsPhantomCombat(true, false, false, false));
+
+    // Not in combat -> never phantom, whatever else holds.
+    EXPECT_FALSE(DungeonClearMath::IsPhantomCombat(false, false, false, false));
+}
+
+TEST(DungeonClearStuckCombatTest, AnyRealFightSignalIsNotPhantom)
+{
+    // Something is meleeing us (getAttackers non-empty).
+    EXPECT_FALSE(DungeonClearMath::IsPhantomCombat(true, true,  false, false));
+    // We have a victim of our own.
+    EXPECT_FALSE(DungeonClearMath::IsPhantomCombat(true, false, true,  false));
+    // A legitimate (alive, non-evading, path-REACHABLE) holder — this is the flee/
+    // kite case: the pursuer is reachable, so combat is never treated as phantom.
+    EXPECT_FALSE(DungeonClearMath::IsPhantomCombat(true, false, false, true));
+}
+
+// The streak gate: a transient phantom tick must not fire; only a phantom state held
+// continuously for the timeout does, and any break resets the clock.
+TEST(DungeonClearStuckCombatTest, StreakGateArmsHoldsAndFires)
+{
+    std::uint32_t since = 0;
+    constexpr std::uint32_t timeout = 15000;
+
+    // Not phantom -> stays disarmed.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(false, 1000, timeout, since));
+    EXPECT_EQ(since, 0u);
+
+    // First phantom tick arms the clock to `now` but does not fire.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 1000, timeout, since));
+    EXPECT_EQ(since, 1000u);
+
+    // Still phantom, just short of the timeout -> hold, clock unchanged.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 1000 + timeout - 1, timeout, since));
+    EXPECT_EQ(since, 1000u);
+
+    // Phantom held for the full timeout -> fire.
+    EXPECT_TRUE(DungeonClearMath::ShouldBreakStuckCombat(true, 1000 + timeout, timeout, since));
+}
+
+TEST(DungeonClearStuckCombatTest, AnyBreakResetsTheStreak)
+{
+    std::uint32_t since = 0;
+    constexpr std::uint32_t timeout = 15000;
+
+    // Arm, then run most of the way toward firing.
+    DungeonClearMath::ShouldBreakStuckCombat(true, 1000, timeout, since);
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 1000 + timeout - 100, timeout, since));
+
+    // A single non-phantom tick (a reachable target reappeared) resets the clock...
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(false, 1000 + timeout - 50, timeout, since));
+    EXPECT_EQ(since, 0u);
+
+    // ...so the next phantom streak must run the FULL timeout again from scratch.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 2000 + timeout, timeout, since));
+    EXPECT_EQ(since, 2000u + timeout);
+    EXPECT_TRUE(DungeonClearMath::ShouldBreakStuckCombat(true, 2000 + 2 * timeout, timeout, since));
+}
+
+TEST(DungeonClearStuckCombatTest, ZeroTimeoutDisablesTheRecovery)
+{
+    std::uint32_t since = 0;
+    // timeout 0 = feature off: never fires, and keeps the clock disarmed even while
+    // the phantom state holds.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 5000, 0, since));
+    EXPECT_EQ(since, 0u);
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 99999, 0, since));
+    EXPECT_EQ(since, 0u);
+}
+
+TEST(DungeonClearStuckCombatTest, ArmingAtTimeZeroAvoidsTheSentinel)
+{
+    std::uint32_t since = 0;
+    // getMSTime() is ~0 only in the first server ms; arming must not leave `since`
+    // at the 0 "disarmed" sentinel or the clock would re-arm every tick and never
+    // accumulate. It is nudged to 1 instead.
+    EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 0, 15000, since));
+    EXPECT_EQ(since, 1u);
+}

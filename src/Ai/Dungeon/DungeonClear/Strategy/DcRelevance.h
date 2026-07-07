@@ -64,6 +64,14 @@ namespace DcRel
     inline constexpr float FilterLoot       = 9.0f;  // enforce loot policy while paused
 
     // ===== combat engine =====
+    // Phantom-combat escape hatch. A DC bot flagged in combat but with nothing it
+    // can fight (no attacker, no victim, no reachable holder — e.g. a mob spawned
+    // far across the map / behind a gate tagged it) force-clears its combat after a
+    // long timeout. Highest combat rung so the recovery always wins the tick when it
+    // legitimately fires; it never contends with real content because the trigger is
+    // inert whenever anything is actually fightable. See
+    // DungeonClearBreakStuckCombatTrigger / DungeonClearMath::ShouldBreakStuckCombat.
+    inline constexpr float BreakStuckCombat       = 65.0f; // phantom-combat force-clear
     inline constexpr float HakkarSuppressorCombat = 64.0f; // ST Hakkar combat side
     inline constexpr float HakkarFlameCombat      = 63.0f;
     inline constexpr float HakkarLootBloodCombat  = 62.0f;

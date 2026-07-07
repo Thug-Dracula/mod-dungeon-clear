@@ -255,6 +255,55 @@ namespace DungeonClearMath
                                std::uint32_t now, std::uint32_t leadMs,
                                float tankHealthPct, float panicHpPct);
 
+    // Phantom-combat classifier (pure). True when a bot is FLAGGED in combat but has
+    // nothing it can actually fight from where it stands: nothing is meleeing it
+    // (`hasAttacker`), it has no victim of its own (`hasVictim`), and its combat is
+    // not explained by any LEGITIMATE holder (`hasLegitimateHolder`). The caller
+    // computes the last from the bot's CombatManager PvE refs: a holder counts as
+    // legitimate only if it is alive, non-evading, and PATH-REACHABLE from the bot,
+    // and an opaque combat with NO unit references at all (a script-forced state) is
+    // also treated as legitimate so it is never cleared. This is the signature of the
+    // "a mob spawned across the map / behind a gate and tagged me" deadlock: the core
+    // combat flag never drops because the holder is unreachable, and every DC gate
+    // that keys off "someone is in combat" (the fight-assist arm, the party-engaged
+    // latch) then spins forever. Because legitimacy keys on REACHABILITY rather than
+    // distance, a fleeing/kiting party (pursuers always reachable) trips
+    // `hasLegitimateHolder` and is never phantom — as does any real fight (which
+    // trips hasAttacker/hasVictim). The game-state reads stay in
+    // DungeonClearBreakStuckCombatTrigger.
+    inline bool IsPhantomCombat(bool inCombat, bool hasAttacker, bool hasVictim,
+                                bool hasLegitimateHolder)
+    {
+        return inCombat && !hasAttacker && !hasVictim && !hasLegitimateHolder;
+    }
+
+    // Stuck-combat fire gate (pure, streak clock by reference). Given whether the bot
+    // is CURRENTLY in phantom combat (IsPhantomCombat above), arm/hold/reset a streak
+    // clock and report when the phantom state has persisted continuously for
+    // `timeoutMs` — the point at which the caller force-clears combat. `sinceMs` is
+    // the caller-owned latch (0 = not streaking): armed to `now` on the first phantom
+    // tick, cleared to 0 the instant the phantom state breaks (a real target
+    // reappeared), so a one-tick target gap can never trip it. The timeout is
+    // deliberately LONG (default 15s) so an ENCOUNTER that intentionally holds the
+    // party in combat with no reachable enemy (a scripted wave gap, a gauntlet) is
+    // never mistaken for a stuck flag. `timeoutMs == 0` disables the gate. Mirrors
+    // ShouldWaitForPatrol's by-reference-latch contract.
+    inline bool ShouldBreakStuckCombat(bool phantom, std::uint32_t now,
+                                       std::uint32_t timeoutMs, std::uint32_t& sinceMs)
+    {
+        if (!phantom || timeoutMs == 0)
+        {
+            sinceMs = 0;
+            return false;
+        }
+        if (sinceMs == 0)
+            sinceMs = now ? now : 1;   // arm; avoid the 0 "unarmed" sentinel on ms 0
+        // `now >= sinceMs` guards the unsigned subtraction: false only on the ms-0
+        // arming tick (sinceMs nudged to 1) or a backward clock step / getMSTime wrap,
+        // where "no time has elapsed yet" is the right answer.
+        return now >= sinceMs && (now - sinceMs) >= timeoutMs;
+    }
+
     // Engage-fizzle handoff latch (pure). An advanced-pull "camp fight" ended with
     // the tank out of combat but the pulled pack still ALIVE and IDLE — the drag
     // fizzled (a planted caster evaded home the moment the tank broke LOS at camp).

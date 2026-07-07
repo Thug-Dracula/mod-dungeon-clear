@@ -76,6 +76,9 @@ TEST(DungeonClearRelevanceTest, HakkarSuppressorOutranksFlameOutranksBlood)
 
 TEST(DungeonClearRelevanceTest, CombatLadderStrictlyDescends)
 {
+    // Phantom-combat force-clear sits at the very top of the combat band so the
+    // recovery always wins the tick when it fires.
+    EXPECT_GT(DcRel::BreakStuckCombat,       DcRel::HakkarSuppressorCombat);
     EXPECT_GT(DcRel::HakkarSuppressorCombat, DcRel::HakkarFlameCombat);
     EXPECT_GT(DcRel::HakkarFlameCombat,      DcRel::HakkarLootBloodCombat);
     EXPECT_GT(DcRel::HakkarLootBloodCombat,  DcRel::PullManeuver);

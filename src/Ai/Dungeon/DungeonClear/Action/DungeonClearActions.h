@@ -390,6 +390,20 @@ public:
     bool Execute(Event event) override;
 };
 
+// Phantom-combat escape hatch. Fired by DungeonClearBreakStuckCombatTrigger once a
+// DC member has been flagged in combat with nothing fightable (no attacker, no
+// victim, no reachable holder) for DungeonClear.StuckCombatTimeout seconds. Force-
+// clears the bot's combat AND drops it from every threat list — the same effect as a
+// GM `.combatstop`, which is what unwedges a member ghost-flagged by a mob that
+// spawned far away / behind a gate. The gating all lives in the trigger; this action
+// is the unconditional recovery.
+class DungeonClearBreakStuckCombatAction : public Action
+{
+public:
+    DungeonClearBreakStuckCombatAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear break stuck combat") {}
+    bool Execute(Event event) override;
+};
+
 // Walks the tank up to the blocking door, then stalls with an explicit
 // "door is closed" message in party chat. The door is detected up to 80yd
 // ahead, so without the walk-in the tank would park wherever it was when the

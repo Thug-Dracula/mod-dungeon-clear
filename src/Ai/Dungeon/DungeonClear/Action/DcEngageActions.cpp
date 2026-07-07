@@ -1369,6 +1369,22 @@ bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
     return true;
 }
 
+bool DungeonClearBreakStuckCombatAction::Execute(Event /*event*/)
+{
+    // Phantom combat: the trigger has confirmed we've been flagged in combat with
+    // nothing fightable for the full StuckCombatTimeout. Force-clear it exactly as a
+    // GM `.combatstop` does — end combat AND remove ourselves from every threat list,
+    // so the far/unreachable holder that ghost-flagged us releases the reference
+    // instead of re-adding it next tick.
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] stuck-combat: flagged in combat with no reachable enemy past the "
+             "timeout -> force-clearing combat + threat",
+             bot->GetName());
+    bot->CombatStop();
+    bot->GetThreatMgr().RemoveMeFromThreatLists();
+    return true;
+}
+
 bool DungeonClearDoorBlockedAction::Execute(Event event)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);

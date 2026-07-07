@@ -40,6 +40,7 @@ public:
         creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
         creators["dungeon clear leader assist"] = &DungeonClearTriggerContext::leader_assist;
         creators["dungeon clear regroup combat"] = &DungeonClearTriggerContext::regroup_combat;
+        creators["dungeon clear break stuck combat"] = &DungeonClearTriggerContext::break_stuck_combat;
         creators["dungeon clear heal reposition"] = &DungeonClearTriggerContext::heal_reposition;
         creators["dungeon clear hakkar suppressor"] = &DungeonClearTriggerContext::hakkar_suppressor;
         creators["dungeon clear hakkar flame"] = &DungeonClearTriggerContext::hakkar_flame;
@@ -85,6 +86,7 @@ private:
     static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
     static Trigger* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistTrigger(ai); }
     static Trigger* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatTrigger(ai); }
+    static Trigger* break_stuck_combat(PlayerbotAI* ai) { return new DungeonClearBreakStuckCombatTrigger(ai); }
     static Trigger* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionTrigger(ai); }
     static Trigger* hakkar_suppressor(PlayerbotAI* ai) { return new DungeonClearHakkarSuppressorTrigger(ai); }
     static Trigger* hakkar_flame(PlayerbotAI* ai) { return new DungeonClearHakkarFlameTrigger(ai); }

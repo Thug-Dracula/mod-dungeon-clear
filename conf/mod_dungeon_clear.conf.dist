@@ -762,6 +762,29 @@ DungeonClear.PullThreatLeadPanicHp = 60
 DungeonClear.PartyCombatLatch = 3
 
 #
+#    DungeonClear.StuckCombatTimeout
+#        Phantom-combat escape hatch (seconds). A party member can be left FLAGGED in
+#        combat by a mob that spawned across the map or behind a gate (a proximity or
+#        gate-event spawn) and tagged it: the core combat reference never drops because
+#        the holder is UNREACHABLE, DC's own "someone is in combat" gates then spin
+#        forever, and toggling 'dc off'/'on' cannot clear it (the flag lives in the
+#        core, not in DC). ONLY when a member is in combat, nothing is meleeing it, it
+#        has no victim, AND every unit holding it in combat is unreachable-by-path or
+#        evading — for this many seconds — does DC force-clear its combat and threat
+#        (the effect of a GM '.combatstop'). It keys on REACHABILITY, not distance, so
+#        it can NEVER fire while a party flees or kites (the pursuers are always path-
+#        reachable) and never touches a script-forced combat that leaves no unit
+#        reference. It is also disabled outright in RAID zones, where an errant combat
+#        drop could reset a boss for the whole raid. Kept LONG by default so an
+#        encounter that intentionally holds the party in combat is never mistaken for a
+#        stuck flag. Set to 0 to disable it everywhere.
+#
+#        Default: 15
+#
+
+DungeonClear.StuckCombatTimeout = 15
+
+#
 #    DungeonClear.PullPlantEnable
 #        Turn-and-plant on the drag-back. A human tank dragging a pulled pack to camp
 #        doesn't sprint the WHOLE leg back-turned: once the pack is glued to it and

@@ -224,6 +224,24 @@ inline constexpr DcSettingDef kDcSettings[] =
     // mode. 0 disables the latch (bare instantaneous check — not recommended).
     { "PartyCombatLatch",       DcType::Float, 3,    0,  15,  true  },
 
+    // Phantom-combat escape hatch. A DC member can be left FLAGGED in combat by a mob
+    // that spawned across the map / behind a gate (a proximity/gate event spawn) and
+    // tagged it: the core CombatManager reference never drops because the holder is
+    // UNREACHABLE (no navmesh path to it), DC's own gates that key off "someone is in
+    // combat" then spin forever, and a `dc off`/`on` can't clear it (the flag isn't
+    // DC's). ONLY when a member is in combat, nothing is meleeing it, it has no victim,
+    // AND every unit holding it in combat is unreachable-by-path or evading — for
+    // StuckCombatTimeout seconds — does DC force-clear its combat + threat (the effect
+    // of a GM `.combatstop`). Keying on REACHABILITY, not distance, is what makes it
+    // safe: a fleeing/kiting party's pursuers are always path-reachable, so it never
+    // fires there; a bot with combat forced by a script that leaves no unit reference
+    // is likewise never touched; and it is disabled outright in RAID zones (where an
+    // errant drop could reset a boss). The timeout is LONG by default so an encounter
+    // that intentionally holds the party in combat is never mistaken for a stuck flag;
+    // 0 disables the recovery. See DungeonClearBreakStuckCombatTrigger +
+    // DungeonClearMath::ShouldBreakStuckCombat.
+    { "StuckCombatTimeout",     DcType::Float, 15,   0, 120,  true  },
+
     // Seconds a follower's pet stays passive AFTER its owner is released (on top
     // of PullPlayerReleaseDelay). Releasing pet and owner in lockstep lets the
     // pet charge in and pull aggro off the tank before he's settled, botching the

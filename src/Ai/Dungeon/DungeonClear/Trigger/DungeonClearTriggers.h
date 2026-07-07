@@ -8,6 +8,8 @@
 
 #include "Trigger.h"
 
+#include <cstdint>
+
 class PlayerbotAI;
 
 class DungeonClearIdleTrigger : public Trigger
@@ -341,6 +343,43 @@ public:
     {
     }
     bool IsActive() override;
+};
+
+// ANY DC party member (leader OR follower), COMBAT engine. Phantom-combat escape
+// hatch. A member can be left FLAGGED in combat by a mob that spawned far across the
+// map or behind a gate (a proximity/gate event spawn) and tagged it: the core combat
+// reference never drops because the holder is unreachable, and DC's own gates that
+// key off "someone is in combat" (the fight-assist arm, the party-engaged latch)
+// then spin forever — a hard deadlock a `dc off`/`on` cannot clear because the flag
+// lives in the core CombatManager, not in DC. This trigger fires only when the bot is
+// in combat but nothing is fightable — nothing meleeing it, no victim, and EVERY unit
+// holding it in combat is unreachable-by-path or evading — sustained for
+// DungeonClear.StuckCombatTimeout seconds (long by default so a scripted encounter
+// that intentionally holds combat is never mistaken for a stuck flag). Keying on
+// REACHABILITY (not distance) is the safety property: a fleeing or kiting party's
+// pursuers are always path-reachable, so it can never fire there; a combat forced by
+// a script with no unit reference is likewise never touched. Drives
+// DungeonClearBreakStuckCombatAction, which force-clears combat + threat (the same
+// effect as a GM `.combatstop`). Inert the instant anything becomes fightable, outside
+// a live/unpaused DC run, and — deliberately — in any RAID zone, where an errant
+// combat drop could reset a boss for the whole raid (the deadlock this recovers is a
+// 5-man problem). Verdict is the pure DungeonClearMath::IsPhantomCombat +
+// ShouldBreakStuckCombat kernels.
+class DungeonClearBreakStuckCombatTrigger : public Trigger
+{
+public:
+    DungeonClearBreakStuckCombatTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear break stuck combat", 1)
+    {
+    }
+    bool IsActive() override;
+
+private:
+    // Streak clock owned per-bot (the context creates one trigger object per bot):
+    // getMSTime the phantom-combat state was first observed this streak, 0 = not
+    // streaking. Reset to 0 the instant anything becomes fightable. The action reads
+    // nothing from here — the force-clear is stateless.
+    std::uint32_t stuckCombatSinceMs = 0;
 };
 
 // Follower-only, COMBAT engine. A CONTRIBUTION-GATED reconnector (Option B): it no

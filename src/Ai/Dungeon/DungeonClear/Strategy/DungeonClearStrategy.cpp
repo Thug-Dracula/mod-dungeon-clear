@@ -271,6 +271,18 @@ void DungeonClearStrategy::InitMultipliers(std::vector<Multiplier*>& multipliers
 
 void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
+    // Phantom-combat escape hatch (ANY member). A bot left flagged in combat by a
+    // mob that spawned far away / behind a gate — nothing meleeing it, no victim, no
+    // reachable holder — force-clears its combat after DungeonClear.StuckCombatTimeout
+    // seconds, breaking the deadlock a `dc off`/`on` cannot (the flag lives in the
+    // core CombatManager). Relevance 65 — the top of the combat band — so the
+    // recovery always wins the tick when it legitimately fires; it is inert whenever
+    // anything is fightable, so it never contends with a real fight or a scripted
+    // wave. See DungeonClearBreakStuckCombatTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear break stuck combat",
+        { NextAction("dungeon clear break stuck combat", DcRel::BreakStuckCombat) }));
+
     // The in-combat half of the advanced pull: once the tank aggros, run it back
     // to the camp before releasing the party. Relevance above the stock combat
     // movement/attack actions (MoveChase ~30, attack lines) so the maneuver owns

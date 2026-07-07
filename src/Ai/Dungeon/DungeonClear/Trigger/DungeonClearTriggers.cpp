@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "CombatManager.h"
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"
@@ -24,7 +25,9 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -914,6 +917,101 @@ bool DungeonClearLeaderAssistTrigger::IsActive()
     // Leader-side assist. All the gating (leader-only, out of combat, no own
     // target, a groupmate latched in combat, not mid-drag) lives in the predicate.
     return DcLeaderSignal::IsLeaderShouldAssistFight(bot);
+}
+
+namespace
+{
+    // Is the bot's combat explained by something we must RESPECT (so it is NOT a
+    // phantom flag we may clear)? Walk the bot's own CombatManager PvE references
+    // (each carries a guaranteed-valid other unit) and answer true if EITHER:
+    //   * there are no unit references at all — an opaque, script-forced combat with
+    //     no enemy to blame; we never touch that, the core/script owns it; OR
+    //   * at least one holder is still RESOLVABLE: alive, on the bot's map, NOT
+    //     evading (an evading mob is leaving combat), and PATH-REACHABLE from the bot.
+    //
+    // Keying on reachability — not distance — is the safety property: a pursuer in a
+    // flee or kite is always path-reachable (that is how it chases and how the party
+    // fled from it), so it always counts as resolvable and the escape hatch stays
+    // inert. Only a holder the bot genuinely cannot path to (spawned behind a closed
+    // gate / across a navmesh gap) fails the test — exactly the ghost-flag case.
+    bool HasLegitimateCombatHolder(Player* bot)
+    {
+        auto const& refs = bot->GetCombatManager().GetPvECombatRefs();
+        if (refs.empty())
+            return true;  // no unit to blame -> opaque/forced combat, leave it alone
+
+        Map* const map = bot->GetMap();
+        for (auto const& kv : refs)
+        {
+            CombatReference* const ref = kv.second;
+            if (!ref)
+                continue;
+            Unit* const other = ref->GetOther(bot);
+            if (!other || !other->IsAlive() || other->GetMap() != map)
+                continue;
+            if (other->GetCombatManager().IsInEvadeMode())
+                continue;  // holder is bailing home -> not a real threat
+            if (!DcEngageGeometry::IsReachable(bot, other->GetPositionX(),
+                                               other->GetPositionY(), other->GetPositionZ()))
+                continue;  // unreachable -> the phantom holder
+            return true;   // a reachable, live, non-evading holder: a REAL fight
+        }
+        return false;
+    }
+}
+
+bool DungeonClearBreakStuckCombatTrigger::IsActive()
+{
+    // Only meaningful while flagged in combat. Out of combat -> nothing to break;
+    // reset the streak so a fresh stall later starts its clock clean.
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+    {
+        stuckCombatSinceMs = 0;
+        return false;
+    }
+
+    // Never force-clear combat in a RAID zone. A raid encounter is exactly where an
+    // errant combat drop does the most damage (a wrongly-cleared boss reference can
+    // reset the fight for the whole raid), the phantom-combat deadlock this recovers
+    // is a 5-man dungeon-clear problem, and raid bosses routinely hold the raid in
+    // combat with no per-bot reachable target during phase transitions / adds — the
+    // precise shape this would misread. Gate it out entirely rather than trust the
+    // reachability test there.
+    Map* const map = bot->GetMap();
+    if (!map || map->IsRaid())
+    {
+        stuckCombatSinceMs = 0;
+        return false;
+    }
+
+    // Confine the force-clear to a live, UNPAUSED DC run this bot participates in.
+    // PartyTank resolves to the elected leader (or the leader itself); null means DC
+    // is off, paused, or this bot isn't in a DC party — in all three we leave the
+    // core combat state alone (a paused run is a deliberate hand-off to the player).
+    if (!AI_VALUE(Player*, DcKey::PartyTank))
+    {
+        stuckCombatSinceMs = 0;
+        return false;
+    }
+
+    // Phantom signature: nothing meleeing us, no victim of our own, and every unit
+    // holding us in combat is unreachable/evading (or — the opaque case — there is
+    // none to blame, which HasLegitimateCombatHolder reports as legitimate). Short-
+    // circuit the path-querying holder scan behind the two cheap reads: a real fight
+    // almost always trips hasAttacker/hasVictim, and a fleeing/kiting party trips the
+    // reachable-holder test — either way we never run down the timer.
+    bool const hasAttacker = !bot->getAttackers().empty();
+    bool const hasVictim   = bot->GetVictim() != nullptr;
+    bool const hasHolder =
+        hasAttacker || hasVictim || HasLegitimateCombatHolder(bot);
+
+    bool const phantom =
+        DungeonClearMath::IsPhantomCombat(/*inCombat*/ true, hasAttacker, hasVictim, hasHolder);
+
+    uint32 const timeoutMs =
+        uint32(DcSettings::GetFloat(bot, "StuckCombatTimeout") * 1000.0f);
+    return DungeonClearMath::ShouldBreakStuckCombat(phantom, getMSTime(), timeoutMs,
+                                                    stuckCombatSinceMs);
 }
 
 bool DungeonClearRegroupCombatTrigger::IsActive()
