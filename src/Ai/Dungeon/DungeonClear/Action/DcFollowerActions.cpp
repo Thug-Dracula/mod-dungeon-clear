@@ -818,44 +818,107 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
     if (!tank || tank == bot)
         return false;
 
-    // Close on the tank, but stop a few yards short rather than stacking on its
-    // cell — enough to restore line of sight and heal/cast range without crowding
-    // it (or piling a ranged class into melee/AoE). Pathing rounds corners, which
-    // is exactly what regains a stranded healer's sight of its heal target. Once
-    // the bot is back inside the leash (and, for a healer, back in LOS) the trigger
-    // goes inert and stock combat rotation owns the tick again.
-    constexpr float standoff = 5.0f;
-    float const dist = bot->GetExactDist2d(tank);
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
 
-    float x = tank->GetPositionX();
-    float y = tank->GetPositionY();
-    float const z = tank->GetPositionZ();
-    if (dist > standoff)
+    bool const isHealer = PlayerbotAI::IsHeal(bot);
+    bool const isMelee  = botAI->IsMelee(bot);
+
+    // Anchor the reconnect. A healer PRE-POSITIONS on the tank (the goal is "be able
+    // to heal the tank the moment damage starts", so the tank IS the anchor); a DPS
+    // anchors on the fight the tank is holding, so it regains LOS on a target, not on
+    // the tank's back. LeaderFightAnchor writes the tank's own position when no
+    // concrete fight unit resolves, so anchorPos is always usable.
+    Position anchorPos;
+    Unit* anchorUnit = nullptr;
+    if (isHealer)
+        anchorPos = tank->GetPosition();
+    else
+        anchorUnit = DcTargeting::LeaderFightAnchor(bot, tank, anchorPos);
+
+    // Role-range standoff ring. Ranged DPS: 0.8x spell range (inside range so target
+    // wobble doesn't drop it back out). Healer: max(5, 0.6x heal range) — the same
+    // band HealReposition parks a healer in, so the two never disagree. Melee has no
+    // ring: it closes on the anchor (rounding the corner is what regains LOS), so it
+    // falls through to the fractional approach below.
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    bool sampled = false;
+    if (!isMelee)
     {
-        float const frac = (dist - standoff) / dist;
-        x = bot->GetPositionX() + (tank->GetPositionX() - bot->GetPositionX()) * frac;
-        y = bot->GetPositionY() + (tank->GetPositionY() - bot->GetPositionY()) * frac;
+        float ringRadius = 0.0f;
+        float maxRadius = 0.0f;
+        if (isHealer)
+        {
+            float const healRange = botAI->GetRange("heal");
+            maxRadius = healRange;
+            ringRadius = std::max(5.0f, healRange * 0.6f);
+        }
+        else
+        {
+            float const spellRange = botAI->GetRange("spell");
+            maxRadius = spellRange;
+            ringRadius = spellRange * 0.8f;
+        }
+        sampled = FindStandoffPoint(map, anchorPos, ringRadius, maxRadius, x, y, z);
     }
+
+    // Fallback: no ring point validated (tight geometry, snap misses), or a melee.
+    // Close on the anchor with pathfinding, stopping attackRange short so a ranged
+    // class doesn't pile into the melee/AoE and a melee lands in swing range. The
+    // predicate clears the instant a mob comes into sight, so this only ever walks
+    // far enough to round the corner.
+    if (!sampled)
+    {
+        float const ax = anchorPos.GetPositionX();
+        float const ay = anchorPos.GetPositionY();
+        float const az = anchorPos.GetPositionZ();
+        float const attackRange = isMelee
+            ? (bot->GetCombatReach() + (anchorUnit ? anchorUnit->GetCombatReach() : 0.0f) + 1.0f)
+            : std::max(5.0f, botAI->GetRange("spell") - CONTACT_DISTANCE);
+        float const dist = bot->GetExactDist2d(ax, ay);
+        x = ax;
+        y = ay;
+        z = az;
+        if (dist > attackRange)
+        {
+            float const frac = (dist - attackRange) / dist;
+            x = bot->GetPositionX() + (ax - bot->GetPositionX()) * frac;
+            y = bot->GetPositionY() + (ay - bot->GetPositionY()) * frac;
+        }
+    }
+
+    // Re-issue guard: the trigger latches and re-fires every tick, but re-plotting a
+    // near-identical spline each time stutters and clips casts (cf. spline-reissue
+    // freeze). While already travelling toward within 3yd of the same point, own the
+    // tick without touching the move.
+    if (bot->isMoving() && _lastDestValid &&
+        _lastDest.GetExactDist2d(x, y) < 3.0f)
+        return true;
 
     // Band the priority like EngageDirect / the camp assist: COMBAT only for the
     // final close approach, NORMAL beyond. An unconditional COMBAT regroup runs a
-    // stranded follower (a healer that lost LOS while the tank pushed far ahead)
-    // straight through any packs between it and the tank without stopping to
-    // fight — the same plow-through runaway. NORMAL on the long leg lets it break
-    // off and clear what it aggros, then resume regrouping once that mob dies.
+    // stranded follower straight through any packs between it and the anchor without
+    // stopping to fight — the plow-through runaway. NORMAL on the long leg lets it
+    // break off and clear what it aggros, then resume once that mob dies.
     float const toDest = bot->GetExactDist2d(x, y);
     MovementPriority const prio =
         (toDest <= DC_COMBAT_APPROACH_RANGE)
             ? MovementPriority::MOVEMENT_COMBAT
             : MovementPriority::MOVEMENT_NORMAL;
 
-    DC_PULL_TRACE("[DC:{}] regroup: closing on tank {} ({:.1f}yd, los={}, prio={})",
-                  bot->GetName(), tank->GetName(), dist,
-                  bot->IsWithinLOSInMap(tank) ? 1 : 0,
+    DC_PULL_TRACE("[DC:{}] regroup: moving to standoff ({:.1f}yd, healer={}, "
+                  "sampled={}, anchor={}, prio={})",
+                  bot->GetName(), toDest, isHealer ? 1 : 0, sampled ? 1 : 0,
+                  anchorUnit ? anchorUnit->GetGUID().ToString() : "tank",
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    DcMoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
-           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    if (DcMoveTo(map->GetId(), x, y, z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false, prio))
+    {
+        _lastDest = Position(x, y, z, 0.0f);
+        _lastDestValid = true;
+    }
     return true;
 }
 
@@ -885,45 +948,10 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
     // straight back out. Floor at 5yd so we never try to stack on the target.
     float const standoff = std::max(5.0f, healRange * 0.6f);
 
-    // Ring of standoff points around the target, ordered bot-side first. Take the
-    // first that snaps to the navmesh, has LOS to the target, sits within heal
-    // range, and is PATHFIND_NORMAL reachable.
-    std::vector<Position> const cands =
-        DungeonClearMath::HealStandoffCandidates(targetPos, bot->GetPosition(),
-                                                 standoff, /*ringPoints*/ 7);
-
-    constexpr float kEyeBump = 2.0f;  // eye height for the LOS ray (cf. ChordClear)
+    // First ring point around the target that snaps, sits within heal range, has
+    // LOS, and is reachable (shared with the combat regroup — see FindStandoffPoint).
     float dx = 0.0f, dy = 0.0f, dz = 0.0f;
-    bool haveDest = false;
-    for (Position const& c : cands)
-    {
-        NavmeshSnap::Result const snap =
-            NavmeshSnap::Snap(map, c.GetPositionX(), c.GetPositionY(), tz, 8.0f);
-        if (!snap.ok)
-            continue;
-
-        float const sdx = snap.x - tx;
-        float const sdy = snap.y - ty;
-        if (std::sqrt(sdx * sdx + sdy * sdy) > healRange)
-            continue;
-
-        if (!map->isInLineOfSight(snap.x, snap.y, snap.z + kEyeBump, tx, ty,
-                                  tz + kEyeBump, bot->GetPhaseMask(),
-                                  LINEOFSIGHT_CHECK_VMAP,
-                                  VMAP::ModelIgnoreFlags::Nothing))
-            continue;
-
-        PathGenerator gen(bot);
-        gen.CalculatePath(snap.x, snap.y, snap.z, /*forceDest*/ false);
-        if (gen.GetPathType() != PATHFIND_NORMAL)
-            continue;
-
-        dx = snap.x;
-        dy = snap.y;
-        dz = snap.z;
-        haveDest = true;
-        break;
-    }
+    bool const haveDest = FindStandoffPoint(map, targetPos, standoff, healRange, dx, dy, dz);
 
     // Fallback: no sampled point validated (tight geometry, snap misses). Close
     // straight on the target with pathfinding — rounding corners is what regains

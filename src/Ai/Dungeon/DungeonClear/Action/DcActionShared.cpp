@@ -23,6 +23,7 @@
 #include "Group.h"
 #include "Log.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectAccessor.h"
@@ -54,6 +55,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/StridedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
@@ -481,6 +483,55 @@ bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool id
     DcMovement::ResolveEscortConflict(bot);
     return MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint, priority, lessDelay,
                   backwards);
+}
+
+bool DcMovementAction::FindStandoffPoint(Map* map, Position const& center, float ringRadius,
+                                         float maxRadius, float& x, float& y, float& z)
+{
+    if (!map)
+        return false;
+
+    float const cx = center.GetPositionX();
+    float const cy = center.GetPositionY();
+    float const cz = center.GetPositionZ();
+
+    // Ring of standoff points around the center, ordered bot-side first (shortest
+    // reposition / most likely to round the same corner). Take the first that
+    // snaps, sits within maxRadius, has LOS to the center, and is reachable.
+    std::vector<Position> const cands =
+        DungeonClearMath::StandoffCandidates(center, bot->GetPosition(), ringRadius,
+                                             /*ringPoints*/ 7);
+
+    constexpr float kEyeBump = 2.0f;  // eye height for the LOS ray (cf. ChordClear)
+    for (Position const& c : cands)
+    {
+        NavmeshSnap::Result const snap =
+            NavmeshSnap::Snap(map, c.GetPositionX(), c.GetPositionY(), cz, 8.0f);
+        if (!snap.ok)
+            continue;
+
+        float const sdx = snap.x - cx;
+        float const sdy = snap.y - cy;
+        if (std::sqrt(sdx * sdx + sdy * sdy) > maxRadius)
+            continue;
+
+        if (!map->isInLineOfSight(snap.x, snap.y, snap.z + kEyeBump, cx, cy,
+                                  cz + kEyeBump, bot->GetPhaseMask(),
+                                  LINEOFSIGHT_CHECK_VMAP,
+                                  VMAP::ModelIgnoreFlags::Nothing))
+            continue;
+
+        PathGenerator gen(bot);
+        gen.CalculatePath(snap.x, snap.y, snap.z, /*forceDest*/ false);
+        if (gen.GetPathType() != PATHFIND_NORMAL)
+            continue;
+
+        x = snap.x;
+        y = snap.y;
+        z = snap.z;
+        return true;
+    }
+    return false;
 }
 
 // The shared "DcGlideDriver". One tick of a continuous escort-spline glide along

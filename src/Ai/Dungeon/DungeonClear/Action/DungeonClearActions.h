@@ -17,6 +17,7 @@
 class PlayerbotAI;
 class Unit;
 class Creature;
+class Map;
 struct DungeonBossInfo;
 struct EventStep;
 struct DungeonEventProgress;
@@ -42,6 +43,17 @@ protected:
                   bool normal_only = false, bool exact_waypoint = false,
                   MovementPriority priority = MovementPriority::MOVEMENT_NORMAL, bool lessDelay = false,
                   bool backwards = false);
+
+    // Pick a standoff point on a ring around `center`: the first candidate (from
+    // DungeonClearMath::StandoffCandidates, ordered bot-side first) that snaps to
+    // the navmesh (8yd), sits within `maxRadius` (2D) of the center, has VMAP line
+    // of sight to it (at a +2yd eye bump), and is PATHFIND_NORMAL-reachable from the
+    // bot. Writes the accepted point to (x,y,z) and returns true; false if none
+    // validate. Shared by the healer LOS reposition (ring around the hurt target)
+    // and the contribution-gated combat regroup (ring around the fight anchor), so
+    // both park a bot in the same validated band by one implementation.
+    bool FindStandoffPoint(Map* map, Position const& center, float ringRadius,
+                           float maxRadius, float& x, float& y, float& z);
 
     // What one glide tick did, so the caller can layer its own stall/park
     // bookkeeping without the driver needing the context.
@@ -522,10 +534,13 @@ public:
     }
 };
 
-// Combat engine: a follower that has drifted too far from, or out of LOS of, the
-// leader tank during a fight. Closes back on the tank (stopping a few yards short)
-// so the party stays grouped and a stranded healer regains line of sight to its
-// heal target. Driven by DungeonClearRegroupCombatTrigger.
+// Combat engine: a follower the contribution gate decided cannot help from where it
+// stands (a DPS with no visible attacker, or a healer parked where it can't heal the
+// tank), or one that drifted past the hard tether. Moves it to a ROLE-CORRECT
+// standoff point with LOS on the fight — a ring point at spell range around the
+// fight anchor for a ranged DPS, a heal-range point around the tank for a healer,
+// a corner-rounding fractional approach for a melee / when no ring point validates —
+// never onto the tank's cell. Driven by DungeonClearRegroupCombatTrigger.
 class DungeonClearRegroupCombatAction : public DcMovementAction
 {
 public:
@@ -534,6 +549,14 @@ public:
     {
     }
     bool Execute(Event event) override;
+
+private:
+    // Re-issue guard: the last destination handed to DcMoveTo. The trigger can
+    // re-fire every tick while latched; re-issuing a near-identical move each time
+    // re-plots the spline and stutters/cast-clips the bot (cf. the spline-reissue
+    // freeze). Skip the move while already travelling toward within 3yd of it.
+    Position _lastDest;
+    bool     _lastDestValid = false;
 };
 
 // Healer-only, BOTH engines. Moves the healer to a point with line of sight AND

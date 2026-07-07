@@ -663,6 +663,42 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
     }
     return nullptr;
 }
+
+Unit* DcTargeting::LeaderFightAnchor(Player* bot, Player* leader, Position& anchorPos)
+{
+    if (!bot || !leader)
+        return nullptr;
+
+    // Nearest live unit the leader is meleeing — the pack it is holding. LOS-blind
+    // on purpose (the reconnect exists precisely for a fight the bot can't see yet).
+    // getAttackers() covers the melee pack; the leader's victim is the fallback for
+    // an all-ranged grab. Mirrors DungeonClearAssistCampActionBase's anchor scan.
+    Unit* target = nullptr;
+    float bestDist = 0.0f;
+    for (Unit* a : leader->getAttackers())
+    {
+        if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+            continue;
+        if (!bot->IsValidAttackTarget(a))
+            continue;
+        float const d = bot->GetExactDist2d(a);
+        if (!target || d < bestDist)
+        {
+            target = a;
+            bestDist = d;
+        }
+    }
+    if (!target)
+    {
+        Unit* const victim = leader->GetVictim();
+        if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
+            bot->IsValidAttackTarget(victim))
+            target = victim;
+    }
+
+    anchorPos = target ? target->GetPosition() : leader->GetPosition();
+    return target;
+}
 Creature* DcTargeting::FindLiveCreatureOnMap(Player* bot, uint32 entry)
 {
     if (!bot)

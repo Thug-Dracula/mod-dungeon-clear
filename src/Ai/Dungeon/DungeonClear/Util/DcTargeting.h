@@ -8,6 +8,7 @@
 
 #include "ObjectGuid.h"
 #include "MoveSplineInitArgs.h"
+#include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 
 class Player;
@@ -97,6 +98,17 @@ public:
     // to. Returns the closest such unit, or nullptr. Used by the stalled
     // fallback to kill obstacles when no path to the boss exists.
     static Unit* FindNearestReachableHostile(Player* bot);
+
+    // The unit the leader is fighting, from `bot`'s perspective: the nearest live,
+    // valid-attack-target among the leader's attackers, falling back to the
+    // leader's victim, then nullptr. LOS-blind on purpose — the whole point is to
+    // anchor a reconnect on a fight the bot may not yet see. `anchorPos` receives
+    // the resolved unit's position, or the leader's own position when nothing
+    // resolves (so a caller can still aim at where the fight is). This is the
+    // fight-anchor scan the combat regroup samples its standoff ring around; it is
+    // the same nearest-attacker→victim ladder DungeonClearAssistCampActionBase
+    // uses (kept as a shared, testable helper).
+    static Unit* LeaderFightAnchor(Player* bot, Player* leader, Position& anchorPos);
 
     // Returns a live spawned creature with the given entry on the bot's map, or
     // nullptr if none exists or all are dead.
