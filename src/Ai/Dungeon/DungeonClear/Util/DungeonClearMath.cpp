@@ -291,6 +291,26 @@ bool DungeonClearMath::ShouldReleaseFollower(bool isHealer,
     return elapsed >= leadMs;
 }
 
+bool DungeonClearMath::ShouldHandoffFizzledPull(bool pulledAliveIdle, bool sameTarget,
+                                                std::uint32_t maxFizzles,
+                                                std::uint32_t& fizzleCount)
+{
+    // The pack died or is still being fought: not a fizzle. Clear the latch.
+    if (!pulledAliveIdle)
+    {
+        fizzleCount = 0;
+        return false;
+    }
+    // A fizzle: extend the run for the same pack, or restart at 1 for a new one.
+    if (sameTarget)
+        ++fizzleCount;
+    else
+        fizzleCount = 1;
+    // Hand off once the same pack has fizzled maxFizzles times in a row. maxFizzles
+    // == 0 hands off on the first fizzle.
+    return fizzleCount >= maxFizzles;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)

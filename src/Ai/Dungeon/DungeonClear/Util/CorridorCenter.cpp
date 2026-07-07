@@ -9,7 +9,6 @@
 #include <cmath>
 #include <memory>
 
-#include "Config.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "DetourCommon.h"
 #include "DetourExtended.h"   // dtQueryFilterExt

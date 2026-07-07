@@ -897,6 +897,11 @@ namespace
     }
 }
 
+std::vector<BossRosterPatch> const& BossRosterRegistry::AllPatches()
+{
+    return PatchTable();
+}
+
 bool BossRosterRegistry::HasPatch(uint32 mapId)
 {
     return FindPatch(mapId) != nullptr;

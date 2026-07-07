@@ -242,6 +242,25 @@ namespace DungeonClearMath
                                std::uint32_t now, std::uint32_t leadMs,
                                float tankHealthPct, float panicHpPct);
 
+    // Engage-fizzle handoff latch (pure). An advanced-pull "camp fight" ended with
+    // the tank out of combat but the pulled pack still ALIVE and IDLE — the drag
+    // fizzled (a planted caster evaded home the moment the tank broke LOS at camp).
+    // Re-pulling repeats the exact same fizzle, so after `maxFizzles` consecutive
+    // fizzles of the same pack the caller hands it to the normal walk-in engage
+    // instead. `pulledAliveIdle` is the caller's verdict that the pull target
+    // resolved and is alive & out of combat (a fizzle this tick). `sameTarget` is
+    // true when this fizzle is of the SAME pack the latch already holds (compared
+    // against the OLD latched target, before the caller re-stamps it). On a fizzle
+    // of a new pack the count restarts at 1; a pack that died or is still being
+    // fought (`pulledAliveIdle == false`) clears the count to 0. `fizzleCount` is
+    // the by-reference latch (mirrors ShouldWaitForPatrol's contract) and is left
+    // holding the updated consecutive-fizzle count for the caller's diagnostics.
+    // Returns true when the pack should be handed off (count reached `maxFizzles`).
+    // The game-state read (guid identity, alive/combat) and the fizzleTarget guid
+    // bookkeeping stay in DungeonClearPullAction's Engage-cleanup branch.
+    bool ShouldHandoffFizzledPull(bool pulledAliveIdle, bool sameTarget,
+                                  std::uint32_t maxFizzles, std::uint32_t& fizzleCount);
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,

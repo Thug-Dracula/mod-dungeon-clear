@@ -885,3 +885,49 @@ TEST(DungeonClearPatrolGateTest, ZeroBudgetProceeds)
     std::uint32_t since = 0u;
     EXPECT_FALSE(ShouldWaitForPatrol(6u, 5u, 5u, since, 100u, 0u, since));
 }
+
+// --- ShouldHandoffFizzledPull (advanced-pull engage-fizzle latch) ----------
+using DungeonClearMath::ShouldHandoffFizzledPull;
+
+TEST(DungeonClearFizzleTest, NonFizzleClearsCount)
+{
+    // Pack died or is still being fought (pulledAliveIdle == false): clear latch.
+    std::uint32_t count = 5u;
+    EXPECT_FALSE(ShouldHandoffFizzledPull(/*aliveIdle*/ false, /*same*/ false, 2u, count));
+    EXPECT_EQ(count, 0u);
+}
+
+TEST(DungeonClearFizzleTest, NewTargetRestartsAtOne)
+{
+    // A fizzle of a different pack than the latch holds restarts the run at 1.
+    std::uint32_t count = 4u;
+    EXPECT_FALSE(ShouldHandoffFizzledPull(/*aliveIdle*/ true, /*same*/ false, 2u, count));
+    EXPECT_EQ(count, 1u);
+}
+
+TEST(DungeonClearFizzleTest, SameTargetRunReachesHandoff)
+{
+    // Two consecutive same-pack fizzles reach DC_PULL_FIZZLE_MAX (2) -> handoff.
+    std::uint32_t count = 0u;
+    EXPECT_FALSE(ShouldHandoffFizzledPull(true, false, 2u, count));  // fizzle #1 (new)
+    EXPECT_EQ(count, 1u);
+    EXPECT_TRUE(ShouldHandoffFizzledPull(true, true, 2u, count));    // fizzle #2 (same)
+    EXPECT_EQ(count, 2u);
+}
+
+TEST(DungeonClearFizzleTest, InterruptingKillResetsRun)
+{
+    // A same-pack fizzle, then the pack dies/gets fought (reset), then it fizzles
+    // again as a "new" run — must NOT hand off on the single post-reset fizzle.
+    std::uint32_t count = 1u;                                        // one prior fizzle
+    EXPECT_FALSE(ShouldHandoffFizzledPull(false, false, 2u, count)); // fought -> reset
+    EXPECT_EQ(count, 0u);
+    EXPECT_FALSE(ShouldHandoffFizzledPull(true, false, 2u, count));  // fresh fizzle
+    EXPECT_EQ(count, 1u);
+}
+
+TEST(DungeonClearFizzleTest, ZeroMaxHandsOffOnFirstFizzle)
+{
+    std::uint32_t count = 0u;
+    EXPECT_TRUE(ShouldHandoffFizzledPull(true, false, 0u, count));
+}

@@ -25,6 +25,20 @@ enum class DcPullPhase : uint32
     Engage    = 4,
 };
 
+// The Dynamic-pull governor's standing verdict for the current pack, persisted so
+// followers (roll-in gate) and the addon status panel can read it. The underlying
+// values are WIRE-STABLE: DcStatusPublisher sends `decision` verbatim in the addon
+// status payload, and it is passed as the `decision` arg to
+// DungeonClearMath::ShouldRollInForLeeroy (which keys on Leeroy == 1). Do NOT
+// renumber — extend with new codes at the end only.
+enum class DcPullDecisionCode : uint32
+{
+    None       = 0,  // no standing verdict (still scouting / no target resolved)
+    Leeroy     = 1,  // straight face-pull; the party rolls in on the tank
+    Advanced   = 2,  // LOS pull-to-camp maneuver; the camp machinery owns the party
+    PatrolHold = 3,  // hold at commit range, waiting a lone patrol out before pulling
+};
+
 // All transient state for one advanced/dynamic pull run, owned as a single value
 // (DungeonClearPullContextValue, "dungeon clear pull context") so the whole pull
 // FSM resets in lockstep through exactly one Reset(). This replaced seven loose
@@ -105,7 +119,7 @@ struct DcPullContext
                                                  // abortTarget instead of re-pulled
 
     // --- dynamic verdict (pull setting == 2) ------------------------------
-    uint32      decision       = 0;              // 0 none / 1 leeroy / 2 advanced
+    DcPullDecisionCode decision = DcPullDecisionCode::None;  // standing pull verdict
     ObjectGuid  decisionTarget;                  // pack the verdict applies to
     uint32      decisionSince  = 0;              // last re-classification timestamp
     uint32      patrolWaitSince = 0;             // getMSTime() the current pull first
@@ -141,6 +155,46 @@ struct DcPullContext
         phaseSince = nowMs;
         tagTarget = ObjectGuid::Empty;
     }
+
+    // The single phase-write entry point. Every phase change goes through here so
+    // the transition invariants live next to their comment: Engage is special-
+    // cased through EnterEngage (it clears the per-pull tag latch); every other
+    // phase just stamps phase + phaseSince. DcSetPullPhase is a thin context
+    // adapter over this — there is no phase-write logic outside this header.
+    void Transition(DcPullPhase p, uint32 nowMs)
+    {
+        if (p == DcPullPhase::Engage)
+        {
+            EnterEngage(nowMs);
+            return;
+        }
+        phase = p;
+        phaseSince = nowMs;
+    }
+
+    // --- camp ownership (see campPublishedMs) -----------------------------
+    // A camp is "set" once any coordinate is non-zero; (0,0,0) is the unset
+    // sentinel. Folds the five hand-rolled origin checks into one predicate.
+    bool HasCamp() const
+    {
+        return camp.GetPositionX() != 0.0f || camp.GetPositionY() != 0.0f ||
+               camp.GetPositionZ() != 0.0f;
+    }
+
+    // Move the camp AND stamp pull-machinery ownership in one step: a camp write
+    // can never forget the freshness stamp that keeps Advance's scout camp-
+    // trailing from wrestling the same camp on the same tick (the silent camp-
+    // freeze bug class). Every PULL-side camp MOVE goes through here.
+    void PublishCamp(Position const& p, uint32 nowMs)
+    {
+        camp = p;
+        campPublishedMs = nowMs;
+    }
+
+    // Re-assert pull ownership of the CURRENT (unchanged) camp — "no change is
+    // still an ownership decision": a successful camp computation that the
+    // hysteresis keeps must still hold the camp against Advance's trailing.
+    void TouchCampOwnership(uint32 nowMs) { campPublishedMs = nowMs; }
 };
 
 #endif

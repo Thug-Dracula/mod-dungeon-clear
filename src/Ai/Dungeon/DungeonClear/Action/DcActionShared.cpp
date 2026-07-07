@@ -16,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include "Config.h"
 #include "Creature.h"
 #include "DBCStores.h"
 #include "GameObject.h"

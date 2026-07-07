@@ -12,7 +12,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Config.h"
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"

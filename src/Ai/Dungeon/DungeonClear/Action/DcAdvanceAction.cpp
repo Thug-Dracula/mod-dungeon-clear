@@ -16,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include "Config.h"
 #include "Creature.h"
 #include "DBCStores.h"
 #include "GameObject.h"
@@ -1376,10 +1375,11 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
     if (AI_VALUE(bool, "dungeon clear pull mode current"))
     {
-        Position& camp = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().camp;
-        bool const campUnset =
-            camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-            camp.GetPositionZ() == 0.0f;
+        DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        Position& camp = pull.camp;
+        // Capture the unset state BEFORE seeding: the trail block below adopts the
+        // trailing point unconditionally on the first tick a camp was just seeded.
+        bool const campUnset = !pull.HasCamp();
         if (campUnset)
         {
             // Seed from the trail (setback behind the tank along walked ground)

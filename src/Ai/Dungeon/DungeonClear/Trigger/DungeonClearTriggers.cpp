@@ -11,7 +11,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Config.h"
 #include "Creature.h"
 #include "Group.h"
 #include "Map.h"
@@ -351,7 +350,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // Patrol-wait hold (dynamic pull decision == 3): the pull pipeline is holding
     // the tank at commit range to let a patrol pass before committing the pull.
     // Stand down unconditionally so the tank doesn't walk in and engage mid-wait.
-    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u)
+    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold)
     {
         DC_PULL_DEBUG("[DC:{}] blocking-trash: patrol-wait hold -> stand down",
                       bot->GetName());
@@ -406,7 +405,7 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     // hold (decision == 3) is pull-mode-off but likewise pull-pipeline-owned, so
     // stand down there too rather than Leeroy a room mob mid-wait.
     if (AI_VALUE(bool, "dungeon clear pull mode current") ||
-        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u)
+        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold)
         return false;
 
     // Same between-pulls gating the other engage triggers use (loot, party
@@ -700,7 +699,7 @@ bool DungeonClearPullTrigger::IsActive()
     // that state too. (Reading pull mode current FIRST runs the governor that may
     // set decision == 3 this tick.)
     bool const patrolWaiting =
-        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == 3u;
+        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold;
     if (!pullModeCurrent && !patrolWaiting)
         return false;
 

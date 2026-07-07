@@ -331,6 +331,11 @@ namespace
     }
 }
 
+std::vector<DungeonEvent> const& DungeonEventRegistry::AllEvents()
+{
+    return EventTable();
+}
+
 DungeonEvent const* DungeonEventRegistry::Find(uint32 mapId, uint32 id)
 {
     if (id == 0)

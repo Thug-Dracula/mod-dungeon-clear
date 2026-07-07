@@ -5,14 +5,17 @@
 
 #include "ObjectiveHookRegistry.h"
 
+#include <atomic>
 #include <unordered_map>
 
 #include "GameObject.h"
 #include "InstanceScript.h"
 #include "Item.h"
+#include "Log.h"
 #include "Opcodes.h"
 #include "Player.h"
 #include "Spell.h"
+#include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -142,7 +145,32 @@ ObjectiveArriveResult ObjectiveHookRegistry::Run(uint32 hookId, Player* bot, AiO
     auto const& hooks = Hooks();
     auto it = hooks.find(hookId);
     if (it == hooks.end() || !it->second)
-        return ObjectiveArriveResult::Done;
+    {
+        // A non-zero hookId that resolves to nothing is a wiring bug (a typo, or a
+        // hook that was removed). Latching Done would silently pass a step/objective
+        // authored to do real work; Blocked surfaces it (the run stalls for the
+        // human) and the throttled warn names the id. Registry-integrity gtest
+        // catches this at author time; this is the runtime backstop.
+        static std::atomic<uint32> lastWarnMs{0};
+        uint32 const now = getMSTime();
+        uint32 prev = lastWarnMs.load(std::memory_order_relaxed);
+        if (now - prev > 10000u &&
+            lastWarnMs.compare_exchange_strong(prev, now, std::memory_order_relaxed))
+        {
+            LOG_WARN("playerbots", "DungeonClear: objective hookId {} is not registered "
+                                   "(broken wiring) -> Blocked", hookId);
+        }
+        return ObjectiveArriveResult::Blocked;
+    }
 
     return it->second(bot, context, info);
+}
+
+bool ObjectiveHookRegistry::Has(uint32 hookId)
+{
+    if (hookId == 0)
+        return false;
+    auto const& hooks = Hooks();
+    auto it = hooks.find(hookId);
+    return it != hooks.end() && it->second;
 }

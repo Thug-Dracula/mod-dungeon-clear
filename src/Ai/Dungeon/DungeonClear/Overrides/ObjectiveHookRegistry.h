@@ -37,10 +37,19 @@ class ObjectiveHookRegistry
 public:
     using Hook = std::function<ObjectiveArriveResult(Player*, AiObjectContext*, DungeonBossInfo const&)>;
 
-    // Runs the hook for `hookId`. Returns Done when `hookId` is 0 or unregistered
-    // (the arrive-then-continue default).
+    // Runs the hook for `hookId`. hookId 0 means "no hook" and returns Done (the
+    // arrive-then-continue default). A NON-ZERO hookId that is unregistered is an
+    // authoring error — the objective/step meant to DO something — so it returns
+    // Blocked (and LOG_WARNs once) rather than silently latching Done. See F2 in
+    // the events-system review; the registry-integrity gtest catches it at author
+    // time, this is the runtime backstop.
     static ObjectiveArriveResult Run(uint32 hookId, Player* bot, AiObjectContext* context,
                                      DungeonBossInfo const& info);
+
+    // True if `hookId` names a registered hook (cheap authoring sanity gate;
+    // hookId 0 is "no hook" and returns false). Used by the registry-integrity
+    // gtest and callers that want to distinguish "no hook" from "broken hook".
+    static bool Has(uint32 hookId);
 };
 
 #endif

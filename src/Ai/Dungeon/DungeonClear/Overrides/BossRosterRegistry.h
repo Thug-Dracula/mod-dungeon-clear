@@ -57,6 +57,12 @@ public:
     // in the `dc bosses` panel (DungeonEvent::panelGatesBossEntry).
     static constexpr uint32 ObjectiveEntry(uint32 seq) { return 0x4F000000u | seq; }
 
+    // The full patch table. Exposed as a seam for the registry-integrity gtests
+    // (t/TestEventRegistry.cpp): the added objectives carry the eventId /
+    // onArriveHook / wing cross-references validated there. Not used by runtime
+    // callers, which go through Apply/HasPatch.
+    static std::vector<BossRosterPatch> const& AllPatches();
+
     // Returns the patched boss list for `mapId`. If no patch is registered the
     // base list is returned unchanged. Patches are difficulty-agnostic (5-man
     // rosters match across normal/heroic), so the lookup keys on mapId only.

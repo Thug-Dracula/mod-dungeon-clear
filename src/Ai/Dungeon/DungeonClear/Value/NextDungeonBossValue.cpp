@@ -15,6 +15,7 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossOrdering.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
@@ -64,93 +65,6 @@ namespace
     {
         auto it = liveness.find(entry);
         return it != liveness.end() ? it->second : BossLiveState{false, false};
-    }
-
-    // From the encounter-ordered candidate list, pick the boss to head toward.
-    // `stickyEntry` is the boss chosen on the previous computation;
-    // `stickyEncounterIndex` is its DBC encounter index when `haveStickyIndex`
-    // (the sticky boss is still known in the "dungeon bosses" list, even if it's
-    // now dead and absent from `cands`).
-    //
-    // COMMIT-AND-HOLD. Once we've committed to a boss we return it unchanged
-    // for as long as it remains in the candidate list — no per-tick re-ranking
-    // by distance, no per-tick reachability re-probe. Both of those signals are
-    // noisy near a decision boundary: straight-line distance swings as the bot
-    // rounds corners, and the bounded 2-stride IsReachable probe flickers when
-    // the bot is wedged. Re-deciding on them every recompute makes the target
-    // (and the long-path rebuilt from it) flip-flop between two bosses, which
-    // wedges the bot between competing routes. The commit is released only when
-    // the boss leaves `cands` entirely — killed (mask bit set), skipped, or
-    // turned to a corpse — all handled by the caller's candidate filtering, so
-    // a gone boss simply isn't here to match.
-    //
-    // ADVANCE-FORWARD. When the commit releases (the boss we were heading to is
-    // gone), we head to the next boss *after* it in encounter order, not to the
-    // lowest-index survivor. Snapping to the lowest index is correct only when
-    // the party clears strictly from boss #1; a party that started mid-list
-    // (e.g. via a manual `dungeon clear boss #3` selection, or by skipping
-    // early bosses) would otherwise walk back to boss #1 on every kill. We take
-    // the candidates with encounter index strictly greater than the boss we
-    // just left and pick the lowest-index one; only if nothing remains ahead do
-    // we wrap to the full set to mop up any lower-index bosses left behind.
-    //
-    // STRICTLY ORDINAL — NO REACHABILITY RE-RANK. We pick by encounter index
-    // alone and never skip a lower-index boss because a bounded path probe
-    // reads it "unreachable." That probe tests the boss's STATIC spawn anchor,
-    // which for pool-spawn bosses (the Wailing Caverns Disciples — Anacondra,
-    // Cobrahn, Pythas, Serpentis) is an arbitrary pooled anchor that usually
-    // isn't where the live boss stands, so it routinely probes as NOPATH and
-    // the old "first reachable" pick skipped straight past the real next boss
-    // to a far one with a good anchor (e.g. killing Anacondra jumped the target
-    // to Verdan the Everliving, the last boss). Sequential in-order selection
-    // is the contract: Advance walks toward the chosen boss using its LIVE
-    // coords when found (falling back to the static anchor only to stream the
-    // grid in), and a boss that genuinely can't be reached is handled by
-    // Advance's stall -> manual `dc skip` path, not by silently re-targeting.
-    std::optional<DungeonBossInfo> PickTarget(std::vector<DungeonBossInfo>& cands,
-                                              uint32 stickyEntry,
-                                              uint32 stickyEncounterIndex,
-                                              bool haveStickyIndex)
-    {
-        if (cands.empty())
-            return std::nullopt;
-
-        // Hold the commit if the boss is still in the candidate list.
-        if (stickyEntry)
-            for (DungeonBossInfo const& info : cands)
-                if (info.entry == stickyEntry)
-                    return info;
-
-        // `cands` arrives in encounter-index order, so the first match is
-        // always the lowest-index one.
-
-        if (haveStickyIndex)
-        {
-            // Finish any remaining anchors that SHARE the index we just left
-            // before advancing past it. A single gate can be expressed as
-            // several same-index objectives (Sunken Temple's six forcefield
-            // defenders all sit at index 0, each on its own balcony that needs
-            // its own boss-nav anchor); the old strict-greater advance picked
-            // the next HIGHER index and stranded the siblings, dropping the gate
-            // to a later wrap-around. `cands` is in clear order, so the first
-            // equal-index match is the next sibling to clear. This also fixes
-            // the boss-tied-to-objective case (e.g. Morphaz, a boss at index 5,
-            // sharing its slot with the Weaver & Dreamscythe objective): the
-            // boss is now picked right after its objective instead of last.
-            for (DungeonBossInfo const& info : cands)
-                if (BossOrderKey(info) == stickyEncounterIndex)
-                    return info;
-
-            // Commit released and the shared slot is done: head to the
-            // lowest-index boss strictly after the one we just left.
-            for (DungeonBossInfo const& info : cands)
-                if (BossOrderKey(info) > stickyEncounterIndex)
-                    return info;
-        }
-
-        // Fresh selection (no prior commit) or wrap-around (nothing ahead):
-        // lowest-index survivor.
-        return cands.front();
     }
 }
 
@@ -314,7 +228,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             }
 
     std::optional<DungeonBossInfo> pick =
-        PickTarget(cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
+        DcBossOrdering::PickTarget(cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
 
     // A stall reason set by Advance always describes the boss it was heading to
     // ("Can't reach <boss>: not spawned", "Stuck near <boss>", …). The instant

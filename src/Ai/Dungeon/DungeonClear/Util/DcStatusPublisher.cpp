@@ -26,7 +26,6 @@
 #include <vector>
 #include "AttackersValue.h"
 #include "CellImpl.h"
-#include "Config.h"
 #include "Creature.h"
 #include "CreatureGroups.h"
 #include "GameObject.h"
@@ -218,7 +217,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
     uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
     DcPullContext const& pull = AI_VALUE(DcPullContext&, "dungeon clear pull context");
-    uint32 const pullDecision = pull.decision;
+    uint32 const pullDecision = static_cast<uint32>(pull.decision);
     uint32 const pullPhase = static_cast<uint32>(pull.phase);
     std::string const bossName = next.has_value() ? next->name : "the boss";
 

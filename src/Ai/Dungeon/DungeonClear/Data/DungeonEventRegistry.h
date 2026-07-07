@@ -413,6 +413,12 @@ private:
 class DungeonEventRegistry
 {
 public:
+    // The full event table, in registration order. Exposed as a seam for the
+    // registry-integrity gtests (t/TestEventRegistry.cpp) — cross-reference and
+    // persistence lint over the authored data. Not used by runtime callers, which
+    // key on Find/Conditional.
+    static std::vector<DungeonEvent> const& AllEvents();
+
     // The event with `id` on `mapId`, or nullptr if none is registered.
     static DungeonEvent const* Find(uint32 mapId, uint32 id);
 

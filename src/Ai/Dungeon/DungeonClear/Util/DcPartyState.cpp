@@ -153,9 +153,7 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
     // the camp, so "caught up" must be measured against the camp, not the tank —
     // otherwise a camp standoff at/over PartyMaxSpread deadlocks the run (see
     // the header comment on SpreadGate). (0,0,0) camp = unset, fall back.
-    if (context->GetValue<bool>("dungeon clear pull mode")->Get() &&
-        (pull.camp.GetPositionX() != 0.0f || pull.camp.GetPositionY() != 0.0f ||
-         pull.camp.GetPositionZ() != 0.0f))
+    if (context->GetValue<bool>("dungeon clear pull mode")->Get() && pull.HasCamp())
     {
         gate.anchor = &pull.camp;
         // Camp-anchored backstop: members set at a live camp are by construction

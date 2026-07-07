@@ -26,7 +26,6 @@
 #include <vector>
 #include "AttackersValue.h"
 #include "CellImpl.h"
-#include "Config.h"
 #include "Creature.h"
 #include "CreatureGroups.h"
 #include "GameObject.h"
@@ -532,7 +531,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     if (bot->IsInCombat() || pull.phase != DcPullPhase::Idle)
         return;
 
-    auto apply = [&](bool want, uint32 decision)
+    auto apply = [&](bool want, DcPullDecisionCode decision)
     {
         pull.decision = decision;
         if (want == curBool)
@@ -555,12 +554,12 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             float const setback = DcSettings::GetFloat(bot, "PullSetback");
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
             std::optional<Position> const seed = ComputeTrailCamp(botAI, setback, maxDrag);
-            pull.camp = seed ? *seed
-                             : Position(bot->GetPositionX(), bot->GetPositionY(),
-                                        bot->GetPositionZ());
-            // Pull-machinery camp write: stamp ownership so Advance's scout
-            // camp-trailing defers (see campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
-            pull.campPublishedMs = getMSTime();
+            // Pull-machinery camp write: PublishCamp stamps ownership so Advance's
+            // scout camp-trailing defers (see campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
+            pull.PublishCamp(seed ? *seed
+                                  : Position(bot->GetPositionX(), bot->GetPositionY(),
+                                             bot->GetPositionZ()),
+                             getMSTime());
         }
     };
 
@@ -605,7 +604,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
                               kVerdictGraceMs);
             pull.decisionTarget = ObjectGuid::Empty;
             pull.targetLostSince = 0;
-            apply(false, 0u);
+            apply(false, DcPullDecisionCode::None);
         }
         // HoldNoTarget: within grace — keep verdict, camp hold and daze immunity.
         return;
@@ -692,7 +691,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
         switch (v)
         {
             case DcPullDecision::PullVerdict::PatrolWaitHold:
-                apply(false, 3u);  // hold at commit range; pull mode off, no tag
+                apply(false, DcPullDecisionCode::PatrolHold);  // hold at commit range; pull mode off, no tag
                 DC_PULL_INFO("[DC:{}] dynamic: pack {} patrol-contended (full {} > "
                              "ceiling {}, reduced {}) -> WAITING for patrol",
                              bot->GetName(), target->GetGUID().ToString(),
@@ -702,14 +701,14 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
                 // Still approaching a patrol-contended pack: stay provisional LEEROY
                 // and walk in. Don't run the wait clock until the decision point.
                 pull.patrolWaitSince = 0;
-                apply(false, 1u);
+                apply(false, DcPullDecisionCode::Leeroy);
                 break;
             case DcPullDecision::PullVerdict::Advanced:
-                apply(true, 2u);
+                apply(true, DcPullDecisionCode::Advanced);
                 break;
             case DcPullDecision::PullVerdict::Leeroy:
             default:
-                apply(false, 1u);
+                apply(false, DcPullDecisionCode::Leeroy);
                 break;
         }
     };
@@ -746,8 +745,8 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // the raw classification.
     DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
                  target->GetGUID().ToString(),
-                 pull.decision == 3u ? "WAITING (patrol)"
-                     : pull.decision == 2u ? "ADVANCED" : "LEEROY");
+                 pull.decision == DcPullDecisionCode::PatrolHold ? "WAITING (patrol)"
+                     : pull.decision == DcPullDecisionCode::Advanced ? "ADVANCED" : "LEEROY");
 }
 std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
                                                           float setback, float safeRadius,
