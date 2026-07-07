@@ -42,6 +42,33 @@ protected:
                   bool normal_only = false, bool exact_waypoint = false,
                   MovementPriority priority = MovementPriority::MOVEMENT_NORMAL, bool lessDelay = false,
                   bool backwards = false);
+
+    // What one glide tick did, so the caller can layer its own stall/park
+    // bookkeeping without the driver needing the context.
+    enum class GlideOutcome
+    {
+        Moved,        // issued a fresh movement (jump / rejoin / spline / hop). Own the tick.
+        Riding,       // an in-flight escort glide is still travelling; left alone. Own the tick.
+        ReachedEnd,   // the follower cursor hit the route end — as close as the navmesh allows.
+        OffPathLost,  // knocked off the line and Resnap failed; the cached path was invalidated.
+        Blocked,      // movement isn't allowed this tick.
+    };
+
+    // Drive ONE tick of a continuous escort-spline glide along `path` toward its
+    // end, sharing the exact wedge-detect / off-path-resnap / ride-guard /
+    // jump / off-line-rejoin / spline-window / single-hop-fallback ladder that the
+    // Advance approach FSM runs (DcAdvanceAction's Tier-B/C effect handlers are the
+    // DecideApproach-instrumented sibling of this sequence). Pure movement: it
+    // mutates `follower`/`appr`/`wedgeWatch` and issues the arbiter-funneled moves,
+    // but leaves stall-reason/park bookkeeping to the caller via the returned
+    // outcome. `wedgeWatch` is the caller's progress watchdog (e.g. the door
+    // walk-in vs the advance route-glide instance); `appr.lastPos` carries the
+    // per-tick displacement baseline. This is the shared "DcGlideDriver": any
+    // action that has to walk a bot to the end of a cached route reuses it instead
+    // of hand-cloning the machinery.
+    GlideOutcome DriveGlideToEnd(ChunkedPathfinder::Result const& path,
+                                 DungeonFollowerState& follower, DcApproachState& appr,
+                                 DcProgressWatchdog& wedgeWatch, uint32 mapId, char const* tag);
 };
 
 // Shared base for engage actions: walks into attack range and forces combat

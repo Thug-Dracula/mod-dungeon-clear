@@ -480,3 +480,119 @@ bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool id
     return MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint, priority, lessDelay,
                   backwards);
 }
+
+// The shared "DcGlideDriver". One tick of a continuous escort-spline glide along
+// a cached route toward its end, with the full wedge / off-path / ride / jump /
+// rejoin / spline / fallback ladder. This is the un-instrumented sibling of
+// DcAdvanceAction's Tier-B/C effect handlers (which route the same sequence
+// through the pure DecideApproach kernel for replay capture); the door walk-in
+// driver, which needs no boss-engage observation, calls this directly instead of
+// hand-cloning the machinery. Pure movement — the caller owns stall/park
+// bookkeeping via the returned outcome.
+DcMovementAction::GlideOutcome DcMovementAction::DriveGlideToEnd(
+    ChunkedPathfinder::Result const& path, DungeonFollowerState& follower,
+    DcApproachState& appr, DcProgressWatchdog& wedgeWatch, uint32 mapId, char const* tag)
+{
+    // --- Progress-aware wedge detection, sampled BEFORE NextHop so a recovery
+    // re-anchor lands before the hop is computed. Narrow, descending walkways
+    // micro-stop the glide; the ride-guard below tolerates a momentary
+    // isMoving()==false, so count only genuine no-progress-WHILE-MOVING ticks. On
+    // a wedge, halt the stuck spline and re-anchor the cursor onto the nearest
+    // forward route point; the fresh NextHop + spline issue below restart the
+    // glide from a standstill. ---
+    {
+        Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        bool const lastPosValid =
+            appr.lastPos.m_positionX != 0.0f || appr.lastPos.m_positionY != 0.0f ||
+            appr.lastPos.m_positionZ != 0.0f;
+        float const moved = lastPosValid ? cur.GetExactDist(appr.lastPos) : 0.0f;
+        uint32 const wedgeTicks =
+            wedgeWatch.TickDisplacement(lastPosValid && bot->isMoving(), moved, DC_STUCK_DISPLACEMENT);
+        appr.lastPos = cur;
+
+        if (wedgeTicks >= DC_STUCK_TICK_LIMIT)
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] {} wedged ({} ticks) -> halt + re-anchor",
+                      bot->GetName(), tag, wedgeTicks);
+            wedgeWatch.stuckTicks = 0;
+            DcMovement::ResolveEscortConflict(bot);
+            DungeonPathFollower::Resnap(bot, path, follower);
+        }
+    }
+
+    // --- Off-path recovery (knockback / follower bump): re-anchor onto the
+    // existing polyline, or (Resnap failed) invalidate the cached path and tell
+    // the caller to park. ---
+    if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
+        follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
+    {
+        if (!DungeonPathFollower::Resnap(bot, path, follower))
+        {
+            DcMovement::ResolveEscortConflict(bot);
+            appr.longPathExpiresMs = 0;
+            follower = DungeonFollowerState{};
+            return GlideOutcome::OffPathLost;
+        }
+    }
+
+    DungeonPathFollower::Hop hop = DungeonPathFollower::NextHop(bot, path, follower);
+    if (hop.isDone)
+        return GlideOutcome::ReachedEnd;
+
+    // --- Leave an in-flight escort glide alone, INCLUDING across a momentary
+    // isMoving()==false flicker: the ACTIVE escort generator type alone is the
+    // "spline still travelling" signal (the core pops it the instant the spline
+    // finishes), and the wedge detector above is what catches a genuinely stalled
+    // spline. A wedge recovery just above may have halted the escort, in which
+    // case we fall through and re-issue. ---
+    MotionMaster* mm = bot->GetMotionMaster();
+    if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE)
+        return GlideOutcome::Riding;
+    if (!IsMovingAllowed())
+        return GlideOutcome::Blocked;
+
+    // A jump leg en route (drop-down corridor) — arc it.
+    if (hop.isJump)
+    {
+        JumpTo(mapId, hop.point.x, hop.point.y, hop.point.z, MovementPriority::MOVEMENT_NORMAL);
+        return GlideOutcome::Moved;
+    }
+
+    // Re-entry leg must be a GENERATED path: if a bump left the bot off the
+    // corridor, the escort spline's opening straight leg back to the route clips
+    // wall corners. Rejoin via PathGenerator (MoveTo) while off the line; the
+    // glide resumes once RouteDeviation drops back under the on-corridor threshold.
+    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    {
+        DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+                 /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                 /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] {} off-line {:.1f}yd -> rejoining route via generated path "
+                  "(seg {} pt {})",
+                  bot->GetName(), tag, deviation, follower.segmentIdx, follower.pointIdx);
+        return GlideOutcome::Moved;
+    }
+
+    // Continuous escort spline along the upcoming polyline run — linear, wall-safe,
+    // no per-point stops. SplinePath owns the stand-up / cast-interrupt /
+    // MoveSplinePath ritual + LastMovement record and refuses a <2-point window.
+    std::vector<G3D::Vector3> const window =
+        DungeonPathFollower::BuildSplineWindow(bot, path, follower);
+    Movement::PointsArray points(window.begin(), window.end());
+    if (DcMovement::SplinePath(botAI, points))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] {} spline: {} pts (seg {} pt {})",
+                  bot->GetName(), tag, points.size(), follower.segmentIdx, follower.pointIdx);
+        return GlideOutcome::Moved;
+    }
+
+    // Window < 2 points (lone anchor tail): short single-hop fallback.
+    DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+             /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+             /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    return GlideOutcome::Moved;
+}

@@ -1615,131 +1615,31 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     DungeonFollowerState& follower =
         context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
 
-    // Progress-aware wedge detection, mirroring Advance's stuck-recovery and
-    // sampled BEFORE NextHop so a recovery re-anchor lands before the hop below is
-    // computed. The narrow, descending entrance walkways (Scholomance's Iron Gate
-    // approach) micro-stop the glide; the old `escort && isMoving()` ride-guard
-    // saw isMoving()==false on each flicker and relaunched MoveSplinePath, which
-    // resets the spline to its first point — so the bot crawled a few yards over
-    // many seconds (the "door walk-in" stutter dance) and, unlike Advance, never
-    // recovered because the walk-in had no stuck detection at all. Count only
-    // genuine no-progress-WHILE-MOVING ticks; a momentary isMoving()==false (now
-    // tolerated by the ride-guard below) resets the counter.
+    // Walk the rest of the corridor to the door with the shared glide driver —
+    // the same wedge-detect / off-path-resnap / ride-guard / jump / rejoin /
+    // spline / fallback ladder Advance runs, so the walk-in inherits every
+    // hard-won fix (the "door walk-in" stutter dance, the momentary-isMoving
+    // ride-guard tolerance, the off-line wall-clip rejoin) instead of a hand-clone
+    // that drifts. The door's watchdog instance keeps its wedge counter separate
+    // from Advance's route glide. The driver leaves park/stall bookkeeping to us:
+    //   - Moved:  a fresh move was issued -> clear the stall, own the tick.
+    //   - Riding: an in-flight glide is still travelling -> own the tick, and
+    //             deliberately do NOT clear the stall (a prior Moved tick did).
+    //   - ReachedEnd: corridor end = as close as the navmesh allows (the door's
+    //             collision truncates the route here) -> the real "at the door".
+    //   - OffPathLost / Blocked: can't make progress -> park and report.
+    switch (DriveGlideToEnd(path, follower, appr, appr.doorWalkInWatch, bot->GetMapId(),
+                            "door walk-in"))
     {
-        Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
-        bool const lastPosValid =
-            appr.lastPos.m_positionX != 0.0f || appr.lastPos.m_positionY != 0.0f ||
-            appr.lastPos.m_positionZ != 0.0f;
-        float const moved = lastPosValid ? cur.GetExactDist(appr.lastPos) : 0.0f;
-        uint32 const wedgeTicks = appr.doorWalkInWatch.TickDisplacement(
-            lastPosValid && bot->isMoving(), moved, DC_STUCK_DISPLACEMENT);
-        appr.lastPos = cur;
-
-        if (wedgeTicks >= DC_STUCK_TICK_LIMIT)
-        {
-            // Wedged against geometry. Halt the stuck spline and re-anchor the
-            // cursor onto the nearest forward route point; the fresh NextHop +
-            // spline issue below then restart the glide from a standstill.
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] door walk-in wedged ({} ticks, {:.1f}yd to door) "
-                      "-> halt + re-anchor",
-                      bot->GetName(), wedgeTicks, distToDoor);
-            appr.doorWalkInWatch.stuckTicks = 0;
-            DcMovement::ResolveEscortConflict(bot);
-            DungeonPathFollower::Resnap(bot, path, follower);
-        }
+        case GlideOutcome::Moved:
+            ClearStall(context);
+            return true;
+        case GlideOutcome::Riding:
+            return true;
+        case GlideOutcome::ReachedEnd:
+        case GlideOutcome::OffPathLost:
+        case GlideOutcome::Blocked:
+            break;  // can't make progress at the door -> park and report below.
     }
-
-    // Off-path recovery (knockback / follower bump while walking in), mirrors
-    // Advance: re-anchor onto the existing polyline, or rebuild + hold.
-    if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
-        follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
-    {
-        if (!DungeonPathFollower::Resnap(bot, path, follower))
-        {
-            DcMovement::ResolveEscortConflict(bot);
-            appr.longPathExpiresMs = 0;
-            follower = DungeonFollowerState{};
-            return parkAndStall();
-        }
-    }
-
-    DungeonPathFollower::Hop hop = DungeonPathFollower::NextHop(bot, path, follower);
-    if (hop.isDone)
-    {
-        // Reached the end of the corridor = as close to the door as the
-        // navmesh allows (the door's collision truncates the route here). This
-        // is the real "at the door"; park and wait.
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door-blocked: corridor end reached ({:.1f}yd from door) -> parking",
-                  bot->GetName(), distToDoor);
-        return parkAndStall();
-    }
-
-    // Leave an in-flight escort glide alone — INCLUDING across a momentary
-    // isMoving()==false flicker on rough/narrow geometry. The generator type
-    // alone is the "spline in flight" signal: the core pops the escort generator
-    // the instant the spline finishes, so an ACTIVE escort means it is still
-    // travelling, and the wedge detector above (not isMoving) is what catches a
-    // spline that has genuinely stalled. The old `&& bot->isMoving()` here was
-    // the thrash source — every micro-stop relaunched the spline from its start,
-    // the "door walk-in" dance. Read fresh: a wedge recovery just above may have
-    // halted the escort, in which case we fall through and re-issue.
-    MotionMaster* mm = bot->GetMotionMaster();
-    if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE)
-        return true;
-    if (!IsMovingAllowed())
-        return parkAndStall();
-
-    uint32 const mapId = bot->GetMapId();
-
-    // A jump leg en route to the door (drop-down corridor) — arc it.
-    if (hop.isJump)
-    {
-        JumpTo(mapId, hop.point.x, hop.point.y, hop.point.z, MovementPriority::MOVEMENT_NORMAL);
-        ClearStall(context);
-        return true;
-    }
-
-    // Re-entry leg must be a generated path (same rationale as Advance): if a
-    // bump/knockback left the bot off the corridor, the escort spline's opening
-    // straight leg back to the route clips wall corners. Rejoin via PathGenerator
-    // (MoveTo) while off the line; the glide resumes once back on it.
-    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
-    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
-    {
-        DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
-                 /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                 /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door walk-in off-line {:.1f}yd -> rejoining route via "
-                  "generated path (seg {} pt {})",
-                  bot->GetName(), deviation, follower.segmentIdx, follower.pointIdx);
-        ClearStall(context);
-        return true;
-    }
-
-    // Continuous escort spline along the upcoming polyline run, identical to
-    // Advance's glide — linear spline, wall-safe, no per-point stops. SplinePath
-    // owns the stand-up / cast-interrupt / MoveSplinePath ritual + LastMovement
-    // record and refuses a <2-point window.
-    std::vector<G3D::Vector3> const window =
-        DungeonPathFollower::BuildSplineWindow(bot, path, follower);
-    Movement::PointsArray points(window.begin(), window.end());
-    if (DcMovement::SplinePath(botAI, points))
-    {
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door walk-in spline: {} pts ({:.1f}yd to door, seg {} pt {})",
-                  bot->GetName(), points.size(), distToDoor,
-                  follower.segmentIdx, follower.pointIdx);
-        ClearStall(context);
-        return true;
-    }
-
-    // Window < 2 points (lone anchor tail): short single-hop fallback.
-    DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
-             /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-             /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-    ClearStall(context);
-    return true;
+    return parkAndStall();
 }
