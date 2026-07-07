@@ -20,13 +20,14 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 class PlayerbotAI;
 
 class DungeonClearEnabledValue : public ManualSetValue<bool>
 {
 public:
-    DungeonClearEnabledValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, "dungeon clear enabled") {}
+    DungeonClearEnabledValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, DcKey::Enabled) {}
 };
 
 // Pause flag layered on top of `dungeon clear enabled`. When true, every
@@ -41,7 +42,7 @@ public:
 class DungeonClearPausedValue : public ManualSetValue<bool>
 {
 public:
-    DungeonClearPausedValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, "dungeon clear paused") {}
+    DungeonClearPausedValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, DcKey::Paused) {}
 };
 
 // Short human phrase describing WHY the run is paused, so the status panel can
@@ -56,7 +57,7 @@ class DungeonClearPauseReasonValue : public ManualSetValue<std::string&>
 {
 public:
     DungeonClearPauseReasonValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::string&>(botAI, data, "dungeon clear pause reason")
+        : ManualSetValue<std::string&>(botAI, data, DcKey::PauseReason)
     {
     }
 
@@ -78,7 +79,7 @@ class DungeonClearPausedDoorValue : public ManualSetValue<ObjectGuid>
 {
 public:
     DungeonClearPausedDoorValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear paused door")
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, DcKey::PausedDoor)
     {
     }
 };
@@ -87,7 +88,7 @@ class DungeonClearSkippedValue : public ManualSetValue<std::unordered_set<uint32
 {
 public:
     DungeonClearSkippedValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear skipped")
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, DcKey::Skipped)
     {
     }
 
@@ -106,7 +107,7 @@ class DungeonClearClearedAnchorsValue : public ManualSetValue<std::unordered_set
 {
 public:
     DungeonClearClearedAnchorsValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear cleared anchors")
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, DcKey::ClearedAnchors)
     {
     }
 
@@ -128,7 +129,7 @@ class DungeonClearSeenBossesValue : public ManualSetValue<std::unordered_set<uin
 {
 public:
     DungeonClearSeenBossesValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear seen bosses")
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, DcKey::SeenBosses)
     {
     }
 
@@ -153,7 +154,7 @@ class DungeonClearSeenDueEventsValue : public ManualSetValue<std::unordered_set<
 {
 public:
     DungeonClearSeenDueEventsValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, "dungeon clear seen due events")
+        : ManualSetValue<std::unordered_set<uint32>&>(botAI, data, DcKey::SeenDueEvents)
     {
     }
 
@@ -167,7 +168,7 @@ class DungeonClearStallReasonValue : public ManualSetValue<std::string&>
 {
 public:
     DungeonClearStallReasonValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::string&>(botAI, data, "dungeon clear stall reason")
+        : ManualSetValue<std::string&>(botAI, data, DcKey::StallReason)
     {
     }
 
@@ -179,7 +180,7 @@ class DungeonClearLastSaidReasonValue : public ManualSetValue<std::string&>
 {
 public:
     DungeonClearLastSaidReasonValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::string&>(botAI, data, "dungeon clear last said reason")
+        : ManualSetValue<std::string&>(botAI, data, DcKey::LastSaidReason)
     {
     }
 
@@ -201,7 +202,7 @@ class DungeonClearPhaseValue : public ManualSetValue<std::string&>
 {
 public:
     DungeonClearPhaseValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::string&>(botAI, data, "dungeon clear phase")
+        : ManualSetValue<std::string&>(botAI, data, DcKey::Phase)
     {
     }
 
@@ -213,7 +214,7 @@ class DungeonClearFallbackTargetValue : public ManualSetValue<ObjectGuid>
 {
 public:
     DungeonClearFallbackTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear fallback target")
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, DcKey::FallbackTarget)
     {
     }
 };
@@ -229,7 +230,7 @@ class DungeonClearEngageTrashTargetValue : public ManualSetValue<ObjectGuid>
 {
 public:
     DungeonClearEngageTrashTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear engage trash target")
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, DcKey::EngageTrashTarget)
     {
     }
 };
@@ -249,7 +250,7 @@ class DungeonClearFollowedTankValue : public ManualSetValue<ObjectGuid>
 {
 public:
     DungeonClearFollowedTankValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear followed tank")
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, DcKey::FollowedTank)
     {
     }
 };
@@ -268,7 +269,7 @@ class DungeonClearStickyBossValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearStickyBossValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear sticky boss")
+        : ManualSetValue<uint32>(botAI, 0u, DcKey::StickyBoss)
     {
     }
 };
@@ -279,7 +280,7 @@ class DungeonClearSelectedBossValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearSelectedBossValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear selected boss")
+        : ManualSetValue<uint32>(botAI, 0u, DcKey::SelectedBoss)
     {
     }
 };
@@ -294,7 +295,7 @@ class DungeonClearRunInstanceValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearRunInstanceValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear run instance")
+        : ManualSetValue<uint32>(botAI, 0u, DcKey::RunInstance)
     {
     }
 };
@@ -315,7 +316,7 @@ class DungeonClearCurrentHopValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearCurrentHopValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear current hop")
+        : ManualSetValue<uint32>(botAI, 0u, DcKey::CurrentHop)
     {
     }
 };
@@ -350,7 +351,7 @@ class DungeonClearLootSkipValue : public ManualSetValue<std::map<ObjectGuid, uin
 {
 public:
     DungeonClearLootSkipValue(PlayerbotAI* botAI)
-        : ManualSetValue<std::map<ObjectGuid, uint32>&>(botAI, data, "dungeon clear loot skip")
+        : ManualSetValue<std::map<ObjectGuid, uint32>&>(botAI, data, DcKey::LootSkip)
     {
     }
 
@@ -375,7 +376,7 @@ class DungeonClearLootCampGuidValue : public ManualSetValue<ObjectGuid>
 {
 public:
     DungeonClearLootCampGuidValue(PlayerbotAI* botAI)
-        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear loot camp guid")
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, DcKey::LootCampGuid)
     {
     }
 };
@@ -384,7 +385,7 @@ class DungeonClearLootCampStartValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearLootCampStartValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear loot camp start")
+        : ManualSetValue<uint32>(botAI, 0u, DcKey::LootCampStart)
     {
     }
 };
@@ -401,7 +402,7 @@ class DungeonClearPullModeValue : public ManualSetValue<bool>
 {
 public:
     DungeonClearPullModeValue(PlayerbotAI* botAI)
-        : ManualSetValue<bool>(botAI, false, "dungeon clear pull mode")
+        : ManualSetValue<bool>(botAI, false, DcKey::PullMode)
     {
     }
 };
@@ -422,7 +423,7 @@ class DungeonClearPullSettingValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearPullSettingValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 2u, "dungeon clear pull setting")
+        : ManualSetValue<uint32>(botAI, 2u, DcKey::PullSetting)
     {
     }
 };
@@ -444,7 +445,7 @@ class DungeonClearPullContextValue : public ManualSetValue<DcPullContext&>
 {
 public:
     DungeonClearPullContextValue(PlayerbotAI* botAI)
-        : ManualSetValue<DcPullContext&>(botAI, data, "dungeon clear pull context")
+        : ManualSetValue<DcPullContext&>(botAI, data, DcKey::PullContext)
     {
     }
 
@@ -496,7 +497,7 @@ class DungeonClearSwimStateValue : public ManualSetValue<DungeonClearSwimState&>
 {
 public:
     DungeonClearSwimStateValue(PlayerbotAI* botAI)
-        : ManualSetValue<DungeonClearSwimState&>(botAI, data, "dungeon clear swim state")
+        : ManualSetValue<DungeonClearSwimState&>(botAI, data, DcKey::SwimState)
     {
     }
 
@@ -514,7 +515,7 @@ class DungeonClearFollowerStateValue : public ManualSetValue<DungeonFollowerStat
 {
 public:
     DungeonClearFollowerStateValue(PlayerbotAI* botAI)
-        : ManualSetValue<DungeonFollowerState&>(botAI, data, "dungeon clear follower state")
+        : ManualSetValue<DungeonFollowerState&>(botAI, data, DcKey::FollowerState)
     {
     }
 
@@ -537,7 +538,7 @@ class DungeonEventProgressValue : public ManualSetValue<DungeonEventProgress&>
 {
 public:
     DungeonEventProgressValue(PlayerbotAI* botAI)
-        : ManualSetValue<DungeonEventProgress&>(botAI, data, "dungeon clear event progress")
+        : ManualSetValue<DungeonEventProgress&>(botAI, data, DcKey::EventProgress)
     {
     }
 
@@ -558,7 +559,7 @@ class DungeonConditionalEventProgressValue : public ManualSetValue<DungeonEventP
 {
 public:
     DungeonConditionalEventProgressValue(PlayerbotAI* botAI)
-        : ManualSetValue<DungeonEventProgress&>(botAI, data, "dungeon clear conditional event progress")
+        : ManualSetValue<DungeonEventProgress&>(botAI, data, DcKey::ConditionalEventProgress)
     {
     }
 
@@ -578,7 +579,7 @@ class DungeonClearApproachStateValue : public ManualSetValue<DcApproachState&>
 {
 public:
     DungeonClearApproachStateValue(PlayerbotAI* botAI)
-        : ManualSetValue<DcApproachState&>(botAI, data, "dungeon clear approach state")
+        : ManualSetValue<DcApproachState&>(botAI, data, DcKey::ApproachState)
     {
     }
 
@@ -597,7 +598,7 @@ class DungeonClearTickMemoValue : public ManualSetValue<DcTickMemo&>
 {
 public:
     DungeonClearTickMemoValue(PlayerbotAI* botAI)
-        : ManualSetValue<DcTickMemo&>(botAI, data, "dungeon clear tick memo")
+        : ManualSetValue<DcTickMemo&>(botAI, data, DcKey::TickMemo)
     {
     }
 

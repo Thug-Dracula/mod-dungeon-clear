@@ -58,6 +58,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace DcActionShared
 {
@@ -109,7 +110,7 @@ namespace DcActionShared
         if (!pick)
             return std::nullopt;
         uint32 const spellId =
-            botAI->GetAiObjectContext()->GetValue<uint32>("spell id", pick->name)->Get();
+            botAI->GetAiObjectContext()->GetValue<uint32>(DcKey::Stock::SpellId, pick->name)->Get();
         if (!spellId || !bot->HasSpell(spellId))
             return std::nullopt;
         return ResolvedPullSpell{spellId, pick->minRange, pick->maxRange};
@@ -120,37 +121,37 @@ namespace DcActionShared
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         Player* bot = botAI->GetBot();
-        ctx->GetValue<bool>("dungeon clear enabled")->Set(false);
+        ctx->GetValue<bool>(DcKey::Enabled)->Set(false);
         if (bot)
             DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
-        ctx->GetValue<bool>("dungeon clear paused")->Set(false);
-        ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
-        ctx->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
-        ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-        ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-        ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
-        ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
-        ctx->GetValue<std::string&>("dungeon clear phase")->Get().clear();
-        ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-        ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
-        ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
-        ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+        ctx->GetValue<bool>(DcKey::Paused)->Set(false);
+        ctx->GetValue<std::string&>(DcKey::PauseReason)->Get().clear();
+        ctx->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(ObjectGuid::Empty);
+        ctx->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+        ctx->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
+        ctx->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::LastSaidReason)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::Phase)->Get().clear();
+        ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+        ctx->GetValue<std::map<ObjectGuid, uint32>&>(DcKey::LootSkip)->Get().clear();
+        ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
+        ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
         // One reset clears the whole approach FSM (the stuck/recovery counters,
         // the pursuit/dead-end latches, the loot-yield anchor, the position
         // sentinel + committed-boss entry, and the long-path cache state) in
         // lockstep — see DcApproachState.
-        ctx->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
+        ctx->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().Reset();
         // One reset clears the whole advanced-pull FSM (phase / dwell timer / camp /
         // breadcrumb trail / abort + tag latches / Dynamic verdict) in lockstep.
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().Reset();
         // Pull-session teardown, previously only on the chat `dc off` path: revert
         // the pull preference to Dynamic, disarm the behavioral bool, and REVOKE the
         // leader's pull-session daze immunity. Folding these in here is the fix for a
         // party-death / dungeon-exit disable (which routes through this function)
         // leaving the tank permanently daze-immune — the revoke was formerly
         // reachable only via ApplyPullSetting and DcOffAction.
-        ctx->GetValue<uint32>("dungeon clear pull setting")->Set(2u);
-        ctx->GetValue<bool>("dungeon clear pull mode")->Set(false);
+        ctx->GetValue<uint32>(DcKey::PullSetting)->Set(2u);
+        ctx->GetValue<bool>(DcKey::PullMode)->Set(false);
         if (bot)
             DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
@@ -165,9 +166,9 @@ namespace DcActionShared
     void StallDungeonClear(PlayerbotAI* botAI, std::string const& reason)
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
-        ctx->GetValue<std::string&>("dungeon clear stall reason")->Get() = reason;
+        ctx->GetValue<std::string&>(DcKey::StallReason)->Get() = reason;
 
-        std::string& lastSaid = ctx->GetValue<std::string&>("dungeon clear last said reason")->Get();
+        std::string& lastSaid = ctx->GetValue<std::string&>(DcKey::LastSaidReason)->Get();
         if (lastSaid != reason)
         {
             lastSaid = reason;
@@ -179,8 +180,8 @@ namespace DcActionShared
 
     void ClearStall(AiObjectContext* ctx)
     {
-        ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
-        ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::LastSaidReason)->Get().clear();
     }
 
 
@@ -191,7 +192,7 @@ namespace DcActionShared
     // "moving", "pursuing", "recovering".
     void SetPhase(AiObjectContext* ctx, std::string const& phase)
     {
-        ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
+        ctx->GetValue<std::string&>(DcKey::Phase)->Get() = phase;
     }
 
 
@@ -223,7 +224,7 @@ namespace DcActionShared
                          Position const* builtToward = nullptr)
     {
         ChunkedPathfinder::Result& path =
-            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+            ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         path = std::move(built);
         appr.longPathTargetEntry = target.entry;
         appr.longPathTargetPos = builtToward ? *builtToward : Position(target.x, target.y, target.z);
@@ -236,8 +237,8 @@ namespace DcActionShared
                  path.segments.size(), firstSegPts, path.complete,
                  path.reachable ? "" : (" UNREACHABLE: " + path.failureReason));
 
-        ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-        ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+        ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+        ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
 
         // Re-baseline the TTL-defer progress cursor to the freshly-reset follower
         // (segment 0, point 0) so the first real advance reads as progress.
@@ -358,7 +359,7 @@ namespace DcActionShared
         // bot isn't position-stuck, treat the route as fresh and re-arm the
         // deadline from now. expiresAt==0 (no usable path yet) always rebuilds.
         DungeonFollowerState const& follower =
-            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+            ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
         bool const cursorAdvanced =
             follower.segmentIdx > appr.lastProgressSegmentIdx ||
             (follower.segmentIdx == appr.lastProgressSegmentIdx &&
@@ -407,11 +408,11 @@ namespace DcActionShared
         // lands). On a TTL-only refresh leave the cache walking.
         if (targetChanged)
         {
-            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
+            ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
             cachedEntry = target.entry;   // stop re-detecting "boss changed" every tick
             expiresAt = 0;                // mark "no usable path yet"
-            ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+            ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+            ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
         }
 
         // One in-flight job per bot; nothing to do until it returns.

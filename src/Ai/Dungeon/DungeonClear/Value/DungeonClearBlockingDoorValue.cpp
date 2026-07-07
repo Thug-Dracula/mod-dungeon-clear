@@ -23,6 +23,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -98,7 +99,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
 {
     if (!bot || !bot->IsInWorld())
         return ObjectGuid::Empty;
-    if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
+    if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
         return ObjectGuid::Empty;
 
     Map* map = bot->GetMap();
@@ -106,7 +107,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         return ObjectGuid::Empty;
 
     ChunkedPathfinder::Result const& path =
-        AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+        AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
     if (!path.reachable || path.segments.empty())
         return ObjectGuid::Empty;
 

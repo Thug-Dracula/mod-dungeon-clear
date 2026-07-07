@@ -28,6 +28,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -54,7 +55,7 @@ namespace
     // short-circuit on the first check. See DcLeaderSignal::FindLeaderTank.
     bool IsEnabled(AiObjectContext* context, Player* bot)
     {
-        if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
+        if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
             return false;
         return DcLeaderSignal::IsDungeonClearLeader(bot);
     }
@@ -83,7 +84,7 @@ bool DungeonClearIdleTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
 
@@ -105,7 +106,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
 
@@ -125,7 +126,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     // clears it first; the gate reopens the instant the room is clear (or the
     // RoomClearTimeout valve fires inside the value). Cheap cached read.
     if (RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
-        !AI_VALUE(GuidVector, "dungeon clear room trash remaining").empty())
+        !AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return false;
 
     // A closed door between us and the boss means it's BEYOND it and not actually
@@ -149,7 +150,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     // separated from by a wall or door — the cached anchor list runs the
     // bot around through the actual corridor first.
     ChunkedPathfinder::Result const& path =
-        AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+        AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
     if (path.reachable && !path.segments.empty())
     {
         bool anyAnchored = false;
@@ -186,7 +187,7 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
@@ -220,7 +221,7 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
         // MapUpdate.Threads (a data race AND cross-instance suppression, where one
         // instance's leader silences another's diagnostic).
         DcApproachState& appr =
-            context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
         uint32 const nowMs = getMSTime();
         if (getMSTimeDiff(appr.lastObjectiveDiagMs, nowMs) >= 3000)
         {
@@ -271,7 +272,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
 
@@ -291,8 +292,8 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // that drives `possible targets`. Falls back to `possible targets`
     // when far-targets is empty (first tick, before its 500ms poll has
     // run).
-    GuidVector const& farTargets = AI_VALUE(GuidVector, "dungeon clear far targets");
-    GuidVector const& possibleTargets = AI_VALUE(GuidVector, "possible targets");
+    GuidVector const& farTargets = AI_VALUE(GuidVector, DcKey::FarTargets);
+    GuidVector const& possibleTargets = AI_VALUE(GuidVector, DcKey::Stock::PossibleTargets);
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
 
     Unit* trash = nullptr;
@@ -302,7 +303,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         // entire chunked route — anchored or anchor-free — so blocking
         // trash beyond a single PathGenerator call is still detected.
         ChunkedPathfinder::Result const& path =
-            AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+            AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
         if (path.reachable && !path.segments.empty())
         {
             trash = DcTargeting::FindBlockingTrashOnPath(
@@ -350,7 +351,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // Patrol-wait hold (dynamic pull decision == 3): the pull pipeline is holding
     // the tank at commit range to let a patrol pass before committing the pull.
     // Stand down unconditionally so the tank doesn't walk in and engage mid-wait.
-    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold)
+    if (AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold)
     {
         DC_PULL_DEBUG("[DC:{}] blocking-trash: patrol-wait hold -> stand down",
                       bot->GetName());
@@ -364,8 +365,8 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // pull for any pack in the 20-35yd band the pull is deliberately waiting to
     // close). The one exception is a pack a prior pull gave up on (abort target):
     // fall through to the normal walk-in so the run never livelocks on it.
-    if (AI_VALUE(bool, "dungeon clear pull mode current") &&
-        trash->GetGUID() != AI_VALUE(DcPullContext&, "dungeon clear pull context").abortTarget)
+    if (AI_VALUE(bool, DcKey::PullModeCurrent) &&
+        trash->GetGUID() != AI_VALUE(DcPullContext&, DcKey::PullContext).abortTarget)
     {
         DC_PULL_DEBUG("[DC:{}] blocking-trash: pull mode owns pack {} ({:.1f}yd) -> "
                       "stand down for the pull pipeline",
@@ -404,8 +405,8 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     // path; stand down whenever the behavioural pull bool is set. The patrol-wait
     // hold (decision == 3) is pull-mode-off but likewise pull-pipeline-owned, so
     // stand down there too rather than Leeroy a room mob mid-wait.
-    if (AI_VALUE(bool, "dungeon clear pull mode current") ||
-        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold)
+    if (AI_VALUE(bool, DcKey::PullModeCurrent) ||
+        AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold)
         return false;
 
     // Same between-pulls gating the other engage triggers use (loot, party
@@ -447,7 +448,7 @@ bool DungeonClearRoomPreClearHoldTrigger::IsActive()
     // during a between-pulls gap. If Advance momentarily overshoots inward, this
     // re-asserts the hold the instant the bot is within the ring — still well
     // outside the boss's real wake distance.
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
     Creature* const boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
@@ -496,11 +497,11 @@ bool DungeonClearAllClearedTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
-    auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
+    auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, DcKey::DungeonBosses);
     if (bosses.empty())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     return !next.has_value();
 }
 
@@ -516,7 +517,7 @@ bool DungeonClearStalledTrigger::IsActive()
 
     // Only fall back when there is an actual stall reason set by Advance or
     // EngageBoss. If the path is clear, this trigger never fires.
-    std::string const& reason = AI_VALUE(std::string&, "dungeon clear stall reason");
+    std::string const& reason = AI_VALUE(std::string&, DcKey::StallReason);
     if (reason.empty())
         return false;
 
@@ -552,7 +553,7 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     // Non-empty GUID means the blocking-door value found a closed door
     // within the corridor. Empty means clear path. Polled at 500ms by the
     // value itself, so this trigger is cheap.
-    ObjectGuid const door = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
+    ObjectGuid const door = AI_VALUE(ObjectGuid, DcKey::BlockingDoor);
     return !door.IsEmpty();
 }
 
@@ -563,10 +564,10 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
     // Only meaningful while THIS bot's own run is paused for a door (the leader's
     // paused flag). A manual `dc pause` leaves the paused-door GUID empty, so
     // opening some unrelated door never auto-resumes a hand-held pause.
-    if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear paused"))
+    if (!AI_VALUE(bool, DcKey::Enabled) || !AI_VALUE(bool, DcKey::Paused))
         return false;
 
-    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear paused door");
+    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, DcKey::PausedDoor);
     if (doorGuid.IsEmpty())
         return false;
 
@@ -600,7 +601,7 @@ bool DungeonClearFollowTankTrigger::IsActive()
     // `tank != bot` guard below excludes only the leader (it doesn't follow
     // itself); a non-leader tank follows the leader out of combat just like any
     // DPS, then peels off to help tank once it enters combat (checked above).
-    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (tank && tank != bot)
     {
         // No distance gate: while DC is active on the tank, the follow-tank
@@ -618,7 +619,7 @@ bool DungeonClearFollowTankTrigger::IsActive()
     // follow, so without this it stays glued to the tank after dc off. The
     // action clears that GUID once it tears the follow down, so this stops
     // firing immediately after.
-    return !AI_VALUE(ObjectGuid, "dungeon clear followed tank").IsEmpty();
+    return !AI_VALUE(ObjectGuid, DcKey::FollowedTank).IsEmpty();
 }
 
 namespace
@@ -632,7 +633,7 @@ namespace
     {
         if (!bot || bot->isDead() || bot->IsInCombat())
             return 0;
-        Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+        Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
         if (!tank)
             return 0;
 
@@ -692,18 +693,18 @@ bool DungeonClearPullTrigger::IsActive()
     // order-independent: every reader — the engage/blocking-trash triggers and the
     // camp gates — consults the same value, so whichever runs first updates it.
     // No-op for Off/On, where DcPullAction owns the bool.
-    bool const pullModeCurrent = AI_VALUE(bool, "dungeon clear pull mode current");
+    bool const pullModeCurrent = AI_VALUE(bool, DcKey::PullModeCurrent);
     // decision == 3 is the patrol-wait HOLD: pull mode is off-but-held, so the
     // behavioural bool reads false, but the pull action must still run to halt the
     // tank at commit range while it waits the patrol out. Keep the trigger live in
     // that state too. (Reading pull mode current FIRST runs the governor that may
     // set decision == 3 this tick.)
     bool const patrolWaiting =
-        AI_VALUE(DcPullContext&, "dungeon clear pull context").decision == DcPullDecisionCode::PatrolHold;
+        AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold;
     if (!pullModeCurrent && !patrolWaiting)
         return false;
 
-    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);
+    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, DcKey::PullContext).phase);
 
     // Mid-pull pre-combat (Forming/Advancing) and the post-fight Engage cleanup
     // run on this non-combat engine, but only while out of combat — the instant
@@ -716,7 +717,7 @@ bool DungeonClearPullTrigger::IsActive()
     if (bot->IsInCombat())
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
     // Parked at a pending-summon boss (e.g. RFD's gong -> Tuten'kash): do NOT
@@ -742,7 +743,7 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
 
     // Don't loop on a pack a previous pull gave up on — let engage-trash walk in.
-    if (AI_VALUE(DcPullContext&, "dungeon clear pull context").abortTarget == trash->GetGUID())
+    if (AI_VALUE(DcPullContext&, DcKey::PullContext).abortTarget == trash->GetGUID())
     {
         DC_PULL_DEBUG("[DC:{}] pull trigger: target {} is the abort target -> defer "
                       "to normal engage", bot->GetName(), trash->GetGUID().ToString());
@@ -775,12 +776,12 @@ bool DungeonClearPullManeuverTrigger::IsActive()
     // GetLeaderCampHold keep the camp hold alive through a pause while a
     // maneuver phase is holding — so the party stays pinned at camp until the
     // drag resolves to Engage, after which the normal paused gates hold the run.
-    if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear pull mode"))
+    if (!AI_VALUE(bool, DcKey::Enabled) || !AI_VALUE(bool, DcKey::PullMode))
         return false;
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
 
-    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);
+    uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, DcKey::PullContext).phase);
     // Forming is included so combat taken DURING the pre-run-in retreat/dwell is
     // not a dead zone: the non-combat pull trigger goes silent the instant the
     // tank is in combat (it returns !IsInCombat for any non-Idle phase), and if
@@ -861,7 +862,7 @@ namespace
         if (!DcLeaderSignal::IsLeaderFightAssistWanted(bot))
             return false;
         return botAI->GetAiObjectContext()
-                   ->GetValue<GuidVector>("attackers")->Get().empty();
+                   ->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty();
     }
 }
 
@@ -919,7 +920,7 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
     // The elected leader tank, non-null only while its clear is active and
     // unpaused. This both gates the feature on an active run and is the bot we
     // regroup on. The leader itself never regroups on anyone — it drives.
-    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (!tank || tank == bot || tank->GetMapId() != bot->GetMapId())
         return false;
 
@@ -956,7 +957,7 @@ bool DungeonClearHealRepositionTrigger::IsActive()
 
     // The elected leader tank, non-null only while its clear is active and
     // unpaused. The leader/tank never repositions to heal — it drives the clear.
-    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (!tank || tank == bot || tank->GetMapId() != bot->GetMapId())
         return false;
 
@@ -976,7 +977,7 @@ bool DungeonClearHealRepositionTrigger::IsActive()
     // The most-hurt member, chosen LOS-blind (the whole point — see
     // DungeonClearHealTargetValue). Stored as a GUID (like the pull target),
     // resolved live here. Nothing below the HP floor => nothing to do.
-    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, "dungeon clear heal target");
+    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, DcKey::HealTarget);
     if (targetGuid.IsEmpty())
         return false;
     Unit* target = ObjectAccessor::GetUnit(*bot, targetGuid);
@@ -988,7 +989,7 @@ bool DungeonClearHealRepositionTrigger::IsActive()
     // stock heal stack do its job this tick rather than running off to reposition.
     // We only own the case where the bot has no useful in-sight heal but an
     // out-of-LOS member is dying.
-    Unit* visible = AI_VALUE(Unit*, "party member to heal");
+    Unit* visible = AI_VALUE(Unit*, DcKey::Stock::PartyToHeal);
     if (visible && visible->IsAlive() &&
         visible->GetHealthPct() < sPlayerbotAIConfig.mediumHealth &&
         bot->IsWithinLOSInMap(visible))

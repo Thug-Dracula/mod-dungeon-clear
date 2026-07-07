@@ -57,6 +57,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 using namespace DcActionShared;
 
@@ -283,15 +284,15 @@ namespace
     bool TriggerStrideRebuild(Player* bot, AiObjectContext* ctx, DcApproachState& appr)
     {
         ChunkedPathfinder::Result const& path =
-            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+            ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         DungeonFollowerState& follower =
-            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+            ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
         if (path.reachable && !path.segments.empty() &&
             DungeonPathFollower::Resnap(bot, path, follower))
             return true;
 
         appr.longPathExpiresMs = 0;
-        ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
+        ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
         follower = DungeonFollowerState{};
         return false;
     }
@@ -323,7 +324,7 @@ namespace
         }
 
         DungeonClearSwimState& swim =
-            context->GetValue<DungeonClearSwimState&>("dungeon clear swim state")->Get();
+            context->GetValue<DungeonClearSwimState&>(DcKey::SwimState)->Get();
         swim.Reset();
         swim.active = true;
         swim.points = std::move(res.points);
@@ -352,7 +353,7 @@ namespace
                          float engageDist, float engageRange)
     {
         DungeonClearSwimState& swim =
-            context->GetValue<DungeonClearSwimState&>("dungeon clear swim state")->Get();
+            context->GetValue<DungeonClearSwimState&>(DcKey::SwimState)->Get();
         if (!swim.active)
             return false;
 
@@ -477,7 +478,7 @@ namespace
         constexpr float kJump = 12.0f;     // gap that means a drag/teleport -> reset
         constexpr size_t kMax = 128;       // history cap (~ kMax*kSpacing yd)
         std::vector<Position>& crumbs =
-            ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+            ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
         Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
         if (crumbs.empty())
         {
@@ -542,9 +543,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
     if (atBoss)
     {
         ChunkedPathfinder::Result const& currentPath =
-            AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+            AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
         DungeonFollowerState const& followerNow =
-            AI_VALUE(DungeonFollowerState&, "dungeon clear follower state");
+            AI_VALUE(DungeonFollowerState&, DcKey::FollowerState);
         bool anchoredHopsPending = false;
         if (currentPath.reachable && !currentPath.segments.empty())
         {
@@ -571,8 +572,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                       "for at-boss [partyReady={} availLoot={} canLoot={}]",
                       bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
                       IsBetweenPullsReady(bot, context) ? 1 : 0,
-                      AI_VALUE(bool, "has available loot") ? 1 : 0,
-                      AI_VALUE(bool, "can loot") ? 1 : 0);
+                      AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
+                      AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0);
             DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             ClearStall(context);
             // Parked at the boss waiting for the at-boss pull — not navigating,
@@ -621,9 +622,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
     // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
     DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
-        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().lootYieldStartMs;
     bool const lootYield =
-        AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
+        AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot) ||
         DcPartyState::IsAnyPartyMemberLooting(bot);
     if (lootYield)
     {
@@ -1400,7 +1401,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // just parked at. The trigger's IsEnabled gate can't catch an already-queued
     // action, so re-check here and bail before issuing any movement. (Confirmed
     // from a capture: PARK -> auto-pausing -> "advance tick" -> "spline issued".)
-    if (AI_VALUE(bool, "dungeon clear paused"))
+    if (AI_VALUE(bool, DcKey::Paused))
         return false;
 
     // Lay down the breadcrumb trail the advanced pull places its camp from. Only
@@ -1413,9 +1414,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // tank scouts ahead alone. Make sure a camp always exists for them to hold at:
     // seed it at our current spot whenever it's unset (pull mode just toggled on,
     // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
-    if (AI_VALUE(bool, "dungeon clear pull mode current"))
+    if (AI_VALUE(bool, DcKey::PullModeCurrent))
     {
-        DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
         Position& camp = pull.camp;
         // Capture the unset state BEFORE seeding: the trail block below adopts the
         // trailing point unconditionally on the first tick a camp was just seeded.
@@ -1458,7 +1459,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // the tank than the current camp (i.e. more forward), with a few yards of
         // hysteresis, so tick jitter never churns it or drags the party backward.
         DcPullContext const& pullForTrail =
-            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+            context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
         bool const pullOwnsCamp =
             getMSTimeDiff(pullForTrail.campPublishedMs, getMSTime()) < DC_CAMP_PUBLISH_FRESH_MS;
         if (!bot->IsInCombat() &&
@@ -1484,7 +1485,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         }
     }
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
     {
         // Mode stays enabled so `dc skip` is still reachable, but there is
@@ -1502,7 +1503,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // owned struct (see DcApproachState); the local references below alias its
     // fields so the phase logic reads/writes one place and resets in lockstep.
     DcApproachState& appr =
-        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
 
     // Effective boss position: a wandering/patrolling boss is rarely at its
     // static DB spawn coords, so prefer its LIVE creature position whenever it
@@ -1594,7 +1595,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     if (appr.lastTargetEntry != next->entry)
     {
         appr.OnBossChange(next->entry);
-        context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+        context->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
         // The stall reason (if any) was about the boss we just left — drop it so
         // the panel can't keep reporting "Can't reach <old boss>" now that we're
         // committed to a new target. NextDungeonBossValue also clears it on the
@@ -1657,9 +1658,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     effectiveTarget.z = bossZ;
     EnsureLongPath(bot, context, appr, effectiveTarget);
     ChunkedPathfinder::Result const& path =
-        AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+        AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
     DungeonFollowerState& follower =
-        context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+        context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
     st.path = &path;
     st.follower = &follower;
 
@@ -1680,7 +1681,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
     // Sync the legacy "current hop" telemetry — `dc status` and a few tests
     // still read it. Map the flattened polyline cursor onto its segment index.
-    context->GetValue<uint32>("dungeon clear current hop")->Set(follower.segmentIdx);
+    context->GetValue<uint32>(DcKey::CurrentHop)->Set(follower.segmentIdx);
 
     FillHopObs(st, obs);
     DungeonClearApproach::Verdict const vC = DungeonClearApproach::DecideApproach(obs);

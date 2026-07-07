@@ -28,6 +28,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -712,7 +713,7 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
         return nullptr;
 
     auto const& cleared =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
 
     for (DungeonEvent const* ev : conditional)
     {
@@ -737,9 +738,9 @@ void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
         return;
 
     auto& cleared =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
     auto& seenDue =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenDueEvents)->Get();
 
     for (DungeonEvent const* ev : conditional)
     {
@@ -782,7 +783,7 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
         return false;
 
     std::optional<DungeonBossInfo> const next =
-        context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
         return false;
 
@@ -791,7 +792,7 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
         return false;
 
     DungeonEventProgress const& prog =
-        context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+        context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
 
     // The progress must belong to the CURRENT instance. Drive() resets a prior
     // run's progress on an instance change — but that reset runs only AFTER this
@@ -805,7 +806,7 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
     // — a permanent "Blocked". Tying the latch to the progress's stamped instance
     // (set by Drive only once the tank has genuinely arrived and driven a step)
     // keeps it false until the event has actually begun in THIS instance.
-    Unit* const self = context->GetValue<Unit*>("self target")->Get();
+    Unit* const self = context->GetValue<Unit*>(DcKey::Stock::SelfTarget)->Get();
     uint32 const instanceId = self ? self->GetInstanceId() : 0;
     if (instanceId == 0 || prog.instanceId != instanceId)
         return false;

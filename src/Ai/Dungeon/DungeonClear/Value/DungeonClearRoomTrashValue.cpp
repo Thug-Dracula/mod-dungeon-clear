@@ -23,6 +23,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 GuidVector DungeonClearRoomTrashValue::Calculate()
 {
@@ -38,7 +39,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         return out;
 
     // Only meaningful during an active, unpaused run.
-    if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
+    if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
     {
         trackedBoss = 0;
         gaveUp = false;
@@ -46,7 +47,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         return out;
     }
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
     {
         trackedBoss = 0;
@@ -144,7 +145,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     // (widen radius) vs "threat is neutral-but-near" (explicit member whitelist).
     std::map<uint32, uint32> diagHostileNear, diagNeutralNear;
 
-    GuidVector const& candidates = AI_VALUE(GuidVector, "dungeon clear far targets");
+    GuidVector const& candidates = AI_VALUE(GuidVector, DcKey::FarTargets);
     nCand = static_cast<uint32>(candidates.size());
     for (ObjectGuid const guid : candidates)
     {

@@ -10,6 +10,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 ObjectGuid DungeonClearPullTargetValue::Calculate()
 {
@@ -23,7 +24,7 @@ ObjectGuid DungeonClearPullTargetValue::Calculate()
     // drift while patrolling, and re-running corridor membership is exactly the
     // instability being removed. Death/abort/door/distance release it.
     DcPullContext const& pull =
-        context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (!pull.decisionTarget.IsEmpty())
     {
         Unit* sticky = ObjectAccessor::GetUnit(*bot, pull.decisionTarget);
@@ -32,7 +33,7 @@ ObjectGuid DungeonClearPullTargetValue::Calculate()
     }
 
     std::optional<DungeonBossInfo> next =
-        context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return ObjectGuid::Empty;
 

@@ -63,6 +63,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 using namespace DcActionShared;
 
@@ -347,7 +348,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
         if (DC_TRY_PULL_SPELL)
         {
             ObjectGuid const lastPullTarget =
-                AI_VALUE(DcPullContext&, "dungeon clear pull context").tagTarget;
+                AI_VALUE(DcPullContext&, DcKey::PullContext).tagTarget;
             if (lastPullTarget != target->GetGUID())
             {
                 if (auto pick = ResolvePullSpell(botAI, bot))
@@ -358,9 +359,9 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
                         bot->SetSelection(target->GetGUID());
                         if (botAI->CastSpell(pick->spellId, target))
                         {
-                            context->GetValue<DcPullContext&>("dungeon clear pull context")
+                            context->GetValue<DcPullContext&>(DcKey::PullContext)
                                 ->Get().tagTarget = target->GetGUID();
-                            context->GetValue<Unit*>("current target")->Set(target);
+                            context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
                             // Don't change engine state yet — let combat
                             // get tagged naturally when the pull lands.
                         }
@@ -413,7 +414,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
     if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, target))
         ServerFacade::instance().SetFacingTo(bot, target);
 
-    context->GetValue<Unit*>("current target")->Set(target);
+    context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
     bot->Attack(target, melee);
     // Non-aggressive ("yellow"-name, neutral) bosses won't aggro just because
     // the tank is standing in melee range, and bot->Attack() alone doesn't
@@ -455,12 +456,12 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
     // approach already clears the sphere, so ordinary far-out corridor walks pay
     // only a cheap registry + cached-value read and keep their direct line.
     std::optional<DungeonBossInfo> next =
-        AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+        AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return std::nullopt;
     if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
         return std::nullopt;
-    if (AI_VALUE(GuidVector, "dungeon clear room trash remaining").empty())
+    if (AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return std::nullopt;
 
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
@@ -487,7 +488,7 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
     // current skirt target: a different pack on the opposite side must start its
     // own orbit rather than inherit a stale "round left" from the last one.
     DcApproachState& appr =
-        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     if (appr.skirtOrbitTarget != target->GetGUID())
     {
         appr.skirtOrbitTarget = target->GetGUID();
@@ -539,23 +540,23 @@ bool DungeonClearEngageActionBase::MoveToSkirtingRoomAggro(Unit* target,
 bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, "dungeon clear paused"))
+    if (AI_VALUE(bool, DcKey::Paused))
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
 
     ObjectGuid const stickyGuid =
-        AI_VALUE(ObjectGuid, "dungeon clear engage trash target");
+        AI_VALUE(ObjectGuid, DcKey::EngageTrashTarget);
     Unit* sticky = ResolveStickyTrashTarget(bot, stickyGuid);
 
     // Prefer the wider DC-gated scan — it sees packs at the far end of
     // long dungeon corridors that fall outside the default 100yd
     // sightDistance cap. Falls back to `possible targets` when far-targets
     // is empty (e.g. very first tick, before its 500ms poll has run).
-    GuidVector const& farTargets = AI_VALUE(GuidVector, "dungeon clear far targets");
-    GuidVector const& possibleTargets = AI_VALUE(GuidVector, "possible targets");
+    GuidVector const& farTargets = AI_VALUE(GuidVector, DcKey::FarTargets);
+    GuidVector const& possibleTargets = AI_VALUE(GuidVector, DcKey::Stock::PossibleTargets);
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
 
     Unit* fresh = nullptr;
@@ -566,7 +567,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         // call is still detected. EnsureLongPath wasn't invoked here —
         // Advance refreshes it every tick; this read sees the same value.
         ChunkedPathfinder::Result const& path =
-            AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+            AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
         if (path.reachable && !path.segments.empty())
         {
             fresh = DcTargeting::FindBlockingTrashOnPath(
@@ -627,13 +628,13 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
     if (!target)
     {
         if (!stickyGuid.IsEmpty())
-            context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+            context->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
         return false;
     }
 
     // Pin the chosen target so the next tick doesn't reconsider it.
     if (target->GetGUID() != stickyGuid)
-        context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(target->GetGUID());
+        context->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(target->GetGUID());
 
     // Far, long-route trash: a pack the navmesh can only reach via a winding
     // route that overruns PathGenerator's hop cap (the tank atop a ramp with
@@ -658,10 +659,10 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, "dungeon clear paused"))
+    if (AI_VALUE(bool, DcKey::Paused))
         return false;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
 
@@ -689,7 +690,7 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 bool DungeonClearRoomClearAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, "dungeon clear paused"))
+    if (AI_VALUE(bool, DcKey::Paused))
         return false;
 
     // Nearest remaining room-trash unit (the value already excludes the boss,
@@ -717,7 +718,7 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
     // to it — returning false lets Advance's loot-yield + the loot actions run.
     // (Followers looting just means we should wait, which is exactly a hold, so we
     // do NOT defer for that — we hold.)
-    if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot"))
+    if (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot))
         return false;
 
     // Otherwise OWN the tick and hold at the standoff. StopBot(Hold) cancels any
@@ -735,7 +736,7 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
     // Per-tick DEBUG (consistent with the existing "advance yielding" lines): this
     // is the line that should APPEAR during a pre-clear gap and the boss-creep
     // "pursuing live <boss>" line that should NOT.
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     LOG_DEBUG("playerbots.dungeonclear",
               "[DC:{}] room pre-clear: holding at standoff (no driver this tick) -> {}",
               bot->GetName(), next.has_value() ? next->name : "boss");
@@ -749,22 +750,22 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     {
         // We're stalled with nothing left to kill. Leave the stall reason in
         // place so `dc status` reports it; the player can `dc skip` or `dc off`.
-        std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+        std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
         std::string const target_name = next.has_value() ? next->name : "the next boss";
         StallDungeonClear(botAI,
             "Stuck near " + target_name + " and no reachable mobs left to clear. "
             "Use 'dc skip' to move on or 'dc off' to stop.");
-        context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
+        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(ObjectGuid::Empty);
         return false;
     }
 
     // Announce target on first selection. Suppress repeats while we're still
     // working on the same one.
     ObjectGuid const lastAnnounced =
-        context->GetValue<ObjectGuid>("dungeon clear fallback target")->Get();
+        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Get();
     if (lastAnnounced != target->GetGUID())
     {
-        context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(target->GetGUID());
+        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(target->GetGUID());
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tClearing path \xe2\x80\x94 pulling " + std::string(target->GetName()) + ".");
     }
 
@@ -1015,7 +1016,7 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
 
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
@@ -1034,7 +1035,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (ev)
     {
         auto& prog =
-            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+            context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
         uint32 const idx = (prog.eventId == ev->id) ? prog.stepIndex : 0;
         if (idx < ev->steps.size())
         {
@@ -1109,7 +1110,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (ev)
     {
         auto& prog =
-            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+            context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
         outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
     }
     else
@@ -1148,7 +1149,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     // Completed or Skipped: latch the objective complete so NextDungeonBossValue
     // advances and never re-targets it (objectives have no kill-bit to read).
     auto& cleared =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
     if (cleared.insert(next->entry).second)
     {
         ClearStall(context);
@@ -1218,7 +1219,7 @@ bool DcRunEventAction::Execute(Event /*event*/)
     }
 
     auto& prog =
-        context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
+        context->GetValue<DungeonEventProgress&>(DcKey::ConditionalEventProgress)->Get();
 
     // A conditional-event step that must SEEK its target — ClearRadius (clear an
     // area, e.g. the Stratholme ziggurat acolyte chambers) or KillCreature with
@@ -1317,7 +1318,7 @@ bool DcRunEventAction::Execute(Event /*event*/)
     // Otherwise latch the event under its synthetic key so the trigger stops
     // re-firing it and the clear proceeds.
     auto& cleared =
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
     if (cleared.insert(DungeonEventExecutor::ConditionalLatchKey(ev->id)).second)
     {
         ClearStall(context);
@@ -1369,7 +1370,7 @@ bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
 
 bool DungeonClearDoorBlockedAction::Execute(Event event)
 {
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     std::string const target = next.has_value() ? next->name : "the next boss";
     std::string const pauseReason =
         "A door blocks the path to " + target +
@@ -1379,7 +1380,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         " won't open for me. Paused — open it (or finish its event) and hit Resume.";
     std::string const openingReason = "Opening the door to " + target + ".";
 
-    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
+    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, DcKey::BlockingDoor);
     GameObject* door = doorGuid.IsEmpty() ? nullptr : botAI->GetGameObject(doorGuid);
 
     // We've reached the door. Decide what a player in our shoes would do:
@@ -1425,7 +1426,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             }
 
             DcApproachState& doorAppr =
-                context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+                context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
             uint32 const now = getMSTime();
 
             // Blocked-state watchdog. The entitlement above is template-level
@@ -1490,18 +1491,18 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // could — auto-pause and force the navigation dead.
         // Set the flag once on transition: the door-blocked trigger gates on
         // !paused, so it won't re-fire and re-announce every tick.
-        if (!AI_VALUE(bool, "dungeon clear paused"))
+        if (!AI_VALUE(bool, DcKey::Paused))
         {
-            context->GetValue<bool>("dungeon clear paused")->Set(true);
+            context->GetValue<bool>(DcKey::Paused)->Set(true);
             // Record the cause so the status panel shows the door reason rather
             // than a generic hold (manual pause stamps its own reason instead).
-            context->GetValue<std::string&>("dungeon clear pause reason")->Get() =
+            context->GetValue<std::string&>(DcKey::PauseReason)->Get() =
                 "a closed door is blocking the path";
             // Stash THIS door's GUID so DungeonClearDoorReopenedTrigger can poll
             // it and auto-resume the instant a player opens it (door is non-null
             // here — the can-open branch above already required it). The null-door
             // fallback path below leaves this empty, so it simply stays manual.
-            context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(
+            context->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(
                 door ? door->GetGUID() : ObjectGuid::Empty);
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
@@ -1560,7 +1561,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // the last reachable spot far short of it. Reuse the same escort-spline
     // follower Advance drives (shared follower state, same long-path value).
     DcApproachState& appr =
-        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     if (next.has_value())
     {
         // Match Advance: route toward the boss's EFFECTIVE position (live
@@ -1580,7 +1581,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     }
 
     ChunkedPathfinder::Result const& path =
-        AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+        AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
     if (!path.reachable || path.segments.empty())
     {
         // No corridor to follow (boss-side route gone). Hold the door line
@@ -1612,7 +1613,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     }
 
     DungeonFollowerState& follower =
-        context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+        context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
 
     // Progress-aware wedge detection, mirroring Advance's stuck-recovery and
     // sampled BEFORE NextHop so a recovery re-anchor lands before the hop below is

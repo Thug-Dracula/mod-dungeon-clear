@@ -8,6 +8,7 @@
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 bool DungeonClearPullModeCurrentValue::Calculate()
 {
@@ -29,5 +30,5 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // DcPullAction owns the bool) and internally throttles the expensive
     // classification, so running it on every read is cheap and idempotent.
     DcPullPlanner::UpdateDynamicPullMode(botAI, context);
-    return AI_VALUE(bool, "dungeon clear pull mode");
+    return AI_VALUE(bool, DcKey::PullMode);
 }

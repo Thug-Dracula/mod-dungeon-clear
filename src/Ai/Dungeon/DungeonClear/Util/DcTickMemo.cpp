@@ -11,6 +11,7 @@
 #include "Timer.h"
 #include "AiObjectContext.h"
 #include "Value.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 bool DcTickMemo::MemoValid(std::uint32_t stampMs, std::uint32_t now)
 {
@@ -32,7 +33,7 @@ namespace
     DcTickMemo& Memo(AiObjectContext* ctx)
     {
         DcTickMemo& m =
-            ctx->GetValue<DcTickMemo&>("dungeon clear tick memo")->Get();
+            ctx->GetValue<DcTickMemo&>(DcKey::TickMemo)->Get();
         m.EnsureFresh(getMSTime());
         return m;
     }

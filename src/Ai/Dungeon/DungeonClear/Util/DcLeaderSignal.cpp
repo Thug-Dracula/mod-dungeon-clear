@@ -58,6 +58,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -412,8 +413,8 @@ bool DcLeaderSignal::IsInPausedDungeonClearRun(Player* bot)
         return false;
 
     AiObjectContext* leaderCtx = leaderAI->GetAiObjectContext();
-    return leaderCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
-           leaderCtx->GetValue<bool>("dungeon clear paused")->Get();
+    return leaderCtx->GetValue<bool>(DcKey::Enabled)->Get() &&
+           leaderCtx->GetValue<bool>(DcKey::Paused)->Get();
 }
 bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
 {
@@ -429,12 +430,12 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get())
         return false;
 
     // The leader's active anchored-event step must be a DropInHole.
     std::optional<DungeonBossInfo> const next =
-        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
         return false;
 
@@ -443,7 +444,7 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
         return false;
 
     DungeonEventProgress const& prog =
-        ctx->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+        ctx->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
     if (prog.eventId != ev->id || prog.stepIndex >= ev->steps.size())
         return false;
 
@@ -486,15 +487,15 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
     // from camp — and ReapStrandedPassives would strip their passive — while
     // the tank is still dragging the pack home. Once the phase resolves to
     // Engage/Idle the paused gate takes over and the run holds as usual.
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+        !ctx->GetValue<bool>(DcKey::PullMode)->Get())
         return false;
 
-    DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    DcPullContext const& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (pull.phase == DcPullPhase::Idle)
         return false;
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        ctx->GetValue<bool>(DcKey::Paused)->Get())
         return false;
 
     phaseOut = static_cast<uint32>(pull.phase);
@@ -515,11 +516,11 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        !ctx->GetValue<bool>("dungeon clear pull mode")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+        !ctx->GetValue<bool>(DcKey::PullMode)->Get())
         return false;
 
-    DcPullContext const& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    DcPullContext const& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     // Honor `paused` only while NO maneuver phase is holding: a pause mid-drag
     // lets the drag finish (see DungeonClearPullManeuverTrigger), and the party
     // must stay pinned at camp until it resolves to Engage — releasing them
@@ -527,7 +528,7 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
     // GetLeaderPullInfo above; `enabled` stays first so `dc off` still releases
     // everyone instantly.
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        ctx->GetValue<bool>(DcKey::Paused)->Get())
         return false;
     Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
@@ -607,8 +608,8 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
             return false;
 
         AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-        if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-            ctx->GetValue<bool>("dungeon clear paused")->Get())
+        if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+            ctx->GetValue<bool>(DcKey::Paused)->Get())
             return false;
 
         // General case — no camp in effect (pull mode off, a Leeroy verdict in
@@ -684,15 +685,15 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     if (!botAI)
         return false;
     AiObjectContext* ctx = botAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+        ctx->GetValue<bool>(DcKey::Paused)->Get())
         return false;
 
     // A pull maneuver that is actively holding the party at camp / dragging owns
     // the tank's positioning — don't divert it mid-drag. (At phase Idle/Engage the
     // tank is free to rejoin a stray fight, exactly as the followers' gate allows.)
     DcPullContext const& pull =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
         return false;
 
@@ -701,7 +702,7 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     // the tank CAN'T see. "attackers" is the stock LOS-filtered list, so it is
     // empty exactly while the pack is out of sight and non-empty the moment the
     // tank rounds the corner, at which point this stands down.
-    if (!ctx->GetValue<GuidVector>("attackers")->Get().empty())
+    if (!ctx->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty())
         return false;
 
     // A groupmate is fighting but the tank is not. Latched (PartyCombatLatch) on
@@ -725,14 +726,14 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+        ctx->GetValue<bool>(DcKey::Paused)->Get())
         return false;
 
     // Dynamic mode only (pull setting == 2). Off/On have no scouting-then-decide
     // window — the party either always follows close (Off) or always holds at camp
     // (On) — so the lag would only ever delay them for no benefit there.
-    if (ctx->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
+    if (ctx->GetValue<uint32>(DcKey::PullSetting)->Get() != 2u)
         return false;
 
     // While a PERSISTENT anchored event drives (ZulFarrak's temple), the pull
@@ -765,7 +766,7 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     if (IsPartyEngagedLatched(leader, latchMs))
         return false;
     DcPullContext const& pull =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (pull.phase != DcPullPhase::Idle)
         return false;
 
@@ -814,7 +815,7 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     // The trail lives in the LEADER's context — only the tank runs Advance and so
     // only the tank records breadcrumbs.
     std::vector<Position> const& crumbs =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
     if (crumbs.empty())
         return false;
 
@@ -907,7 +908,7 @@ bool DcLeaderSignal::GetLeaderScoutTrail(Player* bot, float lag, std::vector<Pos
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
     std::vector<Position> const& crumbs =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
     if (crumbs.size() < 2)
         return false;
 
@@ -1007,8 +1008,8 @@ bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
+    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+        ctx->GetValue<bool>(DcKey::Paused)->Get())
         return false;
 
     // Same gate the tank's own skirt uses (RoomAggroSkirtPoint), read off the
@@ -1018,7 +1019,7 @@ bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
         return false;
 
     std::optional<DungeonBossInfo> next =
-        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
 
@@ -1047,7 +1048,7 @@ void DcLeaderSignal::AbortLeaderPull(Player* bot)
     if (!leaderAI)
         return;
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    DcPullContext& pull = ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    DcPullContext& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
     {
         // Through EnterEngage (not a bare phase write) so the per-pull tag latch

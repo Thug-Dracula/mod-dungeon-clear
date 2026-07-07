@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <optional>
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 // --- Uldaman (map 70) — the Ironaya seal, CONDITIONAL --------------------
 // Ironaya (creature 7228, DungeonEncounter bit 2) sits behind the Seal of
@@ -116,7 +117,7 @@ namespace
         // trash whose ClearRadius seek walks the tank in; see the altar note below
         // for why those two are anchored objectives instead.)
         std::optional<DungeonBossInfo> const next =
-            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+            context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
         bool const ironayaIsNext = next.has_value() && next->entry == ULD_IRONAYA;
 
         GameObject* seal = bot->FindNearestGameObject(ULD_SEAL_DOOR, ULD_SCAN);

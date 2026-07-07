@@ -62,6 +62,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -478,13 +479,13 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
         // returns null at the boss, so the gate simply keeps holding.
     }
 
-    GuidVector const& farTargets = context->GetValue<GuidVector>("dungeon clear far targets")->Get();
-    GuidVector const& possibleTargets = context->GetValue<GuidVector>("possible targets")->Get();
+    GuidVector const& farTargets = context->GetValue<GuidVector>(DcKey::FarTargets)->Get();
+    GuidVector const& possibleTargets = context->GetValue<GuidVector>(DcKey::Stock::PossibleTargets)->Get();
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
 
     Unit* trash = nullptr;
     ChunkedPathfinder::Result const& path =
-        context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+        context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
     if (path.reachable && !path.segments.empty())
     {
         trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates);
@@ -540,7 +541,7 @@ bool DcTargeting::IsDungeonBossEntry(AiObjectContext* ctx, uint32 entry)
     if (!ctx || !entry)
         return false;
     std::vector<DungeonBossInfo> const& bosses =
-        ctx->GetValue<std::vector<DungeonBossInfo>>("dungeon bosses")->Get();
+        ctx->GetValue<std::vector<DungeonBossInfo>>(DcKey::DungeonBosses)->Get();
     for (DungeonBossInfo const& boss : bosses)
         if (boss.entry == entry)
             return true;
@@ -557,7 +558,7 @@ Unit* DcTargeting::GetPullTarget(PlayerbotAI* botAI)
     if (!ctx)
         return nullptr;
 
-    Value<ObjectGuid>* value = ctx->GetValue<ObjectGuid>("dungeon clear pull target");
+    Value<ObjectGuid>* value = ctx->GetValue<ObjectGuid>(DcKey::PullTarget);
     ObjectGuid guid = value->Get();
     if (guid.IsEmpty())
         return nullptr;
@@ -596,7 +597,7 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
     // keeping it sticky would pin the scan on the very pack the pipeline is
     // trying to move past.
     DcPullContext const& pull =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (!pull.abortTarget.IsEmpty() && u->GetGUID() == pull.abortTarget)
         return false;
 
@@ -683,7 +684,7 @@ Creature* DcTargeting::GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 ent
         return nullptr;
 
     DungeonClearLiveBoss const cached =
-        ctx->GetValue<DungeonClearLiveBoss>("dungeon clear live boss")->Get();
+        ctx->GetValue<DungeonClearLiveBoss>(DcKey::LiveBoss)->Get();
     if (cached.entry == entry && !cached.guid.IsEmpty())
     {
         // Re-resolve the cached GUID every call so the position stays live and
@@ -724,7 +725,7 @@ bool DcTargeting::HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint3
         return false;
 
     auto const& cleared =
-        ctx->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+        ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(map->GetId()))
     {
         if (ev->panelGatesBossEntry != bossEntry)
@@ -791,12 +792,12 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
     // differs from the stamp, INCLUDING the unstamped 0 case: a latch present the
     // first time we stamp an instance can only be stale (left by an untracked prior
     // run), and on a genuinely fresh run the sets are empty so the wipe is a no-op.
-    uint32 const lastRunInstance = context->GetValue<uint32>("dungeon clear run instance")->Get();
+    uint32 const lastRunInstance = context->GetValue<uint32>(DcKey::RunInstance)->Get();
     if (lastRunInstance == instanceId)
         return false;
 
-    auto& clearedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
-    auto& skippedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get();
+    auto& clearedSet = context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
+    auto& skippedSet = context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
 
     InstanceScript* inst = GetInstanceScript(bot);
     LOG_INFO("playerbots.dungeonclear",
@@ -807,11 +808,11 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
 
     clearedSet.clear();
     skippedSet.clear();
-    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
-    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
-    context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
-    context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-    context->GetValue<uint32>("dungeon clear run instance")->Set(instanceId);
+    context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenBosses)->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenDueEvents)->Get().clear();
+    context->GetValue<uint32>(DcKey::StickyBoss)->Set(0u);
+    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+    context->GetValue<uint32>(DcKey::RunInstance)->Set(instanceId);
     return true;
 }
 bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
@@ -820,7 +821,7 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
         return false;
 
     std::optional<DungeonBossInfo> next =
-        ctx->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
     if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
@@ -828,7 +829,7 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
 
     // Cheap cached read first; the envelope probe (level-reachability) runs only
     // when there is actually room trash left to clear.
-    if (ctx->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty())
+    if (ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().empty())
         return false;
 
     // The room-clear DRIVER stays active across the WHOLE room envelope, not just
@@ -845,7 +846,7 @@ Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
         return nullptr;
 
     GuidVector const& remaining =
-        ctx->GetValue<GuidVector>("dungeon clear room trash remaining")->Get();
+        ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get();
 
     Unit* best = nullptr;
     float bestDist = std::numeric_limits<float>::max();
@@ -875,7 +876,7 @@ Unit* DcTargeting::NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
     // already gathers); filter to those that sit in the point's 2D radius and
     // floor band, mirroring the room-trash exclusions.
     GuidVector const& candidates =
-        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
+        ctx->GetValue<GuidVector>(DcKey::FarTargets)->Get();
 
     float const r2 = radius * radius;
     Unit* best = nullptr;

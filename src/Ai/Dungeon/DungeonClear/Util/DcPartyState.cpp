@@ -58,6 +58,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 float DcPartyState::RestMinHpPct(Player* bot)
 {
@@ -141,7 +142,7 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
         return gate;
 
     DcPullContext const& pull =
-        context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     // Waive the spread requirement ONLY while a pull maneuver is actually
     // holding the party at camp — see the header comment for the full why.
     if (DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
@@ -153,7 +154,7 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
     // the camp, so "caught up" must be measured against the camp, not the tank —
     // otherwise a camp standoff at/over PartyMaxSpread deadlocks the run (see
     // the header comment on SpreadGate). (0,0,0) camp = unset, fall back.
-    if (context->GetValue<bool>("dungeon clear pull mode")->Get() && pull.HasCamp())
+    if (context->GetValue<bool>(DcKey::PullMode)->Get() && pull.HasCamp())
     {
         gate.anchor = &pull.camp;
         // Camp-anchored backstop: members set at a live camp are by construction
@@ -173,7 +174,7 @@ bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bo
 {
     if (!bot || !context)
         return false;
-    if (requireNoLoot && context->GetValue<bool>("has available loot")->Get())
+    if (requireNoLoot && context->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
         return false;
     SpreadGate const gate = GetSpreadGate(bot, context);
     return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), gate.maxSpread, gate.anchor,
@@ -204,8 +205,8 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
             continue;
 
         AiObjectContext* memberCtx = memberAI->GetAiObjectContext();
-        if (memberCtx->GetValue<bool>("can loot")->Get() ||
-            memberCtx->GetValue<bool>("has available loot")->Get())
+        if (memberCtx->GetValue<bool>(DcKey::Stock::CanLoot)->Get() ||
+            memberCtx->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
             return true;
     }
     return false;
@@ -309,8 +310,8 @@ std::string DcPartyState::DescribePartyLooting(Player* bot)
             continue;  // Real player — we don't drive or wait on their loot.
 
         AiObjectContext* memberCtx = memberAI->GetAiObjectContext();
-        if (!memberCtx->GetValue<bool>("can loot")->Get() &&
-            !memberCtx->GetValue<bool>("has available loot")->Get())
+        if (!memberCtx->GetValue<bool>(DcKey::Stock::CanLoot)->Get() &&
+            !memberCtx->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
             continue;
 
         if (names.size() < MAX_NAMED)

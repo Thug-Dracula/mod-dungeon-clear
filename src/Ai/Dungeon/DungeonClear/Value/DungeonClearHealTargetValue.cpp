@@ -9,6 +9,7 @@
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 ObjectGuid DungeonClearHealTargetValue::Calculate()
 {
@@ -22,7 +23,7 @@ ObjectGuid DungeonClearHealTargetValue::Calculate()
 
     // The elected leader tank (non-null only on an active, unpaused run) is the
     // one we bias toward — it is the member being dragged out of sight.
-    Player* tank = context->GetValue<Player*>("dungeon clear party tank")->Get();
+    Player* tank = context->GetValue<Player*>(DcKey::PartyTank)->Get();
 
     float const hpFloor = DcSettings::GetFloat(bot, "HealRepositionHpFloor");
     float const tankBias = DcSettings::GetFloat(bot, "HealRepositionTankBias");

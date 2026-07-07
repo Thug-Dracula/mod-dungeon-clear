@@ -16,6 +16,7 @@
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFollowerLifecycle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -38,12 +39,12 @@ namespace
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-        if (ctx->GetValue<bool>("dungeon clear enabled")->Get())
+        if (ctx->GetValue<bool>(DcKey::Enabled)->Get())
             DcActionShared::DisableDungeonClear(
                 botAI, "Left the dungeon \xe2\x80\x94 dungeon clear disabled.");
 
         ObjectGuid& followed =
-            ctx->GetValue<ObjectGuid>("dungeon clear followed tank")->RefGet();
+            ctx->GetValue<ObjectGuid>(DcKey::FollowedTank)->RefGet();
         if (!followed.IsEmpty())
         {
             DcMovement::StopBot(bot, DcMovement::Stop::Hold);

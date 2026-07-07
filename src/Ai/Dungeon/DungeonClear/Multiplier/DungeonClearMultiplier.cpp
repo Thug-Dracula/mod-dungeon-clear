@@ -12,6 +12,7 @@
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 float DungeonClearMultiplier::GetValue(Action* action)
 {
@@ -31,7 +32,7 @@ float DungeonClearMultiplier::GetValue(Action* action)
     // target BELOW the stock stop is honoured too. 0 = inherit, no cap.
     if (name == "food" || name == "drink")
     {
-        if (AI_VALUE(Player*, "dungeon clear party tank"))
+        if (AI_VALUE(Player*, DcKey::PartyTank))
         {
             bool const isDrink = (name == "drink");
             uint32 const target =
@@ -58,7 +59,7 @@ float DungeonClearMultiplier::GetValue(Action* action)
     // stands; drop the shuffle for every member of an active run (same
     // cross-bot gate as the rest cap above).
     if (name == "move out of collision" &&
-        AI_VALUE(Player*, "dungeon clear party tank"))
+        AI_VALUE(Player*, DcKey::PartyTank))
         return 0.0f;
 
     // Wander-style autonomous navigation (grind / rpg / travel). This is what
@@ -100,8 +101,8 @@ float DungeonClearMultiplier::GetValue(Action* action)
             return 0.0f;
     }
 
-    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
-    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
+    bool const paused = AI_VALUE(bool, DcKey::Paused);
 
     // DC off: fully stock behavior, nothing suppressed.
     if (!enabled)

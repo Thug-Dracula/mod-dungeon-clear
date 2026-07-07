@@ -7,6 +7,7 @@
 
 #include "Player.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 // --- Cross-dungeon event activation conditions ---------------------------
 // Conditions that are NOT specific to one dungeon live here so several maps can
@@ -28,5 +29,5 @@ bool DcRoomAggroPreClearCondition(Player* /*bot*/, AiObjectContext* context)
 {
     if (!context)
         return false;
-    return !context->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty();
+    return !context->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().empty();
 }

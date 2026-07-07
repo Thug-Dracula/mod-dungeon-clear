@@ -59,6 +59,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 using namespace DcActionShared;
 
@@ -105,9 +106,9 @@ namespace
 bool DungeonClearFollowTankAction::Execute(Event /*event*/)
 {
     ObjectGuid& followedTank =
-        context->GetValue<ObjectGuid>("dungeon clear followed tank")->RefGet();
+        context->GetValue<ObjectGuid>(DcKey::FollowedTank)->RefGet();
 
-    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (!tank || tank == bot)
     {
         // No DC tank: tear down the leftover continuous MoveFollow we
@@ -195,9 +196,9 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // IsAnyPartyMemberLooting true, stalling the whole party on it.
     DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
-        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().lootYieldStartMs;
     bool const lootYield =
-        AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot");
+        AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot);
     if (lootYield)
     {
         uint32 const now = getMSTime();
@@ -580,9 +581,9 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS,
                                                 DC_LOOT_GIVEUP_TTL_MS);
         uint32& lootYieldStart =
-            context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().lootYieldStartMs;
         bool const lootYield =
-            AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot");
+            AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot);
         if (lootYield)
         {
             uint32 const nowMs = getMSTime();
@@ -620,7 +621,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
     {
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
-        context->GetValue<ObjectGuid>("dungeon clear followed tank")->Set(ObjectGuid::Empty);
+        context->GetValue<ObjectGuid>(DcKey::FollowedTank)->Set(ObjectGuid::Empty);
         DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
     }
 
@@ -634,8 +635,8 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // the camp side of the heal target, so "approach yes, never past the tank".
     if (passive && isHealer)
     {
-        Unit* const healTarget = AI_VALUE(Unit*, "party member to heal");
-        uint8 const lowestPct = AI_VALUE2(uint8, "health", "party member to heal");
+        Unit* const healTarget = AI_VALUE(Unit*, DcKey::Stock::PartyToHeal);
+        uint8 const lowestPct = AI_VALUE2(uint8, DcKey::Stock::Health, DcKey::Stock::PartyToHeal);
         if (healTarget && lowestPct < sPlayerbotAIConfig.almostFullHealth)
         {
             float const healRange = botAI->GetRange("heal");
@@ -761,7 +762,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
         // fight (and in the combat engine) the instant movement carries it back
         // into sight — instead of standing idle at camp.
         bot->SetSelection(target->GetGUID());
-        context->GetValue<Unit*>("current target")->Set(target);
+        context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
         if (!bot->IsInCombat())
             bot->SetInCombatWith(target);
 
@@ -813,7 +814,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
 bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
 {
     // The leader tank, non-null only on an active run (gated again by the trigger).
-    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (!tank || tank == bot)
         return false;
 
@@ -863,7 +864,7 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
     // The most-hurt heal target (LOS-blind, tank-biased). Stored as a GUID (like
     // the pull target), resolved live here. Re-read (trigger/action gap); bail if
     // it healed up or died in between.
-    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, "dungeon clear heal target");
+    ObjectGuid const targetGuid = AI_VALUE(ObjectGuid, DcKey::HealTarget);
     if (targetGuid.IsEmpty())
         return false;
     Unit* target = ObjectAccessor::GetUnit(*bot, targetGuid);
@@ -1041,7 +1042,7 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
     if (target && bot->IsWithinLOSInMap(target))
     {
         bot->SetSelection(target->GetGUID());
-        context->GetValue<Unit*>("current target")->Set(target);
+        context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
         if (!bot->IsInCombat())
             bot->SetInCombatWith(target);
         DC_PULL_TRACE("[DC:{}] leader assist: in sight of party fight ({:.1f}yd) "

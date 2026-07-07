@@ -59,6 +59,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -98,17 +99,17 @@ namespace
         InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
         uint32 const mask = inst ? inst->GetCompletedEncounterMask() : 0u;
         uint32 const skipped =
-            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped").size());
+            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, DcKey::Skipped).size());
         // Objectives and conditional events report "dead" off the cleared-anchor
         // latch, not the encounter mask — without folding it in, completing one
         // (e.g. an Uldaman altar event) leaves {mask,skipped,...} unchanged so the
         // detector never re-pushes the list and the panel row stays stuck "alive".
         // The set only grows within a run, so its size is a sufficient change key.
         uint32 const cleared =
-            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors").size());
-        uint32 const selected = AI_VALUE(uint32, "dungeon clear selected boss");
+            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).size());
+        uint32 const selected = AI_VALUE(uint32, DcKey::SelectedBoss);
         uint32 const count =
-            static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses").size());
+            static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, DcKey::DungeonBosses).size());
 
         // Fold in the map + instance id so the detector always fires when the
         // tank crosses into a different instance (clear one dungeon, walk into
@@ -140,7 +141,7 @@ namespace
         if (stall.empty())
             return false;
         ObjectGuid const doorGuid =
-            context->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
+            context->GetValue<ObjectGuid>(DcKey::BlockingDoor)->Get();
         if (doorGuid.IsEmpty())
             return false;
         GameObject* door = botAI->GetGameObject(doorGuid);
@@ -163,7 +164,7 @@ namespace
             return false;
         std::optional<DungeonBossInfo> const next =
             botAI->GetAiObjectContext()
-                ->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")
+                ->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)
                 ->Get();
         if (!next.has_value() || next->kind != DungeonAnchorKind::Boss ||
             next->encounterIndex >= 32)
@@ -195,10 +196,10 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     AiObjectContext* context = botAI->GetAiObjectContext();
     Player* bot = botAI->GetBot();
 
-    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
-    auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
-    std::string const& stall = AI_VALUE(std::string&, "dungeon clear stall reason");
+    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+    auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, DcKey::Skipped);
+    std::string const& stall = AI_VALUE(std::string&, DcKey::StallReason);
 
     // Calculate dynamic state for addon UI. Authoritative conditions (combat,
     // stall, loot, rest) take precedence over the advance action's self-reported
@@ -207,16 +208,16 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     // line — who we're waiting on, what we're heading to, etc.
     std::string stateStr = "off";
     std::string detail;
-    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    bool const paused = AI_VALUE(bool, DcKey::Paused);
     // `pullMode` is the behavioral gate (a pull maneuver is actually armed) and
     // drives the state/detail wording below; `pullSetting` is the user's tri-state
     // preference (Off/On/Dynamic) reported to the addon's control. They differ for
     // Dynamic, where the governor flips the bool per pack — `pullDecision` (0 none /
     // 1 Leeroy / 2 Advanced / 3 waiting-for-patrol) is the live verdict the addon
     // shows under "Dynamic".
-    bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
-    uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
-    DcPullContext const& pull = AI_VALUE(DcPullContext&, "dungeon clear pull context");
+    bool const pullMode = AI_VALUE(bool, DcKey::PullMode);
+    uint32 const pullSetting = AI_VALUE(uint32, DcKey::PullSetting);
+    DcPullContext const& pull = AI_VALUE(DcPullContext&, DcKey::PullContext);
     uint32 const pullDecision = static_cast<uint32>(pull.decision);
     uint32 const pullPhase = static_cast<uint32>(pull.phase);
     std::string const bossName = next.has_value() ? next->name : "the boss";
@@ -230,7 +231,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // report the cause; the addon supplies the "boss progress saved"
         // reassurance line. Fall back to a generic hold if no reason was stamped.
         stateStr = "paused";
-        std::string const& pauseReason = AI_VALUE(std::string&, "dungeon clear pause reason");
+        std::string const& pauseReason = AI_VALUE(std::string&, DcKey::PauseReason);
         detail = pauseReason.empty() ? "holding position" : pauseReason;
     }
     else if (enabled && bot && pullMode && DcLeaderSignal::IsPullPhaseHolding(pullPhase))
@@ -252,7 +253,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     {
         if (bot->IsInCombat())
         {
-            Unit* currentTarget = context->GetValue<Unit*>("current target")->Get();
+            Unit* currentTarget = context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get();
             if (currentTarget && next.has_value() && currentTarget->GetEntry() == next->entry)
             {
                 stateStr = "fighting_boss";
@@ -280,7 +281,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
             stateStr = "door_blocked";
             // The stall reason already rides in its own field; leave detail empty.
         }
-        else if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
+        else if (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot) ||
                  DcPartyState::IsAnyPartyMemberLooting(bot))
         {
             stateStr = "looting";
@@ -322,9 +323,9 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         {
             // No blocking condition — report what the advance action is up to,
             // using its per-tick phase token plus the route cache state.
-            std::string const& phase = AI_VALUE(std::string&, "dungeon clear phase");
+            std::string const& phase = AI_VALUE(std::string&, DcKey::Phase);
             uint32 const pathTarget =
-                AI_VALUE(DcApproachState&, "dungeon clear approach state").longPathTargetEntry;
+                AI_VALUE(DcApproachState&, DcKey::ApproachState).longPathTargetEntry;
             bool const routeReady = next.has_value() && pathTarget == next->entry;
 
             if (phase == "recovering")

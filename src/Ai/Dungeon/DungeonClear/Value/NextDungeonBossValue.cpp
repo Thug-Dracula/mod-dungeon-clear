@@ -19,6 +19,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -85,16 +86,16 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     DcTargeting::ResetCompletionLatchesForNewInstance(bot, context);
 
     std::vector<DungeonBossInfo> const& bosses =
-        AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
+        AI_VALUE(std::vector<DungeonBossInfo>, DcKey::DungeonBosses);
 
     std::unordered_set<uint32> const& skipped =
-        AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
+        AI_VALUE(std::unordered_set<uint32>&, DcKey::Skipped);
 
     // Travel objectives (BossRosterRegistry) have no kill-bit; once reached they
     // are latched here by DcObjectiveArriveAction so they drop out of the
     // candidate list exactly like a killed boss.
     std::unordered_set<uint32> const& cleared =
-        AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors");
+        AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
 
     // The completed-encounter mask is the authoritative kill signal. It is
     // set by Map::UpdateEncounterState from the same KillRewarder path that
@@ -123,7 +124,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     std::unordered_map<uint32, BossLiveState> const liveness = BuildLiveness(map, wantedEntries);
 
     // Check if there is a manually selected boss target override
-    uint32 const selectedEntry = AI_VALUE(uint32, "dungeon clear selected boss");
+    uint32 const selectedEntry = AI_VALUE(uint32, DcKey::SelectedBoss);
     if (selectedEntry != 0)
     {
         for (DungeonBossInfo const& info : bosses)
@@ -147,12 +148,12 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 if (invalid)
                 {
                     // Already dead/completed: clear override and drop back to automatic
-                    context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
+                    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
                     break;
                 }
 
                 // Force return this boss and update sticky
-                context->GetValue<uint32>("dungeon clear sticky boss")->Set(info.entry);
+                context->GetValue<uint32>(DcKey::StickyBoss)->Set(info.entry);
                 return info;
             }
         }
@@ -209,7 +210,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         cands.push_back(info);
     }
 
-    uint32 const stickyEntry = AI_VALUE(uint32, "dungeon clear sticky boss");
+    uint32 const stickyEntry = AI_VALUE(uint32, DcKey::StickyBoss);
 
     // Resolve the committed boss's ORDER KEY from the full boss list (it stays
     // here even after the boss dies and drops out of the candidate list), so
@@ -242,11 +243,11 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     // independent of whatever Advance is doing. Advance re-sets a fresh stall for
     // the new target if it, too, can't proceed.
     if (pick && stickyEntry && pick->entry != stickyEntry)
-        context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
+        context->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every
     // boss is skipped.
-    context->GetValue<uint32>("dungeon clear sticky boss")->Set(pick ? pick->entry : 0u);
+    context->GetValue<uint32>(DcKey::StickyBoss)->Set(pick ? pick->entry : 0u);
     return pick;
 }

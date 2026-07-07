@@ -12,6 +12,7 @@
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace DcMovement
 {
@@ -25,7 +26,7 @@ namespace DcMovement
     {
         if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
             if (AiObjectContext* ctx = botAI->GetAiObjectContext())
-                ctx->GetValue<LastMovement&>("last movement")->Get().lastdelayTime = 0.0f;
+                ctx->GetValue<LastMovement&>(DcKey::Stock::LastMovement)->Get().lastdelayTime = 0.0f;
     }
 
     // Kill an in-flight ESCORT glide so a forced rebuild/reset starts from a
@@ -105,7 +106,7 @@ namespace DcMovement
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         if (!ctx)
             return false;
-        return !ctx->GetValue<bool>("dungeon clear paused")->Get();
+        return !ctx->GetValue<bool>(DcKey::Paused)->Get();
     }
 
     bool SplinePath(PlayerbotAI* botAI, Movement::PointsArray& pts,
@@ -153,7 +154,7 @@ namespace DcMovement
         delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
 
         G3D::Vector3 const& dest = pts.back();
-        botAI->GetAiObjectContext()->GetValue<LastMovement&>("last movement")
+        botAI->GetAiObjectContext()->GetValue<LastMovement&>(DcKey::Stock::LastMovement)
             ->Get().Set(bot->GetMapId(), dest.x, dest.y, dest.z, bot->GetOrientation(),
                         delay, recordPrio);
 

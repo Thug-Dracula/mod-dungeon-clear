@@ -57,6 +57,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 using namespace DcActionShared;
 
@@ -126,7 +127,7 @@ namespace
     // the transition invariants live. No phase-write logic remains in this TU.
     void DcSetPullPhase(AiObjectContext* context, DcPullPhase p)
     {
-        DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
         pull.Transition(p, getMSTime());
     }
 
@@ -160,13 +161,13 @@ namespace
 
 bool DungeonClearPullAction::Execute(Event /*event*/)
 {
-    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     Position& camp = pull.camp;
     uint32 const since = pull.phaseSince;
     uint32 const now = getMSTime();
     DcPullPhase const phase = pull.phase;
 
-    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
 
     switch (phase)
     {
@@ -615,7 +616,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
 bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
 {
-    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     Position& camp = pull.camp;
     uint32 const now = getMSTime();
     DcPullPhase const phase = pull.phase;
@@ -759,7 +760,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 bot->SetSelection(aggressor->GetGUID());
                 if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, aggressor))
                     ServerFacade::instance().SetFacingTo(bot, aggressor);
-                context->GetValue<Unit*>("current target")->Set(aggressor);
+                context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(aggressor);
                 bot->Attack(aggressor, botAI->IsMelee(bot));
             }
             botAI->ChangeEngine(BOT_STATE_COMBAT);
@@ -851,7 +852,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 bot->SetSelection(nearest->GetGUID());
                 if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, nearest))
                     ServerFacade::instance().SetFacingTo(bot, nearest);
-                context->GetValue<Unit*>("current target")->Set(nearest);
+                context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(nearest);
                 bot->Attack(nearest, botAI->IsMelee(bot));
             }
 

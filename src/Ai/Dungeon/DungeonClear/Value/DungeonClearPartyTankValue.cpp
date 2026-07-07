@@ -8,6 +8,7 @@
 #include "Player.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 Player* DungeonClearPartyTankValue::Calculate()
 {
@@ -30,8 +31,8 @@ Player* DungeonClearPartyTankValue::Calculate()
     // A paused/disabled leader returns null so followers stop following it and
     // revert to the player — matching the leader's own paused/off behavior.
     AiObjectContext* leaderCtx = leaderAI->GetAiObjectContext();
-    if (leaderCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
-        !leaderCtx->GetValue<bool>("dungeon clear paused")->Get())
+    if (leaderCtx->GetValue<bool>(DcKey::Enabled)->Get() &&
+        !leaderCtx->GetValue<bool>(DcKey::Paused)->Get())
         return leader;
     return nullptr;
 }

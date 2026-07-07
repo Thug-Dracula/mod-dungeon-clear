@@ -60,6 +60,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
@@ -505,17 +506,17 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // immunity. Gate here (leader election is 250ms-cached, cheap) rather than
     // trusting every caller to be leader-gated. `enabled && !paused` also stops a
     // disabled/paused run from mutating pull state on a stray read.
-    if (!context->GetValue<bool>("dungeon clear enabled")->Get() ||
-        context->GetValue<bool>("dungeon clear paused")->Get() ||
+    if (!context->GetValue<bool>(DcKey::Enabled)->Get() ||
+        context->GetValue<bool>(DcKey::Paused)->Get() ||
         !DcLeaderSignal::IsDungeonClearLeader(bot))
         return;
 
     // Off / On are driven by DcPullAction; only Dynamic auto-decides per pack.
-    if (context->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
+    if (context->GetValue<uint32>(DcKey::PullSetting)->Get() != 2u)
         return;
 
-    DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
-    bool const curBool = context->GetValue<bool>("dungeon clear pull mode")->Get();
+    DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    bool const curBool = context->GetValue<bool>(DcKey::PullMode)->Get();
 
     // Never flip the verdict mid-engagement: in combat or any non-Idle pull phase
     // the standing decision is latched until the fight resolves.
@@ -527,7 +528,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
         pull.decision = decision;
         if (want == curBool)
             return;
-        context->GetValue<bool>("dungeon clear pull mode")->Set(want);
+        context->GetValue<bool>(DcKey::PullMode)->Set(want);
         DcLeaderSignal::SetLeaderDazeImmunity(bot, want);
         // Switching to Advanced: seed a camp so followers have an immediate hold
         // point (mirrors DcPullAction's On activation); the pull pipeline
@@ -793,9 +794,9 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     // Resolve the other-pack hostiles once (alive, hostile, not the target, not a
     // packmate). Same candidate set the pull / trash scans use.
     GuidVector const& farTargets =
-        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
+        ctx->GetValue<GuidVector>(DcKey::FarTargets)->Get();
     GuidVector const& possibleTargets =
-        ctx->GetValue<GuidVector>("possible targets")->Get();
+        ctx->GetValue<GuidVector>(DcKey::Stock::PossibleTargets)->Get();
     GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
 
     std::vector<Unit*> others;
@@ -827,7 +828,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     };
 
     std::vector<Position> const& crumbs =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
 
     Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
@@ -940,9 +941,9 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     // the forward route, so it reads true here.)
     {
         ChunkedPathfinder::Result const& path =
-            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+            ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         DungeonFollowerState const& follower =
-            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+            ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
         if (std::optional<G3D::Vector3> back =
                 DungeonPathFollower::PointBehind(bot, path, follower, setback))
         {
@@ -1036,7 +1037,7 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
     Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
 
     std::vector<Position> const& crumbs =
-        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
 
     // Walk BACK along the trail (newest -> oldest) accumulating corridor distance,
     // exactly like ComputeSafeCamp's preferred branch but without the clearance
