@@ -73,14 +73,29 @@ namespace
     constexpr float OH_KEEP_Z = 53.10f;
 
     // The distraction: item 25853 (Pack of Incendiary Bombs) casts spell 32744
-    // (Planting Incendiary Bomb) which the barrel's SmartAI counts. ANY 5 distinct
-    // barrels (GO 182589) work — the core has no positional/order check — so these
-    // five (a tight SW-courtyard line, E->W) are chosen for nav efficiency. Each
-    // step's anchor picks a SPECIFIC barrel so five same-entry GOs are five hits.
+    // (Planting Incendiary Bomb) which the barrel's SmartAI counts (the core has
+    // no positional/order check — any 5 spellhits count).
+    //
+    // THE BARRELS ARE POOLED (acore_world pool_template 1163-1167, "Barrel Group
+    // 1-5", each max_limit=1 over 3 candidate gameobject rows): each of the FIVE
+    // HOUSES spawns exactly ONE barrel per instance, at a RANDOM one of its 3
+    // candidate spots. So a step can never anchor a specific gameobject row —
+    // each step anchors its HOUSE's candidate CENTROID instead, and the executor
+    // matches the goEntry GO within 25yd of the anchor (candidates sit <=21yd
+    // from their centroid; the nearest NEIGHBOUR house's barrel is >=38yd away).
+    // Houses 5/4/3 line the SW courtyard; houses 2/1 sit NE by the prison yard —
+    // visit order below is nearest-first from the courtyard anchor.
     constexpr uint32 OH_ITEM_BOMBS   = 25853;
     constexpr uint32 OH_SPELL_PLANT  = 32744;
     constexpr uint32 OH_GO_BARREL    = 182589;
     constexpr uint32 NPC_LT_DRAKE    = 17848;
+
+    // House candidate centroids (mean of each pool group's 3 gameobject rows).
+    constexpr float OH_HOUSE5_X = 2109.12f, OH_HOUSE5_Y = 46.99f,  OH_HOUSE5_Z = 53.66f;  // pool 1167
+    constexpr float OH_HOUSE4_X = 2074.34f, OH_HOUSE4_Y = 71.89f,  OH_HOUSE4_Z = 53.84f;  // pool 1166
+    constexpr float OH_HOUSE3_X = 2067.37f, OH_HOUSE3_Y = 116.14f, OH_HOUSE3_Z = 54.50f;  // pool 1165
+    constexpr float OH_HOUSE2_X = 2165.47f, OH_HOUSE2_Y = 252.75f, OH_HOUSE2_Z = 53.75f;  // pool 1164
+    constexpr float OH_HOUSE1_X = 2213.15f, OH_HOUSE1_Y = 257.25f, OH_HOUSE1_Z = 53.81f;  // pool 1163
 
     // Thrall's cell (instance-static spawn) — objective (3) anchor.
     constexpr uint32 NPC_THRALL   = 17876;
@@ -144,11 +159,22 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
             // forces the tank to walk INTO each house rather than plink distant
             // barrels from the first one; the step latches Done on the barrel
             // leaving GO_READY (a landed plant activates the goober for 86400s).
-            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2119.21f, 42.49f, 53.78f)
-            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2108.03f, 54.95f, 53.65f)
-            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2100.11f, 43.54f, 53.56f)
-            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2080.19f, 64.74f, 53.88f)
-            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2067.49f, 106.07f, 54.61f)
+            // One step per HOUSE, anchored on the house's pooled-candidate
+            // centroid (see the pooling note above) — the executor finds whichever
+            // of the 3 candidate spots this instance rolled. 120s per step: the
+            // NE houses are a ~170yd walk from the courtyard, with guards to
+            // fight through (the 30s default mis-fired even on the courtyard
+            // houses — a walk-in + 2.5s plant measured 32-51s live).
+            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE5_X, OH_HOUSE5_Y, OH_HOUSE5_Z)
+                .Timeout(120000)
+            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE4_X, OH_HOUSE4_Y, OH_HOUSE4_Z)
+                .Timeout(120000)
+            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE3_X, OH_HOUSE3_Y, OH_HOUSE3_Z)
+                .Timeout(120000)
+            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE2_X, OH_HOUSE2_Y, OH_HOUSE2_Z)
+                .Timeout(120000)
+            .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE1_X, OH_HOUSE1_Y, OH_HOUSE1_Z)
+                .Timeout(120000)
             .WaitForSpawn(NPC_LT_DRAKE, /*wantAlive*/ true, /*timeout*/ 60000)
             .KillCreatureEngage(NPC_LT_DRAKE, /*count*/ 1, /*searchRadius*/ 200.0f)
             .Build());

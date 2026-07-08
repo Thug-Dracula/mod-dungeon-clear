@@ -1127,8 +1127,12 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     // barrel — not plinking it from across the house.
     float const castRange = step.radius > 0.0f ? step.radius : 5.0f;
 
-    // Resolve the target GO nearest the step's anchor (same pick as RunStep — the
-    // anchor sits on the specific barrel, so five same-entry barrels stay distinct).
+    // Resolve the target GO nearest the step's anchor, capped at 25yd of it (same
+    // pick as RunStep's DC_EVENT_GO_ANCHOR_MATCH — keep the two in sync). The cap
+    // matters for POOLED spawns (Old Hillsbrad: one barrel per house, at a random
+    // one of 3 candidate spots ≤21yd from the house-centroid anchor, neighbour
+    // house ≥38yd): without it a scan that only sees a neighbour's barrel matches
+    // it and this driver walks the tank to the wrong house.
     std::list<GameObject*> gos;
     bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
     GameObject* target = nullptr;
@@ -1139,6 +1143,8 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
             continue;
         float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
                                    : g->GetExactDist(bot);
+        if (haveAnchor && d > 25.0f)
+            continue;  // another house's barrel — never this step's target
         if (d < best)
         {
             best = d;
@@ -1151,6 +1157,21 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     // reports the step Done from wherever the tank stands.
     if (target && target->getLootState() != GO_READY)
         return false;
+
+    // The step's GO isn't in scan range yet (a far house whose grid hasn't
+    // streamed in): OWN THE TICK and drive the ANCHOR approach with the same
+    // sustained navigation, instead of handing back to the Hold+HopTo path whose
+    // per-tick stop/re-issue stutter-walks the whole 170yd to Durnholde's north
+    // houses. Once at the anchor with still no GO, hand back so RunStep (and its
+    // step timeout) own the "pooled spawn missing" case.
+    if (!target && haveAnchor && bot->GetExactDist(step.x, step.y, step.z) > 6.0f)
+    {
+        SetPhase(context, "objective");
+        DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_NORMAL);
+        return true;
+    }
 
     // Nothing to drive to, or already in cast range -> hand back to Drive; RunStep
     // fires the GO (or, if the target is not loaded yet, HopTo's the anchor to load it).

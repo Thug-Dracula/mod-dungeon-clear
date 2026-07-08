@@ -50,6 +50,17 @@ namespace
     // Range from which a creature can be gossiped (mirrors the core's
     // GetNPCIfCanInteractWith INTERACTION_DISTANCE check; kept a hair tighter).
     constexpr float DC_EVENT_GOSSIP_RANGE = 5.0f;
+    // UseItemOnGO target pick: a candidate GO counts as "the step's GO" only
+    // within this of the step's (x,y,z) anchor. POOLED spawns make this load-
+    // bearing (Old Hillsbrad's barrels: 5 pools of 3 candidate positions each,
+    // max_limit 1 — ONE barrel per house at a random spot ≤21yd from the house
+    // centroid the step anchors on, while the nearest NEIGHBOUR house's barrel
+    // is ≥38yd away). Without the cap, a mid-approach scan that only sees a
+    // neighbour's already-planted barrel matches it and the step false-latches
+    // Done (live: steps 2-3 insta-Done'd on house 1's barrel and the run
+    // stalled at 3/5 plants). No candidate within the cap = "not loaded /
+    // not spawned yet" -> keep walking to the anchor.
+    constexpr float DC_EVENT_GO_ANCHOR_MATCH = 25.0f;
     // How far out a Gossip step ACQUIRES its (unique) NPC in order to walk to it.
     // Deliberately wide: the freed crew can settle well beyond the gossip range
     // (the ZulFarrak crew descend to the temple floor), and the approach must
@@ -663,6 +674,8 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                     continue;
                 float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
                                            : g->GetExactDist(bot);
+                if (haveAnchor && d > DC_EVENT_GO_ANCHOR_MATCH)
+                    continue;  // some OTHER house's barrel — never this step's target
                 if (d < best)
                 {
                     best = d;
@@ -671,7 +684,8 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             }
             if (!target)
             {
-                // Barrel not in grid range yet — walk toward the anchor to load it.
+                // The step's GO isn't in grid range (or its pooled spawn isn't
+                // loaded) — walk toward the anchor to load it.
                 if (haveAnchor)
                     HopTo(bot, step.x, step.y, step.z);
                 return StepResult::Running;
