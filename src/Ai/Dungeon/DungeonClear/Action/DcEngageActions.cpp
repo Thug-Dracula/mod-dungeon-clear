@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Creature.h"
+#include "CreatureAI.h"
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Group.h"
@@ -796,6 +797,13 @@ namespace
     // trips this). Generous so a brief stutter never mis-fires.
     constexpr uint32 DC_ESCORT_DEAD_AIR_MS = 15000;
 
+    // How long the escortee must be combat-wedged (in combat, yet zero attackers
+    // and zero valid attack targets on its threat list) before the driver force-
+    // clears its combat. Long enough that a real fight's transition gaps (wave
+    // spawn delay, target mid-death) never trip it; short enough to beat the
+    // dead-air watchdog so the wedge self-heals instead of stalling the run.
+    constexpr uint32 DC_ESCORT_COMBAT_WEDGE_MS = 5000;
+
     // Mirror the escortee's run speed onto every BOT in the party (the leader
     // included) so the party keeps up when the escortee mounts and rides off. Old
     // Hillsbrad's Thrall gallops to Tarren Mill at 1.6x and his npc_escortAI HARD-
@@ -948,6 +956,65 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
     // Keep the party at the escortee's pace so a mounted ride never outruns it (and
     // resets his npc_escortAI). Mirrors his live run rate: 1.0 on foot, 1.6 mounted.
     ApplyEscortPartyRunSpeed(bot, escortee->GetSpeedRate(MOVE_RUN));
+
+    // COMBAT-WEDGE UNSTICK — upstream azerothcore-wotlk#25617: at the Durnholde
+    // armory, Thrall's scripted Knockout (spell 32890) on the UNATTACKABLE
+    // Durnholde Armorer drags him into combat with a unit nobody can hit or
+    // kill; escort AIs never advance waypoints while in combat, so his script
+    // deadlocks there. Detect the wedge generically instead of hardcoding the
+    // armorer: the escortee has been IN COMBAT for a debounced 5s with NO
+    // attacker and NO valid attack target on its threat list — a real fight
+    // (ambush waves, Skarloc, the Epoch adds) always has one of the two, which
+    // resets the clock every tick. Then clear BOTH sides' combat and evade the
+    // escortee, whose escort-AI EnterEvadeMode override resumes the waypoint
+    // path from where it stopped. Gated to progress-driven escorts
+    // (instanceDataId >= 0) so the WC Mutanus escort stays untouched.
+    if (step.instanceDataId >= 0 && escortee->IsInCombat())
+    {
+        bool anyValid = !escortee->getAttackers().empty();
+        std::vector<Unit*> wedgedTargets;
+        if (!anyValid)
+        {
+            for (ThreatReference const* ref : escortee->GetThreatMgr().GetUnsortedThreatList())
+            {
+                Unit* t = ref->GetVictim();
+                if (!t)
+                    continue;
+                if (escortee->IsValidAttackTarget(t))
+                {
+                    anyValid = true;
+                    break;
+                }
+                wedgedTargets.push_back(t);
+            }
+        }
+        if (anyValid)
+            prog.escortCombatWedgeMs = 0;
+        else if (!prog.escortCombatWedgeMs)
+            prog.escortCombatWedgeMs = now;
+        else if (getMSTimeDiff(prog.escortCombatWedgeMs, now) >= DC_ESCORT_COMBAT_WEDGE_MS)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {}: escortee {} combat-wedged with {} unattackable "
+                     "target(s) (upstream #25617) -> clearing combat and resuming the escort",
+                     bot->GetName(), escortee->GetName(), wedgedTargets.size());
+            for (Unit* t : wedgedTargets)
+            {
+                t->GetThreatMgr().ClearAllThreat();
+                t->CombatStop(true);
+            }
+            escortee->GetThreatMgr().ClearAllThreat();
+            escortee->CombatStop(true);
+            if (escortee->AI())
+                escortee->AI()->EnterEvadeMode();
+            prog.escortCombatWedgeMs = 0;
+            prog.escortProgressMs = now;  // unsticking IS progress
+            ClearStall(context);
+            return true;
+        }
+    }
+    else
+        prog.escortCombatWedgeMs = 0;
 
     // (Re)start: idle at spawn (never started, or reset to idle after dying). Walk
     // to gossip range and start his scripted escort. Folded into the step (not a
