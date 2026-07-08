@@ -26,3 +26,7 @@
 {"name":"house1 candidate 2214/248","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2213.61,"ty":247.54,"tz":53.65,"expectReachable":true}
 {"name":"house1 candidate 2227/252","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2226.61,"ty":251.62,"tz":53.80,"expectReachable":true}
 {"name":"house1 candidate 2199/273","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2199.23,"ty":272.60,"tz":53.98,"expectReachable":true}
+# objective 3 anchor: OUTSIDE Thrall's prison gate (gossip through the bars) —
+# must be reachable from the courtyard AND from the NE houses where event 2 ends
+{"name":"courtyard anchor to cell gate","map":560,"sx":2103.23,"sy":93.55,"sz":53.10,"tx":2229.11,"ty":116.09,"tz":83.05,"expectReachable":true}
+{"name":"house1 NE to cell gate","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2229.11,"ty":116.09,"tz":83.05,"expectReachable":true}

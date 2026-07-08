@@ -97,11 +97,19 @@ namespace
     constexpr float OH_HOUSE2_X = 2165.47f, OH_HOUSE2_Y = 252.75f, OH_HOUSE2_Z = 53.75f;  // pool 1164
     constexpr float OH_HOUSE1_X = 2213.15f, OH_HOUSE1_Y = 257.25f, OH_HOUSE1_Z = 53.81f;  // pool 1163
 
-    // Thrall's cell (instance-static spawn) — objective (3) anchor.
+    // Objective (3) anchor: OUTSIDE Thrall's prison gate, on the players' side.
+    // Thrall spawns INSIDE the cell (2231.90, 120.00, 82.30) behind the closed
+    // Prison Door (GO 184393 at 2230.56, 118.12, 83.05), and the intended flow is
+    // to gossip him THROUGH the gate — his script then opens the door itself
+    // (EVENT_OPEN_DOORS) and he walks out. Anchoring on his spawn point instead
+    // routed navigation INTO the closed gate, and the door-blocked machinery
+    // (which correctly can't open a script-only door) paused the whole run. This
+    // spot sits ~2.5yd outside the door on the walkway, ~4.8yd from Thrall —
+    // inside gossip range through the bars, with the gate never on-path.
     constexpr uint32 NPC_THRALL   = 17876;
-    constexpr float OH_THRALL_X   = 2231.90f;
-    constexpr float OH_THRALL_Y   = 120.00f;
-    constexpr float OH_THRALL_Z   = 82.30f;
+    constexpr float OH_CELL_GATE_X = 2229.11f;
+    constexpr float OH_CELL_GATE_Y = 116.09f;
+    constexpr float OH_CELL_GATE_Z = 83.05f;
 }
 
 void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
@@ -194,14 +202,18 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
     // Wide escortee scan (150yd) so the mounted ride never loses him off-grid; a
     // slightly wider threat radius (25yd) catches the waves that rush him.
     // PERSISTENT: the escort spans a dozen+ combat gaps that would rewind a normal
-    // anchored event. Step 0 (a short MoveTo to the cell) bumps stepIndex to 1 so
-    // the persistence sticky-trigger engages and the tank can roam the whole zone
-    // from the anchor while the escort drives.
+    // anchored event. Step 0 (a short MoveTo to the spot outside the prison gate —
+    // see OH_CELL_GATE) bumps stepIndex to 1 so the persistence sticky-trigger
+    // engages and the tank can roam the whole zone from the anchor while the
+    // escort drives. The tight 4yd radius plants the tank AT the gate, within
+    // gossip range of Thrall THROUGH it — the escort driver then never has to
+    // issue a move toward his inside-the-cell spawn (which would path into the
+    // closed door), and his script opens the door after the gossip.
     out.push_back(
         EventBuilder(560, 3, "Free Thrall and escort him to freedom")
             .Anchored(/*orderIndex*/ 3)
             .Persistent()
-            .MoveTo(OH_THRALL_X, OH_THRALL_Y, OH_THRALL_Z, /*radius*/ 8.0f)
+            .MoveTo(OH_CELL_GATE_X, OH_CELL_GATE_Y, OH_CELL_GATE_Z, /*radius*/ 4.0f)
             .EscortCreature(/*escortee*/ NPC_THRALL, /*startGossipOption*/ 0,
                             /*doneEntry*/ 0, /*doneBit*/ -1,
                             /*standoff*/ 5.0f, /*threatRadius*/ 25.0f,
@@ -227,7 +239,7 @@ void RegisterOldHillsbradRoster(std::vector<BossRosterPatch>& t)
                       OH_KEEP_X, OH_KEEP_Y, OH_KEEP_Z, /*arriveRadius*/ 25.0f,
                       /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2, /*orderOverride*/ 2),
         MakeObjective(OBJ(3), /*encounterIndex*/ 3, 560, "Free Thrall and escort him to freedom",
-                      OH_THRALL_X, OH_THRALL_Y, OH_THRALL_Z, /*arriveRadius*/ 12.0f,
+                      OH_CELL_GATE_X, OH_CELL_GATE_Y, OH_CELL_GATE_Z, /*arriveRadius*/ 8.0f,
                       /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 3, /*orderOverride*/ 3),
     };
     t.push_back(std::move(p));
