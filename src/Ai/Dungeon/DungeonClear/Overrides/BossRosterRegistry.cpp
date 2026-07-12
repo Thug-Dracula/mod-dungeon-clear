@@ -49,6 +49,7 @@ namespace
             RegisterSlavePensRoster(t);
             RegisterUnderbogRoster(t);
             RegisterOldHillsbradRoster(t);
+            RegisterMechanarRoster(t);
             return t;
         }();
         return kPatches;

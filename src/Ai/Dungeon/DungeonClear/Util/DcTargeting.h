@@ -174,6 +174,17 @@ public:
     // gate stands down and the pull pipeline / room-clear action work the room.
     static bool IsRoomClearActive(Player* bot, AiObjectContext* ctx);
 
+    // True when a room-clear is active (IsRoomClearActive) AND the room carries a
+    // pullOutRadius (RoomAggroBoss::pullOutRadius > 0). Such a room deliberately
+    // shrinks the room-trash exclusion to keep a pack sitting on the boss's aggro
+    // edge as clearable trash; that is safe ONLY if the room-clear drags the pack
+    // OUT with the advanced pull-to-camp maneuver instead of meleeing it in place
+    // inside the boss's wake radius, so the dynamic-pull governor reads this to
+    // FORCE the advanced verdict for the room (see DcPullPlanner::UpdateDynamicPull-
+    // Mode). Leader/room-scoped; cheap (a registry Find + the IsRoomClearActive
+    // probe already run for the pull path).
+    static bool RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx);
+
     // The nearest remaining room-trash unit (from "dungeon clear room trash
     // remaining"), or nullptr. Nearest-first so the tank clears the room from
     // its edge inward and reaches the boss's own aggro sphere last, minimising

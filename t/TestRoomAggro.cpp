@@ -95,6 +95,53 @@ TEST(RoomAggroRegistryTest, ScholomanceLinkedPairBothFlagged)
     EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(*vectus, 10495, 45.0f, 31.0f));
 }
 
+// Mechano-Lord Capacitus (Mechanar, 554) no longer has a room-aggro entry: the
+// boss order was changed to Gyro-Kill -> Capacitus -> Iron-Hand, so the tank
+// approaches his pit from the NW and the SE Driller pack falls on the post-boss
+// walk down to Iron-Hand (plain trash-clear), removing the reason for the
+// pre-clear. Assert the entry is gone so a re-add is a deliberate choice.
+TEST(RoomAggroRegistryTest, MechanarCapacitusHasNoRoomAggroEntry)
+{
+    EXPECT_EQ(RoomAggroRegistry::Find(554, 19219), nullptr);
+}
+
+// Nethermancer Sepethrea (Mechanar, 554) IS a room-aggro boss: her chamber holds
+// three elite trash groups pre-cleared and dragged back toward the entrance before
+// the pull. radius 70 covers the farthest (Pack A ~67yd); pullOutRadius 14 shrinks
+// the room-trash exclusion so Pack B — parked ~17yd out, inside her ~28yd real
+// aggro sphere — is KEPT as clearable trash instead of coming with the boss.
+TEST(RoomAggroRegistryTest, MechanarSepethreaHasPullOutRoom)
+{
+    RoomAggroBoss const* sep = RoomAggroRegistry::Find(554, 19221);
+    ASSERT_NE(sep, nullptr);
+    EXPECT_FLOAT_EQ(sep->radius, 70.0f);
+    EXPECT_TRUE(sep->memberEntries.empty());   // any hostile in the chamber
+    EXPECT_FALSE(sep->hasYBand);
+    EXPECT_GT(sep->pullOutRadius, 0.0f);        // the coupled shrink is set
+    EXPECT_LT(sep->pullOutRadius, 17.0f);       // below Pack B's nearest member (17.3yd)
+}
+
+// The pullOutRadius is what KEEPS Pack B as room trash. Pack B's nearest member
+// sits ~17.3yd from Sepethrea: inside her computed ~28yd exclusion sphere (would be
+// dropped as "comes with the boss") but OUTSIDE the 14yd pull-out radius the value
+// passes as bossSafeRadius when the row carries one — so it stays clearable and the
+// advanced pull drags it out. This mirrors what DungeonClearRoomTrashValue does with
+// room->pullOutRadius; IsRoomTrash itself just takes the effective radius.
+TEST(RoomAggroRegistryTest, MechanarSepethreaPullOutKeepsFrontPack)
+{
+    RoomAggroBoss const* sep = RoomAggroRegistry::Find(554, 19221);
+    ASSERT_NE(sep, nullptr);
+    // With the shrunk pull-out radius: Pack B (17.3yd) is KEPT.
+    EXPECT_TRUE(RoomAggroRegistry::IsRoomTrash(*sep, 19510, 17.3f, sep->pullOutRadius));
+    // With the real ~28yd exclusion sphere it would be dropped (the old behaviour
+    // the shrink exists to override).
+    EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(*sep, 19510, 17.3f, 28.0f));
+    // Something genuinely glued to her (inside 14yd) still comes with the boss.
+    EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(*sep, 19510, 10.0f, sep->pullOutRadius));
+    // Pack A far out (67yd) is still inside the 70yd room radius.
+    EXPECT_TRUE(RoomAggroRegistry::IsRoomTrash(*sep, 19168, 67.0f, sep->pullOutRadius));
+}
+
 // --- IsMemberEntry --------------------------------------------------------
 
 TEST(RoomAggroRegistryTest, EmptyWhitelistMatchesAnyEntry)

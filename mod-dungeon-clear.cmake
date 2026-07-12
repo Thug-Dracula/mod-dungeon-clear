@@ -21,6 +21,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestEventRegistry.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestNavGeometry.cpp"
+            "${MOD_PATH}/t/TestMechanarElevatorProbe.cpp"
             "${MOD_PATH}/t/TestStrategyGate.cpp"
             "${MOD_PATH}/t/TestRelevanceLadder.cpp"
             "${MOD_PATH}/t/NavHarness.cpp"

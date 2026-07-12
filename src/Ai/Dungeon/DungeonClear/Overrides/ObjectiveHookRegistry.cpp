@@ -12,6 +12,7 @@
 #include "InstanceScript.h"
 #include "Item.h"
 #include "Log.h"
+#include "MotionMaster.h"
 #include "Opcodes.h"
 #include "Player.h"
 #include "Spell.h"
@@ -146,6 +147,97 @@ namespace
                    : ObjectiveArriveResult::Running;  // bags full this tick — retry
     }
 
+    // --- The Mechanar: GrantCacheKeyAndLoot (hook id 4) -------------------
+    // The Cache of the Legion (GO 184465 normal / 184849 heroic) is a locked chest
+    // (Lock.dbc 1706, a LOCK_KEY_ITEM lock) requiring the Cache of the Legion Key
+    // (item 30438). Blizzard's key is formed by combining the two Jagged Crystals
+    // the Gatewatchers drop (Gyro-Kill -> Blue 30436, Iron-Hand -> Red 30437) via
+    // the crystals' on-use spell 36565 — but a bot never right-clicks a crystal,
+    // and in a party the two crystals can land in different bags. Per the design
+    // decision (grant the key), hand the leader key 30438 directly, then OPEN the
+    // chest exactly the way the Deadmines cannon / Old Hillsbrad barrels do it:
+    // USE the key item on the GO (CastItemUseSpell). This is load-bearing — the
+    // original "grant key + let the stock loot pipeline open it" plan DEADLOCKED
+    // (the tank parked at the cache and never looted). Two independent stock
+    // failings sink that plan: (a) MaybeSkipUnworthyLoot blacklists every chest
+    // with DungeonClear.IgnoreChests on (the default), and (b) even reached,
+    // OpenLootAction's CanOpenLock has the LOCK_KEY_ITEM case COMMENTED OUT, so it
+    // can never produce an opening spell for a key-item lock — and the core only
+    // opens such a lock when the KEY ITEM ITSELF is the cast item (Spell::
+    // CanOpenLock: m_CastItem->GetEntry() == lockInfo->Index[j]). So the leader
+    // must use the key on the chest itself; the resulting Player::SendLoot fires
+    // SMSG_LOOT_RESPONSE -> the always-on "store loot" handler auto-stores it.
+    // The chest is consumable (leaves GO_READY once used), so the loot-state check
+    // is the completion latch; idempotent + self-healing across an event restart.
+    constexpr uint32 MECH_GO_CACHE_NORMAL = 184465;
+    constexpr uint32 MECH_GO_CACHE_HEROIC = 184849;
+    constexpr uint32 MECH_ITEM_CACHE_KEY  = 30438;  // on-use spell 3366 (OPEN_LOCK)
+    constexpr float  MECH_CACHE_SEARCH    = 25.0f;
+    // Cast reach: the OPEN_LOCK ends in Player::SendLoot, which range-checks the
+    // GO's interact box (the Deadmines/Durnholde item-use plants measured failing
+    // past ~6yd). Stay well inside it; the objective anchor sits ON the chest, but
+    // arrival jitter can leave the tank a couple of yards out, so walk the final
+    // gap in rather than spam-casting from range.
+    constexpr float  MECH_CACHE_CAST_REACH = 4.0f;
+
+    ObjectiveArriveResult GrantCacheKeyAndLoot(Player* bot, AiObjectContext* /*context*/,
+                                               DungeonBossInfo const& /*info*/)
+    {
+        GameObject* cache = bot->FindNearestGameObject(MECH_GO_CACHE_NORMAL, MECH_CACHE_SEARCH);
+        if (!cache)
+            cache = bot->FindNearestGameObject(MECH_GO_CACHE_HEROIC, MECH_CACHE_SEARCH);
+
+        if (!cache)
+        {
+            // No cache in range: either the tank has not arrived / scanned it yet,
+            // or it has already been looted and despawned (consumable). Once we
+            // have handed over the key the latter is true -> Done; otherwise keep
+            // waiting to arrive.
+            return bot->HasItemCount(MECH_ITEM_CACHE_KEY, 1)
+                       ? ObjectiveArriveResult::Done
+                       : ObjectiveArriveResult::Running;
+        }
+
+        // The chest leaves GO_READY the instant the key-use OPEN_LOCK lands (the
+        // loot window is up and the "store loot" handler is draining it) — a
+        // stable, idempotent "this cache is done" latch.
+        if (cache->getLootState() != GO_READY)
+            return ObjectiveArriveResult::Done;
+
+        // The 2s key "Opening" cast is already running — let it complete rather
+        // than re-issue and interrupt ourselves every tick.
+        if (bot->IsNonMeleeSpellCast(false))
+            return ObjectiveArriveResult::Running;
+
+        // Grant the key (bots never combined the crystals).
+        Item* key = bot->GetItemByEntry(MECH_ITEM_CACHE_KEY);
+        if (!key)
+        {
+            bot->AddItem(MECH_ITEM_CACHE_KEY, 1);
+            key = bot->GetItemByEntry(MECH_ITEM_CACHE_KEY);
+            if (!key)
+                return ObjectiveArriveResult::Running;  // bags full this tick — retry
+        }
+
+        // Close the final yards if the objective anchor left us just outside the
+        // interact box (SendLoot's range check is unforgiving). Nothing else moves
+        // the tank while the event holds, so this walk-in sticks.
+        if (bot->GetExactDist(cache) > MECH_CACHE_CAST_REACH)
+        {
+            if (!bot->isMoving())
+                bot->GetMotionMaster()->MovePoint(0, cache->GetPositionX(), cache->GetPositionY(),
+                                                  cache->GetPositionZ());
+            return ObjectiveArriveResult::Running;
+        }
+
+        // USE the key ON the chest: item-use supplies m_CastItem so the KEY_ITEM
+        // lock opens -> SendLoot -> SMSG_LOOT_RESPONSE -> "store loot" stores it.
+        SpellCastTargets targets;
+        targets.SetGOTarget(cache);
+        bot->CastItemUseSpell(key, targets, 0, 0);
+        return ObjectiveArriveResult::Running;  // the loot-state latch above confirms it
+    }
+
     // hookId -> behaviour. To give an objective on-arrival behaviour, add a row
     // here and reference its id from a BossRosterRegistry objective (onArriveHook)
     // or a Custom event step (DungeonEventRegistry).
@@ -155,6 +247,7 @@ namespace
             { 1, &EnsureRingStarted },       // BRD Ring of Law — start the arena event
             { 2, &FireDefiasCannon },        // Deadmines — fire the cannon, open the door
             { 3, &GrantIncendiaryBombs },    // Old Hillsbrad — pack of bombs (unlocks Brazen)
+            { 4, &GrantCacheKeyAndLoot },    // The Mechanar — Cache of the Legion key + loot
         };
         return kHooks;
     }

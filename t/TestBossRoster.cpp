@@ -195,6 +195,48 @@ TEST(BossRosterRegistryTest, ZfFullClearOrder)
 // BossSpawnIndex never emits it. The patch adds it explicitly at the lower
 // platform with DBC kill-bit 2 (set directly — there is no base entry to inherit
 // from), so the run does not stop one boss short.
+// The Mechanar Gatewatchers (Gyro-Kill 19218, Iron-Hand 19710) are NOT DBC
+// encounters (no instance_encounters KILL_CREATURE row), so BossSpawnIndex never
+// derives them and the auto-derived base holds only the three real bosses. The
+// patch must ADD them as bosses (Gyro-Kill order 1, Iron-Hand order 3, with
+// Capacitus reordered to 2 between them) with instance-boss-state completion
+// (doneBossStateIndex 0/1) and a no-DBC-bit encounterIndex, or the picker skips
+// straight to Capacitus and the party never opens the Mo'arg doors.
+TEST(BossRosterRegistryTest, MechanarAddsGatewatchersAheadOfCapacitus)
+{
+    // Base as BossSpawnIndex emits it — only the three DBC bosses.
+    std::vector<DungeonBossInfo> base = {
+        Boss(19219, 0, "Mechano-Lord Capacitus", 554),
+        Boss(19221, 1, "Nethermancer Sepethrea", 554),
+        Boss(19220, 2, "Pathaleon the Calculator", 554),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(554, base);
+
+    DungeonBossInfo const* gyro = Find(out, 19218);
+    DungeonBossInfo const* iron = Find(out, 19710);
+    ASSERT_NE(gyro, nullptr) << "Gyro-Kill must be injected as a boss";
+    ASSERT_NE(iron, nullptr) << "Iron-Hand must be injected as a boss";
+
+    EXPECT_EQ(gyro->kind, DungeonAnchorKind::Boss);
+    EXPECT_EQ(iron->kind, DungeonAnchorKind::Boss);
+    // Completion is the instance boss-state slot, not a DBC bit.
+    EXPECT_EQ(gyro->doneBossStateIndex, 0);
+    EXPECT_EQ(iron->doneBossStateIndex, 1);
+    // encounterIndex parked past bit 31 so the completedMask check never matches
+    // a real boss's bit (default 0 would collide with DBC bit 0 = Capacitus).
+    EXPECT_GE(gyro->encounterIndex, 32u);
+    EXPECT_GE(iron->encounterIndex, 32u);
+
+    // Ordered first: Gyro-Kill(1) -> Capacitus(2) -> Iron-Hand(3) -> ...
+    // Capacitus sits between the Gatewatchers so the tank approaches his pit from
+    // Gyro-Kill (NW) and the SE Driller pack falls on the walk down to Iron-Hand
+    // (which is why the room-aggro pre-clear for 19219 was dropped).
+    ASSERT_GE(out.size(), 3u);
+    EXPECT_EQ(out[0].entry, 19218u);
+    EXPECT_EQ(out[1].entry, 19219u);
+    EXPECT_EQ(out[2].entry, 19710u);
+}
+
 TEST(BossRosterRegistryTest, HellfireRampartsAddsFinalBoss)
 {
     // Auto-derived list as BossSpawnIndex emits it (only the two spawned bosses).

@@ -345,6 +345,7 @@ namespace
             RegisterSlavePensEvents(t);
             RegisterUnderbogEvents(t);
             RegisterOldHillsbradEvents(t);
+            RegisterMechanarEvents(t);
             return t;
         }();
         return kEvents;

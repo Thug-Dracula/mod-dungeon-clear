@@ -603,6 +603,18 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     }
     pull.targetLostSince = 0;
 
+    // Room-clear override: a room whose RoomAggroRegistry row carries a pullOutRadius
+    // (the Mechanar's Sepethrea) shrinks the room-trash exclusion to KEEP a pack
+    // parked on the boss's aggro edge as clearable trash. That is only safe if the
+    // clear DRAGS that pack out with the advanced pull-to-camp maneuver rather than
+    // meleeing it in place — so while such a room-clear is active, FORCE the verdict
+    // to Advanced regardless of the pack's estimated size. Pack B there is 4 elites
+    // (12 thirds, under the 15 ceiling) and would otherwise classify Leeroy, which a
+    // shrunk exclusion turns into a dead-band / boss wake. Advanced is always the
+    // safe direction, so forcing it for every pack in that room (A, robots, B alike)
+    // is fine. See DcTargeting::RoomClearForcesAdvanced + RoomAggroBoss::pullOutRadius.
+    bool const forceAdv = DcTargeting::RoomClearForcesAdvanced(bot, context);
+
     // Per-pack latch, UPGRADE-ONLY while approaching the SAME pack.
     //
     // ClassifyPullAdvanced now sizes up the pack with a search centred on the PACK
@@ -720,7 +732,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             return;
         pull.decisionSince = now;
         DcPullClassification cls;
-        bool const advanced = ClassifyPullAdvanced(botAI, target, &cls);
+        bool const advanced = ClassifyPullAdvanced(botAI, target, &cls) || forceAdv;
         resolve(advanced, cls);
         return;
     }
@@ -728,7 +740,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // New pack: size it up fresh and stamp the latch + re-check clock.
     pull.patrolWaitSince = 0;
     DcPullClassification cls;
-    bool const advanced = ClassifyPullAdvanced(botAI, target, &cls);
+    bool const advanced = ClassifyPullAdvanced(botAI, target, &cls) || forceAdv;
     pull.decisionTarget = target->GetGUID();
     pull.decisionSince = getMSTime();
     resolve(advanced, cls);

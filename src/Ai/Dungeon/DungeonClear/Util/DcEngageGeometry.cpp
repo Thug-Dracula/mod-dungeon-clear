@@ -226,9 +226,25 @@ std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
     float const gx = target->GetPositionX();
     float const gy = target->GetPositionY();
 
-    // Distance from the boss centre to the target (the kept room-trash is always
-    // OUTSIDE the aggro sphere, so this is > safeRadius).
+    // Distance from the boss centre to the target. USUALLY > safeRadius (kept
+    // room-trash sits outside the aggro sphere), but a forced-advanced pull
+    // (RoomAggroBoss::pullOutRadius) deliberately KEEPS a pack as room-trash while
+    // it stands INSIDE the nominal sphere — the Mechanar dead band, where Pack B
+    // sits ~17yd from Nethermancer Sepethrea, inside her ~36yd avoid sphere.
     float const targetDist = std::sqrt((gx - bx) * (gx - bx) + (gy - by) * (gy - by));
+
+    // Skirting a target that sits INSIDE the avoid sphere is the same incoherent
+    // infinite-orbit as skirting the boss itself: the straight line bot->target
+    // always ends inside the sphere, so the early-out below can never fire and the
+    // tank orbits the ring forever (the live Sepethrea room-clear deadlock —
+    // "skirting ... before approaching Bloodwarder Centurion" logged every tick,
+    // never closing the last yard to pull-commit range). Cap the effective avoid
+    // radius just under the target so a dead-band pack resolves to a radial walk-in
+    // that stops at the pack. No-op for every ordinary room-aggro boss: their kept
+    // trash is always outside safeRadius, so the min() never binds.
+    safeRadius = std::min(safeRadius, targetDist - 1.0f);
+    if (safeRadius <= 0.0f)
+        return std::nullopt;
 
     // Stand WELL back from the aggro sphere, not hard against it. The party
     // follows the tank imperfectly and cuts the corner, so a tight skirt right on

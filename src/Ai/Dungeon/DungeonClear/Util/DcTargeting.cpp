@@ -877,6 +877,24 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
     // failure: "ran backwards at a large angle, then snapped straight at the boss").
     return DcEngageGeometry::WithinRoomClearWindow(bot, ctx, *next);
 }
+bool DcTargeting::RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx)
+{
+    if (!bot || !ctx)
+        return false;
+
+    // Only a room with a pullOutRadius forces the verdict — check that BEFORE the
+    // (pricier) room-clear window probe so the ordinary room-aggro bosses pay
+    // nothing new. The next boss is already resolved for IsRoomClearActive.
+    std::optional<DungeonBossInfo> next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value())
+        return false;
+    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), next->entry);
+    if (!room || room->pullOutRadius <= 0.0f)
+        return false;
+
+    return IsRoomClearActive(bot, ctx);
+}
 Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
 {
     if (!bot || !ctx)
