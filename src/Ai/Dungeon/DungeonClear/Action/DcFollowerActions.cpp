@@ -721,92 +721,174 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     return true;
 }
 
+namespace
+{
+    // The mob the PARTY is actually fighting, for a follower to assist onto. The old
+    // lookup only considered the LEADER's attacker list + victim — which is EMPTY
+    // whenever the pack is ranged, or the mobs fixated a DPS instead of the tank, so
+    // the tank holds threat with nothing meleeing it. In that (common) case the old
+    // code fell back to "move onto the leader", orbiting the tank at 0.0yd doing
+    // nothing (proven live: `target=leader` at 0.0yd while assistWanted=1). Resolve
+    // from the WHOLE fight instead:
+    //   1. anything attacking the leader / the leader's own victim (the held pack), then
+    //   2. the nearest hostile any NEARBY in-combat groupmate is fighting (their
+    //      attackers + victim) — the mobs that fixated the DPS.
+    // Returns the nearest valid, reachable such hostile, or nullptr → the caller
+    // STANDS DOWN (never orbits the leader). Members are gated within 1.5x
+    // PartyMaxSpread of the tank so this stays "the tank's fight", not a far skirmish.
+    Unit* PickPartyFightTarget(Player* bot, Player* leader)
+    {
+        Unit* best = nullptr;
+        float bestDist = 0.0f;
+        auto consider = [&](Unit* u)
+        {
+            if (!u || !u->IsAlive() || u->GetMapId() != bot->GetMapId())
+                return;
+            if (!bot->IsValidAttackTarget(u))
+                return;
+            float const d = bot->GetExactDist2d(u);
+            if (!best || d < bestDist)
+            {
+                best = u;
+                bestDist = d;
+            }
+        };
+        auto considerFrom = [&](Unit* src)
+        {
+            if (!src)
+                return;
+            for (Unit* a : src->getAttackers())
+                consider(a);
+            consider(src->GetVictim());
+        };
+
+        // 1. The leader's own fight takes priority (the pack it is holding).
+        considerFrom(leader);
+        if (best)
+            return best;
+
+        // 2. Else whatever a nearby in-combat groupmate is fighting.
+        if (Group* grp = bot->GetGroup())
+        {
+            float const reach = DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f;
+            for (GroupReference* ref = grp->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || !m->IsAlive() || !m->IsInCombat())
+                    continue;
+                if (m->GetMapId() != bot->GetMapId())
+                    continue;
+                if (leader && m->GetExactDist2d(leader) > reach)
+                    continue;  // keep it the tank's fight, not a far straggler's
+                considerFrom(m);
+            }
+        }
+        return best;
+    }
+}
+
 bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
 {
     Player* leader = DcLeaderSignal::FindLeaderTank(bot);
     if (!leader || leader == bot)
         return false;
 
-    // Nearest live unit the leader is meleeing — the pulled pack. LOS-blind on
-    // purpose: this action exists precisely for the case the drag-back parked the
-    // pack out of the camp's line of sight, where the stock target picker never
-    // acquires it. getAttackers() covers the melee pack the tank is holding; the
-    // leader's victim is the fallback for the (rare) all-ranged grab.
-    Unit* target = nullptr;
-    float bestDist = 0.0f;
-    for (Unit* a : leader->getAttackers())
-    {
-        if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
-            continue;
-        if (!bot->IsValidAttackTarget(a))
-            continue;
-        float const d = bot->GetExactDist2d(a);
-        if (!target || d < bestDist)
-        {
-            target = a;
-            bestDist = d;
-        }
-    }
+    // Resolve a REAL mob the party is fighting from the WHOLE group (see
+    // PickPartyFightTarget). No concrete hostile resolves -> STAND DOWN. We
+    // deliberately no longer fall back to "move onto the tank to gain LOS": that
+    // dragged ranged DPS up the tank's back (the reported regression) and orbited a
+    // looting tank at 0.0yd. When nothing resolves, follow-tank / the combat engine
+    // own the bot; the fight target re-resolves within a tick or two once the tank's
+    // attacker list populates.
+    Unit* target = PickPartyFightTarget(bot, leader);
     if (!target)
-        target = leader->GetVictim();
+        return false;
 
-    // No concrete target resolvable (e.g. brief threat-table gap): close on the
-    // leader instead, which puts us back in sight of whatever it is fighting so
-    // stock combat can pick the target up the moment we round the corner.
-    Unit* const moveTo = target ? target : static_cast<Unit*>(leader);
+    // Seed the fight target so BOTH engines have a valid "current target": select it,
+    // publish it, and open a combat window so the bot is in the fight the instant it
+    // reaches range/sight. This target is on the TANK — never on this bot's own
+    // attacker list — so without seeding, stock target-acquisition finds nothing
+    // while the pack is out of sight.
+    bot->SetSelection(target->GetGUID());
+    context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
+    if (!bot->IsInCombat())
+        bot->SetInCombatWith(target);
 
-    if (target)
+    // This action is registered under two names — "...assist camp combat" runs in the
+    // COMBAT engine, "...assist camp" in the NON-combat engine. Do NOT key this off
+    // bot->IsInCombat(): the whole bug is the limbo where the bot is combat-FLAGGED
+    // yet still ticking the non-combat engine (no target of its own), so IsInCombat
+    // lies about the engine.
+    bool const inCombatEngine = getName().find("combat") != std::string::npos;
+
+    // NON-combat side (the limbo): flip into the combat engine IMMEDIATELY — do NOT
+    // wait for LOS/range. Once there, the bot's rotation runs and the combat-side
+    // assist below drives the approach. The DC drop-target suppressor
+    // (DungeonClearMultiplier) keeps the out-of-LOS seed from bouncing the bot right
+    // back out (drop target rel 99 >> reach rel 20 would win every tick otherwise).
+    // This is the flip-early model: the party enters combat WITH the tank and drives
+    // on the mob, not on the human/tank.
+    if (!inCombatEngine)
     {
-        // Commit the follower to the pack even without LOS: select it, publish it
-        // as the current target, and open a combat timer so the bot is in the
-        // fight (and in the combat engine) the instant movement carries it back
-        // into sight — instead of standing idle at camp.
-        bot->SetSelection(target->GetGUID());
-        context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
-        if (!bot->IsInCombat())
-            bot->SetInCombatWith(target);
-
-        // Already in sight of the pack: don't lurch the body onto the mob. The
-        // SetInCombatWith above flips the bot into the combat engine next tick,
-        // where its own rotation/heal logic (un-suppressed there, unlike the stock
-        // proactive pickers DC mutes for followers) handles positioning. This is
-        // the case the non-combat assist now covers that it used to drop: an idle
-        // follower WITH line of sight that DC's multiplier otherwise leaves stuck.
-        if (bot->IsWithinLOSInMap(target))
-        {
-            DC_PULL_TRACE("[DC:{}] assist camp: in sight of pack ({:.1f}yd) -> "
-                          "committed + forced combat, rotation takes over",
-                          bot->GetName(), bot->GetExactDist(target));
-            return true;
-        }
+        botAI->ChangeEngine(BOT_STATE_COMBAT);
+        DC_PULL_TRACE("[DC:{}] assist camp: seeded {} -> flip to combat engine",
+                      bot->GetName(), target->GetGUID().ToString());
+        return true;
     }
 
-    // Band the approach priority exactly as EngageDirect does. COMBAT priority
-    // can't be interrupted by the bot's combat reflexes, so on a LONG assist run
-    // (the follower is far behind because the tank scouted/Leeroy-charged well
-    // ahead, or it is out of LOS at the far end of a corridor) an unconditional
-    // COMBAT move makes the follower plow straight through every pack it aggros
-    // en route without stopping to fight — dragging a mob train to the far point
-    // and wiping the group. Use COMBAT only for the final close approach; past
-    // that, NORMAL, so the follower stops and fights what it pulls on the way in
-    // (stock combat takes the intervening pack; the assist re-fires and resumes
-    // once it dies — a controlled leapfrog instead of a runaway charge).
-    float const distance = bot->GetExactDist(moveTo);
-    float const attackRange = botAI->IsMelee(bot)
-        ? (bot->GetCombatReach() + moveTo->GetCombatReach() + 1.0f)
+    // --- COMBAT engine ---------------------------------------------------------
+    float const dist = bot->GetExactDist(target);
+    float const range = botAI->IsMelee(bot)
+        ? (bot->GetCombatReach() + target->GetCombatReach() + 1.0f)
         : (botAI->GetRange("spell") - CONTACT_DISTANCE);
+
+    // HAVE LINE OF SIGHT -> hand positioning to STOCK combat; do NOT drive our own
+    // move. Stock "reach spell" stops a ranged bot at its spell range (it goes inert
+    // once inside range), and "reach melee" closes a melee bot to melee — the correct
+    // per-class standoff. Driving DcMoveTo toward the mob here is exactly what marched
+    // ranged DPS into melee even with a clear shot (the reported bug): our move aims
+    // at the mob's feet and only our own in-range test could stop it. So:
+    //   * in range: ENGAGE (face + Attack commits the victim so the rotation fires —
+    //     SetInCombatWith alone never swings/casts), then YIELD (return false) so the
+    //     rotation runs THIS tick; returning true would starve it at rel 35.
+    //   * out of range: just YIELD — stock reach spell/melee (rel 20) closes to the
+    //     right distance and stops. We re-arm next tick until in range.
+    if (bot->IsWithinLOSInMap(target))
+    {
+        if (dist <= range)
+        {
+            if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, target))
+                ServerFacade::instance().SetFacingTo(bot, target);
+            bot->Attack(target, botAI->IsMelee(bot));
+            DC_PULL_TRACE("[DC:{}] assist camp: engaged {} in range+LOS ({:.1f}yd) -> yield",
+                          bot->GetName(), target->GetGUID().ToString(), dist);
+        }
+        else
+        {
+            DC_PULL_TRACE("[DC:{}] assist camp: LOS, out of range ({:.1f}yd) -> yield to "
+                          "stock reach", bot->GetName(), dist);
+        }
+        return false;
+    }
+
+    // NO LINE OF SIGHT: close on the MOB (never the tank) to round the corner and
+    // regain sight — the one case stock combat can't handle (its reach is distance-
+    // only). Band the approach exactly as EngageDirect does — COMBAT priority can't be
+    // interrupted by the bot's combat reflexes, so on a LONG assist run an
+    // unconditional COMBAT move plows through every pack it aggros en route. COMBAT
+    // only for the final close approach; past that NORMAL, so the follower stops and
+    // fights what it pulls on the way in.
     MovementPriority const prio =
-        (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
+        (dist <= range + DC_COMBAT_APPROACH_RANGE)
             ? MovementPriority::MOVEMENT_COMBAT
             : MovementPriority::MOVEMENT_NORMAL;
 
-    DC_PULL_TRACE("[DC:{}] assist camp: closing on out-of-LOS fight ({:.1f}yd, "
-                  "target={}, prio={})", bot->GetName(), distance,
-                  target ? target->GetGUID().ToString() : "leader",
+    DC_PULL_TRACE("[DC:{}] assist camp: no-LOS, closing on mob {} ({:.1f}yd, prio={})",
+                  bot->GetName(), target->GetGUID().ToString(), dist,
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    DcMoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
-           moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
+    DcMoveTo(target->GetMapId(), target->GetPositionX(), target->GetPositionY(),
+           target->GetPositionZ(), /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }

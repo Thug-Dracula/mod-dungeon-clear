@@ -160,16 +160,28 @@ namespace
         return run.leaderCombatSinceMs;
     }
 
-    // True if ANY living, same-map member of `bot`'s group (the bot itself
-    // included) is currently in combat. Used to release the dynamic scout-lag
-    // trail and arm the leader-fight assist off "someone in the party is
-    // fighting" rather than the elected leader's own combat flag alone: when the
-    // tank takes a pack before a verdict commits (dynamic Idle + surprise aggro,
-    // the "in combat with no pull state" case), the leader's IsInCombat() read
-    // can flicker as it tags/leashes — or a groupmate registers combat a tick
-    // first — and keying the whole "drop the trail and help" decision on the
-    // leader alone left the suppressed party parked at lag range watching the
-    // tank die. Any party member in combat is sufficient to collapse the party.
+    // True when the TANK's fight is live: the reference `bot` — always the elected
+    // leader/tank on the assist + scout-lag paths — is in combat, OR a BOT groupmate
+    // close enough to share that fight is in combat. Used to arm the leader-fight
+    // assist and release the dynamic scout-lag trail. It exists for the leader-flag
+    // flicker: when the tank takes a pack before a verdict commits (dynamic Idle +
+    // surprise aggro), its IsInCombat() read flickers as it tags/leashes, or a
+    // groupmate registers combat a tick first, and keying solely on the leader's own
+    // flag left the party parked at lag range watching the tank die.
+    //
+    // TWO exclusions, both learned from the "dps run to me, not the tank" failure —
+    // the signal must speak for THE TANK'S fight, not "anyone, anywhere":
+    //   * The HUMAN party leader is never counted. A human flagged in combat OUT OF
+    //     LOS of the tank's pull (their own straggler, a phantom flag, a mob across
+    //     the room) would otherwise arm the party assist for a fight the tank is not
+    //     in; the party then stampedes a tank with no resolvable target and stacks on
+    //     the human. Only bots — and the tank's own flag — speak for the tank.
+    //   * A bot beyond PartyMaxSpread of the tank is not counted: a lagging bot that a
+    //     far/gated spawn phantom-flagged (see the phantom-combat class) must not arm
+    //     the assist. The tank's OWN combat is distance 0, so a real pull always
+    //     registers regardless of where the stragglers trail.
+    // The caller latches the result for PartyCombatLatch seconds, so a one-tick tank
+    // flicker is still bridged by a nearby bot that already took a hit.
     bool AnyGroupMemberInCombat(Player* bot)
     {
         if (!bot)
@@ -178,6 +190,7 @@ namespace
         if (!group)
             return bot->IsInCombat();  // solo: only our own combat counts
 
+        float const spread = DcSettings::GetFloat(bot, "PartyMaxSpread");
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
@@ -185,7 +198,16 @@ namespace
                 continue;
             if (member->GetMapId() != bot->GetMapId())
                 continue;
-            if (member->IsInCombat())
+            if (!member->IsInCombat())
+                continue;
+            // The tank's own flag is the primary anchor (distance 0 — always in).
+            if (member == bot)
+                return true;
+            // Otherwise only a BOT close enough to share the tank's fight counts —
+            // never the human master, never a far/phantom-flagged straggler.
+            if (!GET_PLAYERBOT_AI(member))
+                continue;
+            if (bot->GetExactDist2d(member) <= spread)
                 return true;
         }
         return false;
@@ -625,14 +647,17 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
     // PullPlayerReleaseDelay — the same knob that delays DPS release on the
     // advanced-pull camp path — so both follower-release paths share one "threat
     // lead" value. Healers bypass (a withheld heal is a wipe), as does a tank below
-    // PullThreatLeadPanicHp (it is losing the fight — pile in). Regroup is NOT
-    // gated here: it is positioning, not damage, and a healer running for LOS
-    // during the lead is desirable.
+    // PullThreatLeadPanicHp (it is losing the fight — pile in). The `alreadyInCombat`
+    // bypass is the key one for the "dps run to me" fix: a follower already flagged
+    // in combat with the pack out of its line of sight is released ONTO the tank's
+    // fight at once, instead of being stranded through the lead where stock follow-
+    // master would drift it to the human. Regroup is NOT gated here: it is
+    // positioning, not damage, and a healer running for LOS during the lead is fine.
     uint32 const leadMs =
         uint32(DcSettings::GetFloat(leader, "PullPlayerReleaseDelay") * 1000.0f);
     float const panicHp = DcSettings::GetFloat(leader, "PullThreatLeadPanicHp");
     return DungeonClearMath::ShouldReleaseFollower(
-        PlayerbotAI::IsHeal(bot), combatSince, getMSTime(), leadMs,
+        PlayerbotAI::IsHeal(bot), bot->IsInCombat(), combatSince, getMSTime(), leadMs,
         leader->GetHealthPct(), panicHp);
 }
 bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)

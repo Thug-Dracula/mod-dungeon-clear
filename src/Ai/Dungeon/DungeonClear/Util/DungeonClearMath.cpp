@@ -264,7 +264,7 @@ bool DungeonClearMath::ShouldPlantEarly(std::vector<float> const& attackerDists,
     return plantTicks >= glueTicksNeeded;
 }
 
-bool DungeonClearMath::ShouldReleaseFollower(bool isHealer,
+bool DungeonClearMath::ShouldReleaseFollower(bool isHealer, bool alreadyInCombat,
                                              std::uint32_t combatSinceMs,
                                              std::uint32_t now, std::uint32_t leadMs,
                                              float tankHealthPct, float panicHpPct)
@@ -272,6 +272,14 @@ bool DungeonClearMath::ShouldReleaseFollower(bool isHealer,
     // Healers are never held: a withheld heal is a wipe, and a heal does not rip
     // threat off the tank the way a DPS opener does.
     if (isHealer)
+        return true;
+    // Already in combat: the lead exists only to stop a FRESH, out-of-combat DPS
+    // from stealing aggro on the opener. A follower already flagged in combat (the
+    // tank pulled and dragged the pack out of its line of sight) is on the threat
+    // table already — it cannot over-aggro by walking into sight, and holding it
+    // strands it with no DC-owned behavior for the tick, exactly where a revived
+    // stock follow-master would walk it to the human. Release it onto the fight.
+    if (alreadyInCombat)
         return true;
     // Feature off.
     if (leadMs == 0)

@@ -639,44 +639,62 @@ TEST(DungeonClearPlantTest, FlickerDoesNotAccumulate)
 
 using DungeonClearMath::ShouldReleaseFollower;
 
+// Signature: ShouldReleaseFollower(isHealer, alreadyInCombat, combatSinceMs, now,
+// leadMs, tankHp, panicHp). The existing lead-window cases all model a FRESH,
+// out-of-combat DPS/healer (alreadyInCombat == false).
+
 // Healers release immediately, regardless of an unexpired lead.
 TEST(DungeonClearReleaseTest, HealerReleasesImmediately)
 {
-    EXPECT_TRUE(ShouldReleaseFollower(true, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(true, false, 5000u, 5100u, 1500u, 100.0f, 60.0f));
 }
 
 // DPS held inside the lead window, released once it elapses.
 TEST(DungeonClearReleaseTest, DpsHeldThenReleased)
 {
     // 100ms into a 1500ms lead -> held.
-    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+    EXPECT_FALSE(ShouldReleaseFollower(false, false, 5000u, 5100u, 1500u, 100.0f, 60.0f));
     // Exactly at the lead boundary -> released (inclusive).
-    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 6500u, 1500u, 100.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(false, false, 5000u, 6500u, 1500u, 100.0f, 60.0f));
     // Well past -> released.
-    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 9000u, 1500u, 100.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(false, false, 5000u, 9000u, 1500u, 100.0f, 60.0f));
 }
 
 // A tank below the panic HP releases the party early despite the lead.
 TEST(DungeonClearReleaseTest, PanicHpBypassesLead)
 {
     // 100ms in, but tank at 55% < 60% panic -> release now.
-    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 55.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(false, false, 5000u, 5100u, 1500u, 55.0f, 60.0f));
     // Tank healthy -> still held.
-    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 80.0f, 60.0f));
+    EXPECT_FALSE(ShouldReleaseFollower(false, false, 5000u, 5100u, 1500u, 80.0f, 60.0f));
     // panicHp 0 disables the bypass: a near-dead tank stays held inside the lead.
-    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 1.0f, 0.0f));
+    EXPECT_FALSE(ShouldReleaseFollower(false, false, 5000u, 5100u, 1500u, 1.0f, 0.0f));
 }
 
 // leadMs == 0 turns the feature off: DPS release at once.
 TEST(DungeonClearReleaseTest, ZeroLeadOff)
 {
-    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 5000u, 0u, 100.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(false, false, 5000u, 5000u, 0u, 100.0f, 60.0f));
 }
 
 // combatSince == 0 (leader not observed in combat): gate is moot, release.
 TEST(DungeonClearReleaseTest, NoCombatStampReleases)
 {
-    EXPECT_TRUE(ShouldReleaseFollower(false, 0u, 5100u, 1500u, 100.0f, 60.0f));
+    EXPECT_TRUE(ShouldReleaseFollower(false, false, 0u, 5100u, 1500u, 100.0f, 60.0f));
+}
+
+// alreadyInCombat bypass: a follower ALREADY flagged in combat is released ONTO the
+// tank's fight regardless of an unexpired lead — the "dps run to me, not the tank"
+// fix. It must not be stranded through the lead where stock follow-master (-> the
+// human) would win the tick. Bypasses even a healthy tank deep inside the lead.
+TEST(DungeonClearReleaseTest, AlreadyInCombatBypassesLead)
+{
+    // 100ms into a 1500ms lead, tank at full HP -> a FRESH DPS is held...
+    EXPECT_FALSE(ShouldReleaseFollower(false, false, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+    // ...but the SAME instant, an already-in-combat DPS is released.
+    EXPECT_TRUE(ShouldReleaseFollower(false, true, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+    // Still released even at t == combatSince (0ms elapsed).
+    EXPECT_TRUE(ShouldReleaseFollower(false, true, 5000u, 5000u, 1500u, 100.0f, 60.0f));
 }
 
 // --- Elite weighting: pull weight in thirds of an elite -------------------

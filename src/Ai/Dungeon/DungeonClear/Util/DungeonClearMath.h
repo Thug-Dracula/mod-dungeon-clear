@@ -247,11 +247,16 @@ namespace DungeonClearMath
     // the leader's CURRENT combat began (`combatSinceMs`; 0 = leader not in
     // combat). Healers release immediately (`isHealer` — a withheld heal is a
     // wipe and heals don't rip threat the way DPS openers do). DPS release once
-    // the lead has elapsed, with two bypasses: the tank's HP below `panicHpPct`
-    // (it is LOSING the fight — pile in; <= 0 disables the bypass) and `leadMs`
-    // == 0 (feature off). The game-state read (leader combat stamp, healer role,
-    // tank HP) stays in DcLeaderSignal::IsLeaderFightAssistWanted.
-    bool ShouldReleaseFollower(bool isHealer, std::uint32_t combatSinceMs,
+    // the lead has elapsed, with THREE bypasses: `alreadyInCombat` (this follower
+    // is itself already flagged in combat — it can't over-aggro by moving into
+    // sight and MUST be driven onto the tank's fight rather than left with nothing
+    // to do, where reviving stock follow-master would drift it to the human), the
+    // tank's HP below `panicHpPct` (it is LOSING the fight — pile in; <= 0 disables
+    // the bypass), and `leadMs` == 0 (feature off). The game-state read (leader
+    // combat stamp, healer role, tank HP, this bot's combat flag) stays in
+    // DcLeaderSignal::IsLeaderFightAssistWanted.
+    bool ShouldReleaseFollower(bool isHealer, bool alreadyInCombat,
+                               std::uint32_t combatSinceMs,
                                std::uint32_t now, std::uint32_t leadMs,
                                float tankHealthPct, float panicHpPct);
 

@@ -368,3 +368,12 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear hakkar loot blood",
         { NextAction("dungeon clear hakkar loot blood", DcRel::HakkarLootBloodCombat) }));
 }
+
+void DungeonClearCombatStrategy::InitMultipliers(std::vector<Multiplier*>& multipliers)
+{
+    // The one combat-engine multiplier: it suppresses ONLY the stock "drop target"
+    // for a follower closing on the tank's out-of-LOS fight, so the flip-early assist
+    // can hold the combat engine instead of ping-ponging back out. See
+    // DungeonClearCombatMultiplier.
+    multipliers.push_back(new DungeonClearCombatMultiplier(botAI));
+}

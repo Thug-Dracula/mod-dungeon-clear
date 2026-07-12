@@ -872,8 +872,33 @@ namespace
             return false;
         if (!DcLeaderSignal::IsLeaderFightAssistWanted(bot))
             return false;
-        return botAI->GetAiObjectContext()
-                   ->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty();
+
+        // Fire unless the bot has an attacker it can ACT ON from where it stands —
+        // i.e. one within melee/cast range AND line of sight. The old test was a
+        // bare `attackers.empty()`, which parked the DPS the moment ANY mob was on
+        // its (LOS-filtered) list — even one far out of reach that stock combat
+        // never closed on, or a single mob flickering in/out of sight as the tank
+        // repositioned. That is the observed freeze (live: myAttackers=1, moving=0,
+        // not fighting) and the exact asymmetry the player called out: the healer's
+        // reposition has no such gate, so it keeps orbiting the tank while the DPS
+        // stall. Mirror the healer: assist (reposition to the tank's fight) whenever
+        // nothing is engageable from here; stand down only when there is a real
+        // target the rotation can already hit.
+        GuidVector const& attackers =
+            botAI->GetAiObjectContext()->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get();
+        if (attackers.empty())
+            return true;
+        float const range = botAI->IsMelee(bot)
+            ? (bot->GetCombatReach() + 5.0f)
+            : botAI->GetRange("spell");
+        for (ObjectGuid const& guid : attackers)
+        {
+            Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+            if (u && u->IsAlive() && bot->GetExactDist(u) <= range &&
+                bot->IsWithinLOSInMap(u))
+                return false;  // an engageable target is in reach — let combat fight it
+        }
+        return true;  // nothing engageable from here — reposition to the fight
     }
 }
 
@@ -893,7 +918,18 @@ bool DungeonClearAssistCampTrigger::IsActive()
     // alone, not on an empty attacker list. Covers the advanced-pull camp fight
     // AND every fight the camp machinery does not own (Leeroy/dynamic/boss);
     // defers to the camp hold during the passive pull phases.
-    if (!bot || bot->isDead() || bot->IsInCombat())
+    //
+    // NOT gated on !bot->IsInCombat() — that was the freeze. When the tank pulls, the
+    // followers get GROUP-flagged in combat, but with no attacker/target of their own
+    // (the pack is on the tank, out of their sight) the playerbots AI keeps them in
+    // the NON-COMBAT engine. In that limbo the old IsInCombat gate stood this trigger
+    // AND follow-tank down, while the combat-side assist never ran (wrong engine) —
+    // so nothing drove them and they froze around the corner (proven live: scout-lag
+    // running with selfCombat=1). This trigger only ever evaluates in the non-combat
+    // engine anyway, so a follower reaching here is not actively fighting; drive it to
+    // the tank's fight regardless of the combat flag. The action flips it into the
+    // combat engine once it reaches LOS/range.
+    if (!bot || bot->isDead())
         return false;
     // Healers are owned by the heal-reposition governor (aims at the hurt heal
     // target, not the pack); keep assist for DPS that must be driven into the fight.
