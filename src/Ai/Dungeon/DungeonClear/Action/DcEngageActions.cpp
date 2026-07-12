@@ -54,6 +54,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -723,6 +724,38 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
     // do NOT defer for that — we hold.)
     if (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot))
         return false;
+
+    // Second legitimate fall-through: the tank is below its OWN rest target and
+    // should top up mana/health during this forced standoff. Owning the tick
+    // UNCONDITIONALLY (as we did before) starved the stock drink/eat actions
+    // (rel ~3) of every between-pull gap here, so a mana-class tank never
+    // regained mana between the careful one-pack-at-a-time room-clear pulls — it
+    // just stood at the standoff forever ("holding at standoff (no driver this
+    // tick)" spamming the log). The DC rest override (DcRel::NeedsRest, 26.5) is
+    // the only rung above this hold that can drink, and it is inert unless the
+    // run sets RestManaPct/RestHealthPct (both default 0), so by default nothing
+    // topped the tank up.
+    //
+    // Deferring is safe and symmetric with the loot deferral above: while the
+    // tank is below its rest target the party-ready gate is false, so Advance
+    // (15) yields at TryBetweenPullsRest — which runs BEFORE its direct-pursuit
+    // shortcut — exactly the "advance yielding: party not ready / resting" path.
+    // Nothing creeps toward the boss; the tank falls through to the stock rest
+    // (rel ~3) and drinks in place. We still StopBot(Hold) first to cancel any
+    // residual escort glide so it is parked and can actually sit; once stationary
+    // that call no-ops (see DcMovement::StopBot) and never interrupts the drink.
+    // The standoff invariant is preserved: we only yield when Advance yields too.
+    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+    bool const lowMana = maxMana > 0 &&
+        bot->GetPowerPct(POWER_MANA) < DcPartyState::RestMinMpPct(bot);
+    bool const lowHealth = bot->GetHealthPct() < DcPartyState::RestMinHpPct(bot);
+    if (lowMana || lowHealth)
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        ClearStall(context);
+        SetPhase(context, "room pre-clear: resting at standoff");
+        return false;
+    }
 
     // Otherwise OWN the tick and hold at the standoff. StopBot(Hold) cancels any
     // in-flight escort glide (a plain StopMoving cannot) and tears down a leftover
