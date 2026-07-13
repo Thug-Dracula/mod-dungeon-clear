@@ -126,7 +126,16 @@ namespace
         // — because a non-zero pullOutRadius also forces advanced pull-to-camp — the
         // tank drags Pack B out from ~35yd west instead of meleeing it in place. See
         // RoomAggroBoss::pullOutRadius for the coupling that makes this safe.
-        { 554, 19221, 70.0f, {}, false, 0.0f, 0.0f, /*pullOutRadius*/ 14.0f },
+        //
+        // skirtRadius 40 WIDENS the fight standoff (her raw ~28yd sphere is too tight):
+        // Pack B sits only 17yd out, so a camp cleared to the generic ~25yd from her
+        // still landed the kill on top of her aggro/CallForHelp and woke her while the
+        // party was still on the trash. The wider skirt drags Pack B's camp out toward
+        // the ~x268 entrance landing before the fight, clear of her and of the open
+        // floor her Raging Flames roam. It does NOT reclassify Pack B (membership uses
+        // pullOutRadius 14, not the skirt).
+        { 554, 19221, 70.0f, {}, false, 0.0f, 0.0f, /*pullOutRadius*/ 14.0f,
+          /*skirtRadius*/ 40.0f },
     };
 }
 
@@ -136,6 +145,12 @@ RoomAggroBoss const* RoomAggroRegistry::Find(uint32 mapId, uint32 bossEntry)
         if (b.mapId == mapId && b.bossEntry == bossEntry)
             return &b;
     return nullptr;
+}
+
+float RoomAggroRegistry::SkirtOverride(uint32 mapId, uint32 bossEntry)
+{
+    RoomAggroBoss const* b = Find(mapId, bossEntry);
+    return b ? b->skirtRadius : 0.0f;
 }
 
 bool RoomAggroRegistry::IsMemberEntry(RoomAggroBoss const& boss, uint32 entry)

@@ -145,10 +145,17 @@ float DcEngageGeometry::RoomAggroSphereRadius(Player* bot, Creature* boss)
 {
     if (!bot || !boss)
         return 0.0f;
-    return boss->GetAggroRange(bot) + bot->GetCombatReach()
+    float const computed = boss->GetAggroRange(bot) + bot->GetCombatReach()
          + boss->GetCombatReach()
          + DcSettings::GetFloat(bot, "AggroRangeMargin")
          + DcSettings::GetFloat(bot, "RoomAggroPathPadding");
+
+    // A flagged boss may carry a per-boss skirt override (RoomAggroBoss::skirtRadius)
+    // that WIDENS this avoid sphere when the raw aggro range under-states how far the
+    // fight must stay away — a wide CallForHelp, summoned roamers that must not be
+    // fought on top of the boss (Sepethrea). Never SHRINKS below the computed sphere.
+    float const skirt = RoomAggroRegistry::SkirtOverride(boss->GetMapId(), boss->GetEntry());
+    return skirt > computed ? skirt : computed;
 }
 float DcEngageGeometry::PullCommitRange(Player* bot, Unit* target, float staticRange)
 {

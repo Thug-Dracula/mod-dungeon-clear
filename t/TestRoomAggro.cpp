@@ -119,6 +119,33 @@ TEST(RoomAggroRegistryTest, MechanarSepethreaHasPullOutRoom)
     EXPECT_FALSE(sep->hasYBand);
     EXPECT_GT(sep->pullOutRadius, 0.0f);        // the coupled shrink is set
     EXPECT_LT(sep->pullOutRadius, 17.0f);       // below Pack B's nearest member (17.3yd)
+    // The fight-standoff skirt is WIDENED past her raw ~28yd sphere so the dragged
+    // pack is fought clear of her aggro/CallForHelp (and the open floor her Raging
+    // Flames roam), yet stays DECOUPLED from the exclusion (pullOutRadius).
+    EXPECT_GT(sep->skirtRadius, 28.0f);
+    EXPECT_GT(sep->skirtRadius, sep->pullOutRadius);
+}
+
+// SkirtOverride returns the row's widened skirt for a flagged boss and 0 elsewhere,
+// so RoomAggroSphereRadius (which maxes the computed sphere against it) widens ONLY
+// for the flagged boss. Pandemonius carries no override -> 0 (computed sphere alone).
+TEST(RoomAggroRegistryTest, SkirtOverrideOnlyForFlaggedRow)
+{
+    EXPECT_FLOAT_EQ(RoomAggroRegistry::SkirtOverride(554, 19221),
+                    RoomAggroRegistry::Find(554, 19221)->skirtRadius);
+    EXPECT_FLOAT_EQ(RoomAggroRegistry::SkirtOverride(557, 18341), 0.0f);  // Pandemonius: none
+    EXPECT_FLOAT_EQ(RoomAggroRegistry::SkirtOverride(554, 12345), 0.0f);  // not a room boss
+}
+
+// The widened skirt must NOT change Pack B's room-trash membership: that reads
+// pullOutRadius (14yd), never the skirt. Pack B at 17.3yd is still KEPT even though
+// it now sits well inside the 40yd skirt.
+TEST(RoomAggroRegistryTest, MechanarSepethreaSkirtDoesNotReclassifyPackB)
+{
+    RoomAggroBoss const* sep = RoomAggroRegistry::Find(554, 19221);
+    ASSERT_NE(sep, nullptr);
+    ASSERT_GT(sep->skirtRadius, 17.3f);   // Pack B is inside the skirt
+    EXPECT_TRUE(RoomAggroRegistry::IsRoomTrash(*sep, 19510, 17.3f, sep->pullOutRadius));
 }
 
 // The pullOutRadius is what KEEPS Pack B as room trash. Pack B's nearest member

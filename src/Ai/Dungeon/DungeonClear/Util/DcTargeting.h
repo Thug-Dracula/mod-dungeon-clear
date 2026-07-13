@@ -185,6 +185,14 @@ public:
     // probe already run for the pull path).
     static bool RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx);
 
+    // The widened avoid-sphere skirt (yd) of the room-aggro boss currently being
+    // pre-cleared, or 0 when no room-clear is active or that boss carries no skirt
+    // override (RoomAggroBoss::skirtRadius). The advanced-pull camp raises its boss
+    // clearance and drag cap to this so a pack kept on the boss's aggro edge is
+    // DRAGGED OUT and fought outside her aggro, not killed in her wake (the Sepethrea
+    // "combat too close, pulls the boss" failure). Leader/room-scoped; cheap.
+    static float ActiveRoomSkirt(Player* bot, AiObjectContext* ctx);
+
     // The nearest remaining room-trash unit (from "dungeon clear room trash
     // remaining"), or nullptr. Nearest-first so the tank clears the room from
     // its edge inward and reaches the boss's own aggro sphere last, minimising

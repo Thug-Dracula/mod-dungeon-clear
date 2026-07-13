@@ -895,6 +895,24 @@ bool DcTargeting::RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx)
 
     return IsRoomClearActive(bot, ctx);
 }
+float DcTargeting::ActiveRoomSkirt(Player* bot, AiObjectContext* ctx)
+{
+    if (!bot || !ctx)
+        return 0.0f;
+
+    // Cheap gates first (registry Find), matching RoomClearForcesAdvanced: only a
+    // skirt-override boss can widen the camp, so bail before the pricier room-clear
+    // window probe for every ordinary room.
+    std::optional<DungeonBossInfo> next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value())
+        return 0.0f;
+    float const skirt = RoomAggroRegistry::SkirtOverride(bot->GetMapId(), next->entry);
+    if (skirt <= 0.0f)
+        return 0.0f;
+
+    return IsRoomClearActive(bot, ctx) ? skirt : 0.0f;
+}
 Unit* DcTargeting::NearestRoomTrash(Player* bot, AiObjectContext* ctx)
 {
     if (!bot || !ctx)

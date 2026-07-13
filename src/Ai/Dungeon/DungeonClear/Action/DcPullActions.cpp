@@ -120,6 +120,27 @@ namespace
     // of flickering in/out and never letting the tank tag.
     constexpr float DC_PULL_SET_RADIUS = 8.0f;
 
+    // Resolve the advanced-pull camp params (setback / camp-clear radius / drag cap)
+    // from the run settings, widening the clearance and drag cap to the boss's skirt
+    // when a room-aggro pre-clear with a skirt override is active (Sepethrea). Without
+    // this the camp only clears the boss by the generic PullCampSafeRadius (~25yd),
+    // which can land inside her wider aggro/CallForHelp when a pack kept on her edge
+    // (pullOutRadius) is dragged just far enough to clear other packs. Raising the drag
+    // cap alongside lets the drag actually reach the wider camp. Everywhere else the
+    // skirt is 0 and the settings pass through unchanged.
+    void DcResolveCampParams(Player* bot, AiObjectContext* ctx,
+                             float& setback, float& safeRadius, float& maxDrag)
+    {
+        setback = DcSettings::GetFloat(bot, "PullSetback");
+        safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+        maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+        float const skirt = DcTargeting::ActiveRoomSkirt(bot, ctx);
+        if (skirt <= 0.0f)
+            return;
+        safeRadius = std::max(safeRadius, skirt);
+        maxDrag = std::max(maxDrag, skirt + DcSettings::GetFloat(bot, "RoomAggroPartyMargin"));
+    }
+
     // Thin context adapter: resolves the pull-context value and delegates every
     // phase write to DcPullContext::Transition, where the Engage special-case and
     // the transition invariants live. No phase-write logic remains in this TU.
@@ -231,9 +252,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 // then fall through to the normal Forming handshake below.
                 if (DcTargeting::IsRoomClearActive(bot, context))
                 {
-                    float const sb = DcSettings::GetFloat(bot, "PullSetback");
-                    float const sr = DcSettings::GetFloat(bot, "PullCampSafeRadius");
-                    float const md = DcSettings::GetFloat(bot, "PullMaxDrag");
+                    float sb = 0.0f, sr = 0.0f, md = 0.0f;
+                    DcResolveCampParams(bot, context, sb, sr, md);
                     float clr = 0.0f, drg = 0.0f;
                     if (std::optional<Position> ahead = DcPullPlanner::ComputeSafeCamp(
                             botAI, trash, sb, sr, md, clr, drg))
@@ -297,10 +317,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // (PullSetback) so the party gets real room, extended further only if
             // another pack is still within PullCampSafeRadius (ComputeSafeCamp).
             // Dungeon mobs have no leash, so far-back is good; PullMaxDrag is just a
-            // sanity cap.
-            float const setback = DcSettings::GetFloat(bot, "PullSetback");
-            float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
-            float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+            // sanity cap. During a skirt-override room-clear the clear radius and drag
+            // cap widen to the boss's skirt (DcResolveCampParams) so the kept-close
+            // pack is dragged clear of the boss before the kill.
+            float setback = 0.0f, safeRadius = 0.0f, maxDrag = 0.0f;
+            DcResolveCampParams(bot, context, setback, safeRadius, maxDrag);
             float clearance = 0.0f;
             float drag = 0.0f;
             std::optional<Position> camped = DcPullPlanner::ComputeSafeCamp(
@@ -664,9 +685,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 // see it and eventually hand it to the walk-in engage.
                 pull.pullTarget = aggressor->GetGUID();
 
-                float const setback = DcSettings::GetFloat(bot, "PullSetback");
-                float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
-                float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+                float setback = 0.0f, safeRadius = 0.0f, maxDrag = 0.0f;
+                DcResolveCampParams(bot, context, setback, safeRadius, maxDrag);
                 float clr = 0.0f;
                 float drag = 0.0f;
                 if (std::optional<Position> fresh = DcPullPlanner::ComputeSafeCamp(
