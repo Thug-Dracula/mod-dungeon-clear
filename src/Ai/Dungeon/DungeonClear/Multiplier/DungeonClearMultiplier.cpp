@@ -154,8 +154,27 @@ float DungeonClearMultiplier::GetValue(Action* action)
     // active — DC owns engagement via its own engage-trash/engage-boss actions.
     // Anything else (loot, food, drink, reactive combat, our own dungeon-clear
     // actions, and follow for non-tanks) is untouched.
-    if (isWander || isProactiveEngage)
+    //
+    // Exception: when a party member is in combat, allow proactive-engage so
+    // followers react to adds/patrols that hit the party — the attacked member
+    // flips to combat but other bots stay in the non-combat engine and would
+    // idly watch without this.
+    if (isWander)
         return 0.0f;
+    if (isProactiveEngage)
+    {
+        if (Group* grp = bot->GetGroup())
+        {
+            for (GroupReference* ref = grp->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (member && member != bot && member->IsInWorld() &&
+                    member->GetMapId() == bot->GetMapId() && member->IsInCombat())
+                    return 1.0f;  // party member fighting — allow engage
+            }
+        }
+        return 0.0f;  // no one fighting — suppress
+    }
     return 1.0f;
 }
 
