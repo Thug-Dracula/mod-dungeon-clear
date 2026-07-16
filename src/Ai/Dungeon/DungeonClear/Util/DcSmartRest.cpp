@@ -7,10 +7,13 @@
 
 #include "DcSmartRestDecision.h"
 #include "DungeonClearTuning.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,7 +77,7 @@ namespace
         }
     }
 
-    Inputs BuildInputs(Player* leader, DcRunState const& run, uint32 now)
+    Inputs BuildInputs(Player* leader, AiObjectContext* leaderCtx, DcRunState const& run, uint32 now)
     {
         Inputs in;
         in.latched = run.smartRestLatched;
@@ -85,6 +88,21 @@ namespace
         in.dpsManaTriggerPct = static_cast<float>(DcSettings::GetUInt(leader, "SmartRestDpsManaPct"));
         in.healerManaTriggerPct = static_cast<float>(DcSettings::GetUInt(leader, "SmartRestHealerManaPct"));
         in.maxRestMs = DC_SMART_REST_MAX_MS;
+
+        // Boss-pull top-off: the next anchor is a real boss and the tank is
+        // inside its engage range (same memoized distance+floor test the at-boss
+        // trigger fires on), so the very next pull IS the boss. Raise the latch
+        // entry to the mana release bar — never open a boss on a party that
+        // merely clears the low trash triggers. Deliberately door/room-trash
+        // blind: resting at a closed boss door, or between the careful pulls of
+        // a room-aggro pre-clear, is exactly what a human group does at a boss.
+        if (leaderCtx)
+        {
+            std::optional<DungeonBossInfo> const next =
+                leaderCtx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+            in.bossPull = next.has_value() && next->kind == DungeonAnchorKind::Boss &&
+                          DcTickMemoAccess::AtBossEngage(leader, leaderCtx, *next);
+        }
         return in;
     }
 }
@@ -114,7 +132,7 @@ namespace DcSmartRest
         std::vector<Member> members;
         BuildSnapshot(leader, members);
 
-        Inputs const in = BuildInputs(leader, run, now);
+        Inputs const in = BuildInputs(leader, leaderCtx, run, now);
         DcSmartRestDecision::Result const verdict =
             DcSmartRestDecision::Decide(in, members);
 
@@ -122,8 +140,9 @@ namespace DcSmartRest
         {
             run.smartRestSinceMs = now;
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] smart rest: latched — party resting up ({} member(s) below trigger)",
-                     leader->GetName(), verdict.blockers.size());
+                     "[DC:{}] smart rest: latched — party resting up ({} member(s) below {})",
+                     leader->GetName(), verdict.blockers.size(),
+                     in.bossPull ? "the boss-pull top-off bar" : "trigger");
         }
         else if (!verdict.latched && run.smartRestLatched)
         {
@@ -165,7 +184,10 @@ namespace DcSmartRest
         PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
         if (!leaderAI)
             return "";
-        Inputs const in = BuildInputs(leader, DcRun::Of(leaderAI), getMSTime());
+        // BelowRelease/the bars don't read bossPull, so a null ctx would do —
+        // pass the real one anyway to keep the Inputs identical to UpdateLatch's.
+        Inputs const in = BuildInputs(leader, leaderAI->GetAiObjectContext(),
+                                      DcRun::Of(leaderAI), getMSTime());
 
         // Keep the addon line short: name a few members, then collapse the
         // rest — same shape as DcPartyState::DescribePartyNotReady.

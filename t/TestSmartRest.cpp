@@ -179,6 +179,119 @@ TEST(DcSmartRestTest, NotRearmedBlocksLatch)
     EXPECT_TRUE(Decide(in, party).latched);
 }
 
+// ---- boss-pull top-off entry ------------------------------------------------------
+
+TEST(DcSmartRestTest, BossPullLatchesBelowManaBar)
+{
+    // 50% mana clears every trash trigger (DPS 10) but must not open a boss.
+    auto party = BaseParty();
+    party[2].manaPct = 50.0f;
+    Inputs in = BaseInputs();
+    ASSERT_FALSE(Decide(in, party).latched);  // trash pull: pushes on
+    in.bossPull = true;
+    Result const r = Decide(in, party);       // boss pull: tops off first
+    EXPECT_TRUE(r.latched);
+    ASSERT_EQ(r.blockers.size(), 1u);
+    EXPECT_EQ(r.blockers[0], 2u);
+}
+
+TEST(DcSmartRestTest, BossPullAtManaBarDoesNotLatch)
+{
+    auto party = BaseParty();
+    for (Member& m : party)
+        m.manaPct = kManaReleasePct;  // everyone AT the 90 bar
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    EXPECT_FALSE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullHealerBelowBarLatches)
+{
+    // The exact reported failure: healer just above its 40 trigger pulls a boss.
+    auto party = BaseParty();
+    party[1].manaPct = 45.0f;
+    Inputs in = BaseInputs();
+    ASSERT_FALSE(Decide(in, party).latched);
+    in.bossPull = true;
+    EXPECT_TRUE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullIgnoresNonManaUsers)
+{
+    auto party = BaseParty();
+    party[3].manaPct = 0.0f;  // manaless melee — field meaningless
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    EXPECT_FALSE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullIsManaOnly)
+{
+    // HP above its trigger never blocks a boss pull — topping HP between pulls
+    // is the healer's job, and hpTriggerPct still catches the genuinely hurt.
+    auto party = BaseParty();
+    party[3].hpPct = 80.0f;
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    EXPECT_FALSE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullHumanOwesOnlyItsOwnBar)
+{
+    // A human at 50% mana (bar = trigger 10 + margin 5) must not hold the boss
+    // pull hostage — we can't force a human to drink.
+    auto party = BaseParty();
+    party[4].manaPct = 50.0f;
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    EXPECT_FALSE(Decide(in, party).latched);
+
+    party[4].manaPct = 12.0f;  // below ITS bar — latches like any member
+    EXPECT_TRUE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullCannotInstantlyRelatchAfterRelease)
+{
+    // Hysteresis proof for the boss entry: a fresh release leaves every bot AT
+    // its bars (hp 99.5 / mana 90), and the boss entry only fires strictly
+    // below the mana bar.
+    auto party = BaseParty();
+    for (Member& m : party)
+    {
+        m.hpPct = kReleasePct;
+        m.manaPct = kManaReleasePct;
+    }
+    ASSERT_FALSE(Decide(LatchedInputs(), party).latched);
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    EXPECT_FALSE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullRespectsRearmCooldown)
+{
+    // A timeout release (AFK human below its bar) must not flap straight back
+    // into a boss-pull latch during the rearm window.
+    auto party = BaseParty();
+    party[2].manaPct = 50.0f;
+    Inputs in = BaseInputs();
+    in.bossPull = true;
+    in.rearmed = false;
+    EXPECT_FALSE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, BossPullWorksWithAllTriggersDisabled)
+{
+    // The top-off is a property of the boss pull, not of any trigger dimension.
+    auto party = BaseParty();
+    party[2].manaPct = 50.0f;
+    Inputs in = BaseInputs();
+    in.hpTriggerPct = 0.0f;
+    in.dpsManaTriggerPct = 0.0f;
+    in.healerManaTriggerPct = 0.0f;
+    in.bossPull = true;
+    EXPECT_TRUE(Decide(in, party).latched);
+}
+
 // ---- holding / releasing the latch ----------------------------------------------
 
 TEST(DcSmartRestTest, LatchedHoldsUntilBotsRested)

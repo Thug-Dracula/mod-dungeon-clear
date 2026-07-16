@@ -76,7 +76,9 @@ inline constexpr DcSettingDef kDcSettings[] =
     // healers) — then the WHOLE party stops and rests to FULL health and mana
     // before pushing again. While ON, the legacy RestHealthPct/RestManaPct
     // targets above are ignored everywhere. A trigger of 0 disables that
-    // dimension. OFF = the legacy rest behavior, untouched.
+    // dimension. Boss pulls are special-cased: at the boss the party always
+    // tops mana off to the release bar first, whatever the triggers say. OFF =
+    // the legacy rest behavior, untouched.
     { "SmartRest",              DcType::Bool,   0,   0,   1,  true  },
     { "SmartRestHealthPct",     DcType::UInt,  50,   0, 100,  true  },
     { "SmartRestDpsManaPct",    DcType::UInt,  10,   0, 100,  true  },

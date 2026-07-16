@@ -18,7 +18,9 @@
 // party-wide rest, and the release bar is full health but only a near-full mana
 // (the last sliver tops off free while walking) — fewer, longer rests. Between
 // rests eating/drinking is fully suppressed (the multiplier's
-// job, keyed off this latch).
+// job, keyed off this latch). One exception to the low entry: a BOSS pull
+// (Inputs::bossPull) latches at the mana release bar itself, so the party
+// always opens a boss fight topped off, never just-above the trash triggers.
 //
 // Extracted engine-free so it is unit-testable in isolation, mirroring
 // DecidePull / DecideCombatRegroup. DcSmartRest (the glue) gathers the live
@@ -69,6 +71,16 @@ namespace DcSmartRestDecision
         float         dpsManaTriggerPct = 10.0f;  // SmartRestDpsManaPct (DPS + tanks)
         float         healerManaTriggerPct = 40.0f;  // SmartRestHealerManaPct
         std::uint32_t maxRestMs = 0;       // timeout failsafe; 0 = never time out
+
+        // The next pull is a BOSS and the tank is inside its engage range. Raises
+        // the latch entry from the low role triggers to each member's MANA release
+        // bar: a healer at 45% is fine to push trash on, but must not open a boss
+        // fight — the party tops off to the 90% bar first. Mana only; HP has no
+        // boss-specific bar (the healer keeps the party topped between pulls, and
+        // a genuinely hurt member is the hpTriggerPct trigger's job). Entry at the
+        // release bar keeps the hysteresis exact: a fresh release leaves everyone
+        // AT the bar, so it can never instantly re-latch.
+        bool          bossPull = false;
     };
 
     struct Result
@@ -91,7 +103,9 @@ namespace DcSmartRestDecision
     float ManaReleaseBar(Member const& m, Inputs const& in);
 
     // The two halves of the hysteresis, exposed so the glue's DescribeWait can
-    // name blockers with the exact same rules Decide applies.
+    // name blockers with the exact same rules Decide applies. BelowTrigger also
+    // owns the boss-pull entry (in.bossPull raises the mana entry to the mana
+    // release bar).
     bool BelowTrigger(Member const& m, Inputs const& in);
     bool BelowRelease(Member const& m, Inputs const& in);
 

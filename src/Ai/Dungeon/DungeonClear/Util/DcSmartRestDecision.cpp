@@ -36,6 +36,13 @@ namespace DcSmartRestDecision
     {
         if (in.hpTriggerPct > 0.0f && m.hpPct < in.hpTriggerPct)
             return true;
+        // Boss pull imminent: any mana user short of its RELEASE bar latches a
+        // top-off rest — never open a boss fight on a half tank of mana that
+        // merely clears the low trash triggers. Humans owe only their own bar
+        // (trigger + margin, or nothing on a disabled trigger) — a human we
+        // can't force to drink must not deadlock the pull.
+        if (in.bossPull && m.isManaUser && m.manaPct < ManaReleaseBar(m, in))
+            return true;
         float const manaTrigger = ManaTriggerPct(m, in);
         return manaTrigger > 0.0f && m.manaPct < manaTrigger;
     }
