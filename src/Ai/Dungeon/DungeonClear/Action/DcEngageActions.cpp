@@ -1697,6 +1697,31 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
 bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
 {
     DisableDungeonClear(botAI, "All bosses cleared!");
+
+    if (!bot || !bot->IsInWorld() || bot->IsBeingTeleported())
+        return true;
+
+    Group* group = bot->GetGroup();
+    if (!group)
+        return true;
+
+    std::vector<Player*> members;
+    for (GroupReference* itr = group->GetFirstMember(); itr; itr = itr->next())
+        if (Player* m = itr->GetSource())
+            members.push_back(m);
+
+    for (Player* member : members)
+    {
+        if (!member || !member->IsInWorld() || member->IsBeingTeleported())
+            continue;
+
+        member->TeleportTo(
+            member->m_homebindMapId,
+            member->m_homebindX,
+            member->m_homebindY,
+            member->m_homebindZ, 0.0f);
+    }
+
     return true;
 }
 

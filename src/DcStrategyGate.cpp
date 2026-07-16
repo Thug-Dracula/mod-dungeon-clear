@@ -18,6 +18,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcFollowerLifecycle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Bot/Engine/WorldPacket/Event.h"
 
 namespace
 {
@@ -109,5 +111,50 @@ namespace DcStrategyGate
         // for the duration of the loop.
         for (auto const& kv : ObjectAccessor::GetPlayers())
             Reconcile(kv.second);
+    }
+
+    void TryAutoStart(Player* bot)
+    {
+        if (!bot || !bot->IsInWorld())
+            return;
+
+        Map* map = bot->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+        if (!botAI)
+            return;
+
+        // Only auto-start the leader tank — followers react to the leader's flag
+        if (!DcLeaderSignal::IsDungeonClearLeader(bot))
+            return;
+
+        // Don't restart if already running
+        if (DcRun::Of(botAI->GetAiObjectContext()).enabled)
+            return;
+
+        // Verify bot-only group (every member must be a non-real-player bot)
+        Group* group = bot->GetGroup();
+        if (!group)
+            return;
+
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == bot)
+                continue;
+            PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+            if (!memberAI || memberAI->IsRealPlayer())
+                return;  // real player in group — don't auto-start
+        }
+
+        // Dispatch "dc on" to start the autonomous run. The bot's own GUID is
+        // passed as event owner; IsAuthorized in DcOnAction::Execute allows
+        // bot-only groups via the all-bots check we added.
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC] Auto-starting dungeon clear for tank {} in bot-only group",
+                 bot->GetName());
+        botAI->DoSpecificAction("dc on", Event("dc", "", bot), true);
     }
 }

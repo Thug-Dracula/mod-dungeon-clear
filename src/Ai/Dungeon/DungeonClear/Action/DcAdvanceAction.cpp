@@ -665,13 +665,54 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
 // The multiplier suppresses wander actions during the wait.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
 {
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+
+    // Abort rest immediately if any party member is in combat — the tank
+    // must react to adds/patrols that hit the party during downtime.
+    if (Group* grp = bot->GetGroup())
+    {
+        for (GroupReference* ref = grp->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member != bot && member->IsInWorld() &&
+                member->GetMapId() == bot->GetMapId() && member->IsInCombat())
+            {
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[DC:{}] party member {} in combat — aborting rest",
+                          bot->GetName(), member->GetName());
+                appr.notReadySinceMs = 0;
+                return Step::Continue;
+            }
+        }
+    }
+
+    uint32 const now = getMSTime();
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+
     if (!IsBetweenPullsReady(bot, context))
     {
+        if (!appr.notReadySinceMs)
+            appr.notReadySinceMs = now;
+        uint32 const elapsed = getMSTimeDiff(appr.notReadySinceMs, now);
+        // Force advance after 20 seconds regardless of party readiness
+        if (elapsed >= 20000)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] advance forcing: party not ready for {}ms — advancing anyway",
+                     bot->GetName(), elapsed);
+            appr.notReadySinceMs = 0;
+            return Step::Continue;
+        }
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
+                  "[DC:{}] advance yielding: party not ready / resting ({}ms)",
+                  bot->GetName(), elapsed);
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         return Step::ReturnFalse;
     }
+    // Party is ready — clear any pending timer
+    appr.notReadySinceMs = 0;
     return Step::Continue;
 }
 
