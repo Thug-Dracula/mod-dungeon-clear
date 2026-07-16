@@ -78,6 +78,15 @@ namespace DcRel
     inline constexpr float PullManeuver           = 60.0f; // leader: drag the pack back to camp
     inline constexpr float StayAtCamp             = 60.0f; // follower: pin at camp (role peer of PullManeuver)
     inline constexpr float AssistCampCombat       = 35.0f; // follower: onto the leader's pack
+    // Leader-only, combat side of the KillCreature-engage objective. A stealthed
+    // sapper (Shattered Halls' Shattered Hand Assassins) flags the party into combat
+    // and re-stealths — stock combat then has no detectable victim and the run
+    // wedges. This drives EngageDirect BY ENTRY on the undetected creature to break
+    // stealth. Above the stock combat movers (MoveChase ~30) so it owns the tick and
+    // walks the tank onto the sapper; below the camp owners / assist (35) and Hakkar
+    // (62-64) which never contend (role/zone partitioned). Inert the instant the
+    // target is detectable — stock combat then owns the kill.
+    inline constexpr float ObjectiveEngageCombat  = 34.0f; // leader: break a stealthed sapper's combat
     // Contribution-gated combat regroup (Option B). Fires ONLY when the pure kernel
     // says a follower can't contribute from where it stands (see DcRegroupDecision),
     // so it no longer needs to out-shout the stock movers — it sits BELOW them

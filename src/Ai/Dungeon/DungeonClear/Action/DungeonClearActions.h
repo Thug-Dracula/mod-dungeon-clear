@@ -103,6 +103,15 @@ protected:
     // inherits the skirt without its own copy.
     bool EngageDirect(Unit* target);
 
+    // Drive the ACTIVE objective's KillCreature-ENGAGE step (KillCreatureEngage):
+    // find the nearest reachable live creature of the step's entry and EngageDirect
+    // it (long-range walk-in + Attack — no visibility gate, so it breaks a stealthed
+    // target's stealth on the first swing). Returns true when it owned the tick
+    // (moved/attacked); false when there is no active engage step or no reachable
+    // creature of its entry. Shared by the non-combat objective driver and the
+    // combat-side stealth-sapper rung. See DungeonEventExecutor::ActiveEngageStep.
+    bool DriveObjectiveEngage();
+
     // Detour waypoint to approach `target` while skirting an ACTIVE room-aggro
     // boss's aggro sphere, or nullopt when no detour is needed: the direct line
     // is already clear, no room clear is active (DcTargeting::IsRoomClearActive),
@@ -384,6 +393,27 @@ class DcRunEventAction : public DungeonClearEngageActionBase
 public:
     DcRunEventAction(PlayerbotAI* botAI)
         : DungeonClearEngageActionBase(botAI, "dungeon clear run event")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// COMBAT-engine sibling of the objective KillCreature-engage driver. A stealthed
+// mob (Shattered Halls' Shattered Hand Assassins) can Sap the tank: the sap flags
+// the party into combat AND the mob stays/re-stealthed, so once the incapacitate
+// wears off stock combat has no detectable victim and the run wedges "in combat,
+// nothing to hit". The non-combat DcObjectiveArriveAction engage branch can't run
+// then (combat owns the engine), so this drives the same DriveObjectiveEngage()
+// from the combat engine: walk the tank onto the undetected sapper by ENTRY and
+// Attack it, breaking stealth on the first swing. Gated (in the trigger) to fire
+// only while an engage objective is active and an undetected, reachable creature
+// of its entry sits nearby; inert the instant it becomes detectable, handing the
+// kill back to stock combat.
+class DcObjectiveEngageCombatAction : public DungeonClearEngageActionBase
+{
+public:
+    DcObjectiveEngageCombatAction(PlayerbotAI* botAI)
+        : DungeonClearEngageActionBase(botAI, "dungeon clear objective engage combat")
     {
     }
     bool Execute(Event event) override;

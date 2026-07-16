@@ -50,6 +50,7 @@ namespace
             RegisterUnderbogRoster(t);
             RegisterOldHillsbradRoster(t);
             RegisterMechanarRoster(t);
+            RegisterShatteredHallsRoster(t);
             return t;
         }();
         return kPatches;

@@ -436,6 +436,32 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
     return true;
 }
 
+bool DungeonClearEngageActionBase::DriveObjectiveEngage()
+{
+    uint32 entry = 0;
+    float search = 0.0f;
+    // anyStep: match the combat trigger (DungeonClearObjectiveEngageCombatTrigger),
+    // which arms during a leading MoveTo so a pre-arrival sapper's stealth still
+    // gets broken. The action and trigger MUST agree on the target entry/radius.
+    if (!DungeonEventExecutor::ActiveEngageStep(context, entry, search, /*anyStep*/ true))
+        return false;
+
+    Creature* target = bot->FindNearestCreature(entry, search, /*alive*/ true);
+    if (!target)
+        return false;
+    // FindNearestCreature is a flat 2D scan that can return an instance of the
+    // entry across a wall / on another level. Only engage one we can actually
+    // reach (a complete on-level route); requireDirect=false keeps a legitimately
+    // FAR seek alive, since the seek IS this objective's navigation.
+    if (!DcEngageGeometry::IsEngageReachable(bot, target, /*requireDirect*/ false))
+        return false;
+    // ResolveEscortConflict cancels a launched escort glide but leaves our own
+    // approach move intact (unlike StopBot(Hold)).
+    DcMovement::ResolveEscortConflict(bot);
+    SetPhase(context, "objective");
+    return EngageDirect(target);
+}
+
 std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* target)
 {
     if (!target)
@@ -1492,6 +1518,19 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     }
     SetPhase(context, "");
     return true;
+}
+
+bool DcObjectiveEngageCombatAction::Execute(Event /*event*/)
+{
+    // The trigger has already established the deadlock signature: DC leader, in
+    // combat, an active KillCreature-engage objective, and an undetected reachable
+    // creature of its entry nearby (a stealthed sapper that flagged the party into
+    // combat and re-stealthed). Drive EngageDirect BY ENTRY to walk onto it and
+    // Attack — the first swing breaks stealth and stock combat takes the kill from
+    // here (this rung is inert the instant the target becomes detectable). False if
+    // the target slipped out of reach between trigger and action; stock combat then
+    // owns the tick.
+    return DriveObjectiveEngage();
 }
 
 bool DcRunEventAction::Execute(Event /*event*/)

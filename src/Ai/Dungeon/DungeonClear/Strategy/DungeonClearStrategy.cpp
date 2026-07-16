@@ -318,6 +318,19 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear assist camp combat",
         { NextAction("dungeon clear assist camp combat", DcRel::AssistCampCombat) }));
 
+    // LEADER-only: combat-side driver for the KillCreature-engage objective. A
+    // stealthed sapper (Shattered Halls' Shattered Hand Assassins) can Sap the tank,
+    // flag the party into combat and stay stealthed — stock combat then has no
+    // detectable victim and the run wedges. This drives EngageDirect BY ENTRY on the
+    // undetected assassin to break stealth. Relevance 34 — above the stock combat
+    // movers (MoveChase ~30) so it owns the tick and walks the tank onto the sapper,
+    // below the camp owners / assist (35, follower-only) and Hakkar (62-64). Inert
+    // the instant the target is detectable (stock combat resumes the kill). See
+    // DungeonClearObjectiveEngageCombatTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear objective engage combat",
+        { NextAction("dungeon clear objective engage combat", DcRel::ObjectiveEngageCombat) }));
+
     // In-combat regroup for FOLLOWERS (contribution-gated, Option B): reconnect a
     // follower to the fight ONLY when the pure kernel says it can't contribute from
     // where it stands (a DPS with no visible attacker, a healer that can't heal the

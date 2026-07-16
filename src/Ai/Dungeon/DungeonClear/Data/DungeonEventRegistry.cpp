@@ -346,6 +346,7 @@ namespace
             RegisterUnderbogEvents(t);
             RegisterOldHillsbradEvents(t);
             RegisterMechanarEvents(t);
+            RegisterShatteredHallsEvents(t);
             return t;
         }();
         return kEvents;

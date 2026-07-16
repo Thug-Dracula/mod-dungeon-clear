@@ -22,6 +22,7 @@ public:
         creators["dungeon clear engage trash"] = &DungeonClearActionContext::engage_trash;
         creators["dungeon clear engage boss"] = &DungeonClearActionContext::engage_boss;
         creators["dungeon clear objective arrive"] = &DungeonClearActionContext::objective_arrive;
+        creators["dungeon clear objective engage combat"] = &DungeonClearActionContext::objective_engage_combat;
         creators["dungeon clear run event"] = &DungeonClearActionContext::run_event;
         creators["dungeon clear room clear"] = &DungeonClearActionContext::room_clear;
         creators["dungeon clear room preclear hold"] = &DungeonClearActionContext::room_preclear_hold;
@@ -78,6 +79,7 @@ private:
     static Action* engage_trash(PlayerbotAI* ai) { return new DungeonClearEngageTrashAction(ai); }
     static Action* engage_boss(PlayerbotAI* ai) { return new DungeonClearEngageBossAction(ai); }
     static Action* objective_arrive(PlayerbotAI* ai) { return new DcObjectiveArriveAction(ai); }
+    static Action* objective_engage_combat(PlayerbotAI* ai) { return new DcObjectiveEngageCombatAction(ai); }
     static Action* run_event(PlayerbotAI* ai) { return new DcRunEventAction(ai); }
     static Action* room_clear(PlayerbotAI* ai) { return new DungeonClearRoomClearAction(ai); }
     static Action* room_preclear_hold(PlayerbotAI* ai) { return new DungeonClearRoomPreClearHoldAction(ai); }

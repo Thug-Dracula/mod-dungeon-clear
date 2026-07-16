@@ -97,6 +97,11 @@ TEST(DungeonClearRelevanceTest, RegroupCombatSitsBelowStockMovers)
     EXPECT_LT(DcRel::RegroupCombat,    kStockMove);
     EXPECT_LT(kStockMove,              DcRel::AssistCampCombat);
     EXPECT_LT(DcRel::AssistCampCombat, DcRel::HealReposition);
+    // The combat-side objective engage (stealthed-sapper break) sits ABOVE stock
+    // movers so it owns the tick and walks the tank onto the undetected sapper, and
+    // BELOW the follower assist / camp owners (35) which never contend (leader-only).
+    EXPECT_LT(kStockMove,                     DcRel::ObjectiveEngageCombat);
+    EXPECT_LT(DcRel::ObjectiveEngageCombat,   DcRel::AssistCampCombat);
     // And the whole documented chain: RegroupCombat < move < assist < heal-reposition.
     EXPECT_LT(DcRel::RegroupCombat, DcRel::AssistCampCombat);
     EXPECT_LT(DcRel::AssistCampCombat, DcRel::HealReposition);

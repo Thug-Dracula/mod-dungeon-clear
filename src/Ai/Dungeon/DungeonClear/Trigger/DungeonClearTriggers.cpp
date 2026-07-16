@@ -955,6 +955,44 @@ bool DungeonClearLeaderAssistTrigger::IsActive()
     return DcLeaderSignal::IsLeaderShouldAssistFight(bot);
 }
 
+bool DungeonClearObjectiveEngageCombatTrigger::IsActive()
+{
+    // IsEnabled also gates leader-only + live/unpaused run. Combat engine only.
+    if (!IsEnabled(context, bot))
+        return false;
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    // While the active objective's event HAS a KillCreature-ENGAGE step. anyStep:
+    // arm even during the leading MoveTo (step 0), so a sapper that flags us into
+    // combat before the tank reaches the anchor (and the non-combat driver advances
+    // to the engage step) still gets its stealth broken — that pre-arrival window
+    // is the exact deadlock this rung exists to break.
+    uint32 entry = 0;
+    float search = 0.0f;
+    if (!DungeonEventExecutor::ActiveEngageStep(context, entry, search, /*anyStep*/ true))
+        return false;
+
+    // Deadlock signature: a live creature of the step's entry sits nearby and is
+    // REACHABLE, but this bot canNOT see/detect it — a stealthed sapper that flagged
+    // us into combat and re-stealthed, leaving stock combat with no victim. While it
+    // stays undetectable, drive EngageDirect by entry (the action) to break stealth.
+    // Once detectable, this returns false and stock combat owns the kill. Using the
+    // nearest instance as the probe is sufficient: if the nearest is detectable the
+    // party is NOT deadlocked (stock combat has a target and makes progress), and a
+    // farther stealthed one becomes the nearest once that kill completes.
+    Creature* c = bot->FindNearestCreature(entry, search, /*alive*/ true);
+    if (!c)
+        return false;
+    if (bot->CanSeeOrDetect(c))
+        return false;  // detectable -> stock combat handles it, this stands down
+    return DcEngageGeometry::IsReachable(bot, c->GetPositionX(), c->GetPositionY(),
+                                         c->GetPositionZ());
+}
+
 namespace
 {
     // Is the bot's combat explained by something we must RESPECT (so it is NOT a

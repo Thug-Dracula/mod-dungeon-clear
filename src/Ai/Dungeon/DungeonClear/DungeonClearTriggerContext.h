@@ -39,6 +39,7 @@ public:
         creators["dungeon clear assist camp"] = &DungeonClearTriggerContext::assist_camp;
         creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
         creators["dungeon clear leader assist"] = &DungeonClearTriggerContext::leader_assist;
+        creators["dungeon clear objective engage combat"] = &DungeonClearTriggerContext::objective_engage_combat;
         creators["dungeon clear regroup combat"] = &DungeonClearTriggerContext::regroup_combat;
         creators["dungeon clear break stuck combat"] = &DungeonClearTriggerContext::break_stuck_combat;
         creators["dungeon clear heal reposition"] = &DungeonClearTriggerContext::heal_reposition;
@@ -85,6 +86,7 @@ private:
     static Trigger* assist_camp(PlayerbotAI* ai) { return new DungeonClearAssistCampTrigger(ai); }
     static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
     static Trigger* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistTrigger(ai); }
+    static Trigger* objective_engage_combat(PlayerbotAI* ai) { return new DungeonClearObjectiveEngageCombatTrigger(ai); }
     static Trigger* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatTrigger(ai); }
     static Trigger* break_stuck_combat(PlayerbotAI* ai) { return new DungeonClearBreakStuckCombatTrigger(ai); }
     static Trigger* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionTrigger(ai); }

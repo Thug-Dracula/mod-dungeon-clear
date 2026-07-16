@@ -172,6 +172,28 @@ public:
     // Reads the run's "next dungeon boss" + "dungeon clear event progress" values,
     // so pass the context of the bot whose run state you mean (the leader's).
     static bool IsPersistentAnchoredEventActive(AiObjectContext* context);
+
+    // If `context`'s current objective drives an event with a KillCreature ENGAGE
+    // step (KillCreatureEngage — .engage set), report true and fill `outEntry` /
+    // `outSearchRadius` with the creature entry to seek and the radius to seek it
+    // in. Pure lookup of the run's "next dungeon boss" + "event progress" values
+    // against the registry; no world state. Used by both the non-combat objective
+    // driver and the combat-side stealth-sapper rung so they seek the same target.
+    //
+    // `anyStep` controls WHICH step is consulted:
+    //   * false (default): only the ACTIVE step (the idx=(matching?stepIndex:0)
+    //     fallback used in DcObjectiveArriveAction — a stale/foreign progress
+    //     resolves to step 0). Returns false when the active step is a MoveTo/gate.
+    //   * true: the active step is preferred if it IS an engage step, else the
+    //     event is SCANNED for its first engage step. The combat-side stealth-
+    //     breaker passes true so it can arm during a leading MoveTo (step 0) — the
+    //     window where a stealthed sapper flags the party into combat BEFORE the
+    //     tank reaches the anchor and the non-combat driver advances to the engage
+    //     step. Without this the combat rung stands down for exactly that deadlock.
+    // Returns false (leaving the outs untouched) when the event has no engage step
+    // or there is no active objective event.
+    static bool ActiveEngageStep(AiObjectContext* context, uint32& outEntry,
+                                 float& outSearchRadius, bool anyStep = false);
 };
 
 #endif

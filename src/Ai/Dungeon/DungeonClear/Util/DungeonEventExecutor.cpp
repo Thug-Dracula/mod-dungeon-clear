@@ -1021,3 +1021,51 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
     return prog.eventId == ev->id && prog.stepIndex >= 1 &&
            prog.stepIndex < ev->steps.size();
 }
+
+bool DungeonEventExecutor::ActiveEngageStep(AiObjectContext* context, uint32& outEntry,
+                                            float& outSearchRadius, bool anyStep)
+{
+    if (!context)
+        return false;
+
+    std::optional<DungeonBossInfo> const next =
+        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
+        return false;
+
+    DungeonEvent const* ev = DungeonEventRegistry::Find(next->mapId, next->eventId);
+    if (!ev)
+        return false;
+
+    auto reportEngage = [&](EventStep const& step) -> bool
+    {
+        if (step.kind != EventStepKind::KillCreature || !step.engage || !step.creatureEntry)
+            return false;
+        outEntry = step.creatureEntry;
+        outSearchRadius = step.radius > 0.0f ? step.radius : 250.0f;
+        return true;
+    };
+
+    DungeonEventProgress const& prog =
+        context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+    // Same fallback as DcObjectiveArriveAction: a progress that doesn't belong to
+    // THIS event resolves to step 0 (always a MoveTo for the engage events), which
+    // is not a KillCreature engage step and so reports false — no stale-instance
+    // guard needed.
+    uint32 const idx = (prog.eventId == ev->id) ? prog.stepIndex : 0;
+    if (idx < ev->steps.size() && reportEngage(ev->steps[idx]))
+        return true;
+
+    // Active step is a MoveTo/gate (not yet the engage step). For the combat-side
+    // stealth-breaker, fall back to the event's FIRST engage step: a stealthed
+    // sapper can flag the party into combat DURING the leading MoveTo, before the
+    // tank reaches the anchor and the non-combat driver advances stepIndex to the
+    // engage step. Without this, the combat rung stands down for exactly that
+    // window and the run wedges "in combat, no detectable victim".
+    if (anyStep)
+        for (EventStep const& step : ev->steps)
+            if (reportEngage(step))
+                return true;
+
+    return false;
+}

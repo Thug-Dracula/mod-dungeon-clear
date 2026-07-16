@@ -382,6 +382,30 @@ private:
     std::uint32_t stuckCombatSinceMs = 0;
 };
 
+// LEADER-only, COMBAT engine. The combat-side rung of the KillCreature-engage
+// objective (Shattered Halls' stealthed Shattered Hand Assassins). A stealthed
+// mob can Sap the tank: the sap flags the party into combat AND the assassin stays
+// stealthed, so once the incapacitate wears off stock combat has no detectable
+// victim and the run wedges "in combat, nothing to hit". The non-combat objective
+// driver (DcObjectiveArriveAction's engage branch) cannot run then — combat owns
+// the engine — so this fires it from the combat side. Active only when: DC leader
+// on a live/unpaused run, in combat, an active KillCreature-ENGAGE objective step
+// (DungeonEventExecutor::ActiveEngageStep), AND a live creature of that step's
+// entry sits nearby, REACHABLE, but this bot canNOT see/detect it — the exact
+// stealthed-sapper deadlock signature. Drives DcObjectiveEngageCombatAction, which
+// walks the tank onto the assassin by ENTRY and Attacks it (breaking stealth on the
+// first swing). Inert the instant the target becomes detectable, handing the kill
+// back to stock combat.
+class DungeonClearObjectiveEngageCombatTrigger : public Trigger
+{
+public:
+    DungeonClearObjectiveEngageCombatTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear objective engage combat", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 // Follower-only, COMBAT engine. A CONTRIBUTION-GATED reconnector (Option B): it no
 // longer tethers on distance. It fires only when a follower in combat has no useful
 // work it can do from where it stands — a DPS with an empty LOS attacker list, or a
