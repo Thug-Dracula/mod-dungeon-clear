@@ -7,7 +7,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Action.h"
+#include "AttackAction.h"
 #include "FollowActions.h"
+#include "Group.h"
 #include "Player.h"
 #include "Playerbots.h"
 #include "Position.h"
@@ -172,13 +174,65 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
     if (!action || !botAI || !bot)
         return 1.0f;
 
-    // Touch EXACTLY ONE combat action. Fast-path everything else so a fight's full
-    // action list pays only a single string compare per tick — the combat engine
-    // otherwise stays fully stock.
-    if (action->getName() != "drop target")
-        return 1.0f;
+    // --- Follower independent-engagement guard ---
+    // Non-tank bots in an active DC run must NOT initiate combat on their own.
+    // The combat engine fires actions (melee, reach spell, aoe) even when the
+    // tank hasn't pulled yet — a mob brushed by proximity, residual combat
+    // state from a prior fight, or the follower's own non-combat engage that
+    // snuck past the non-combat multiplier can flag the bot as "in combat" and
+    // the combat engine jumps in. Result: DPS fighting without the tank →
+    // "no-pull-state stall" → rest of party aggros → wipe.
+    // Suppress attack actions for followers when the leader is NOT in combat.
+    // When the leader IS in combat, followers assist normally (drop target
+    // guard below handles the LOS edge case).
+    bool const isCombatAction =
+        action->getName() == "melee" ||
+        action->getName() == "reach spell" ||
+        action->getName() == "dps aoe" ||
+        action->getName() == "attack anything" ||
+        dynamic_cast<AttackAction*>(action);
+    if (isCombatAction)
+    {
+        // Allow attacks when ANY party member (including self) is in combat.
+        // The follower should fight to protect the group, not just the tank.
+        // This covers the tank-dies scenario (aggro spills to DPS/healer),
+        // trash adds that bypass the tank, and the bot itself being attacked
+        // by a patrol when the leader hasn't engaged yet.
+        if (Group* grp = bot->GetGroup())
+        {
+            for (GroupReference* ref = grp->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (member && member->IsInWorld() &&
+                    member->GetMapId() == bot->GetMapId() && member->IsInCombat())
+                    return 1.0f;  // someone is fighting — assist
+            }
+        }
+        // Leader-only gate (legacy behavior): suppress follower attacks when
+        // the tank is not in combat and no one else is fighting.
+        if (Player* leader = AI_VALUE(Player*, DcKey::PartyTank))
+        {
+            if (leader != bot && !leader->IsInCombat())
+                return 0.0f;
+        }
+    }
 
     // Drop-target ping-pong guard. Engine transitions are action-driven: the stock
+    // "drop target" (CombatStrategy, relevance 99) fires whenever the current target
+    // is "invalid", and InvalidTargetValue treats OUT-OF-LINE-OF-SIGHT as invalid
+    // (AttackersValue::IsValidTarget -> IsWithinLOSInMap). It then leaves the combat
+    // engine. So when the flip-early party-assist seeds the tank's mob and flips a
+    // follower into the combat engine to close on it (DungeonClearAssistCampAction),
+    // drop target (99) out-ranks reach spell/melee (20) every tick and bounces the
+    // bot straight back to the non-combat engine before it can move — the 1-tick
+    // engine ping-pong that froze the party mid-fight (observed live: 1679 flip
+    // attempts, 0 engages). Suppress drop target ONLY for that transient case: an
+    // active tank-fight assist, a non-healer, and a current target that is alive,
+    // same-map and attackable but merely out of LOS (still being closed on). A dead /
+    // despawned / truly-invalid target is NOT out-of-LOS-only, so it still drops
+    // normally and the bot moves on or leaves combat cleanly.
+    if (action->getName() != "drop target")
+        return 1.0f;
     // "drop target" (CombatStrategy, relevance 99) fires whenever the current target
     // is "invalid", and InvalidTargetValue treats OUT-OF-LINE-OF-SIGHT as invalid
     // (AttackersValue::IsValidTarget -> IsWithinLOSInMap). It then leaves the combat
