@@ -414,10 +414,9 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         }
     }
 
-    // Tighter cluster than default. Keeps followers in healer LOS and out
-    // of mob aggro-radius arcs during the advance. Default followDistance
-    // (~10yd) had them strung out by the time the tank engaged.
-    float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
+    // Wider spacing keeps the party out of aggro range while the tank scouts.
+    // The tank's breadcrumb trail guides followers at this offset distance.
+    float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 15.0f);
 
     // Centered trail-follow. Stock Follow() / MoveFollow re-paths to the follow
     // slot through the core PathGenerator, which returns Detour's taut, wall-

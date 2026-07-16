@@ -46,7 +46,30 @@ namespace
         // locked out of every dc command.
         if (PlayerbotAI* ownerAI = GET_PLAYERBOT_AI(owner))
             if (!ownerAI->IsRealPlayer())
+            {
+                // Auto-authorize for bot-only groups (used by auto-start
+                // when a bot-only LFG group enters a dungeon). Every member
+                // must be a non-real-player bot.
+                if (bot && bot->GetGroup())
+                {
+                    bool allBots = true;
+                    for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                    {
+                        Player* member = ref->GetSource();
+                        if (!member)
+                            continue;
+                        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+                        if (!memberAI || memberAI->IsRealPlayer())
+                        {
+                            allBots = false;
+                            break;
+                        }
+                    }
+                    if (allBots)
+                        return true;
+                }
                 return false;
+            }
         if (!bot || !bot->GetGroup())
             return false;
         return bot->GetGroup()->IsMember(owner->GetGUID());

@@ -112,7 +112,7 @@ bool DungeonClearAtBossTrigger::IsActive()
 {
     if (!IsEnabled(context, bot))
         return false;
-    if (!bot || bot->IsInCombat() || bot->isDead())
+    if (!bot || bot->isDead())
         return false;
     Map* map = bot->GetMap();
     if (!map || !map->IsDungeon())
@@ -122,33 +122,16 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    // Travel objectives are not combat targets — the at-objective trigger owns
-    // arrival. Stand down so engage-boss never fires on a non-creature anchor.
     if (next->kind != DungeonAnchorKind::Boss)
         return false;
 
-    // Close enough AND on the boss's own floor (not just 3D-near while passing
-    // under an upper-floor boss). See IsAtBossEngage.
     if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
-    // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the
-    // whole room, so HOLD the boss pull while any room trash remains. The
-    // room-clear driver (Off/Leeroy) or the pull pipeline (advanced/dynamic)
-    // clears it first; the gate reopens the instant the room is clear (or the
-    // RoomClearTimeout valve fires inside the value). Cheap cached read.
     if (RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
         !AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return false;
 
-    // A closed door between us and the boss means it's BEYOND it and not actually
-    // reachable yet — even when it's within straight-line engage range (a boss or
-    // its pack right behind the door). Without this, IsAtBossEngage (a pure
-    // distance+floor test, door-blind) fires the at-boss engage, which outranks
-    // door-blocked (30 vs 22) and bee-lines the tank onto/through the door. Stand
-    // down so door-blocked parks at its stand-off; re-evaluates the instant the
-    // door opens. Checked fresh, not via the 500ms-cached blocking-door value,
-    // which can still read empty the moment the boss first comes into range.
     Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
@@ -156,11 +139,6 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (DcEngageGeometry::ClosedDoorBetween(bot, bx, by, bz))
         return false;
 
-    // When the long-path cache is anchored (registered route), make sure
-    // all intermediate anchors have been resolved before firing. This
-    // prevents the bot from "engaging" a boss it's geometrically near but
-    // separated from by a wall or door — the cached anchor list runs the
-    // bot around through the actual corridor first.
     ChunkedPathfinder::Result const& path =
         AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
     if (path.reachable && !path.segments.empty())
@@ -170,8 +148,6 @@ bool DungeonClearAtBossTrigger::IsActive()
             if (seg.anchored) { anyAnchored = true; break; }
         if (anyAnchored)
         {
-            // Last segment is the boss anchor; everything before it must
-            // be within its arriveRadius.
             for (size_t i = 0; i + 1 < path.segments.size(); ++i)
             {
                 PathSegment const& seg = path.segments[i];
@@ -184,8 +160,6 @@ bool DungeonClearAtBossTrigger::IsActive()
         }
     }
 
-    // Don't pull while party is still recovering or tank-side loot is pending.
-    // The idle-trigger's advance action holds the tank in place meanwhile.
     return IsBetweenPullsReady(bot, context);
 }
 

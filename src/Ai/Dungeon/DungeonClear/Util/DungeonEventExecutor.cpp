@@ -843,6 +843,9 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // (Re)initialise on a new event — self-heals a stale value from a prior run.
     if (prog.eventId != ev.id)
     {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] event progress RESET: eventId {} -> {} (stepIndex was {})",
+                  bot->GetName(), prog.eventId, ev.id, prog.stepIndex);
         prog.eventId = ev.id;
         prog.stepIndex = 0;
         prog.attempts = 0;
@@ -865,6 +868,9 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // eventId-mismatch reset above still re-inits it for a genuine new run.
     else if (!ev.persistent && getMSTimeDiff(prog.lastDriveMs, now) > 1000)
     {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] event progress GAP-RESET: persistent={} gap={}ms (stepIndex was {})",
+                  bot->GetName(), ev.persistent, getMSTimeDiff(prog.lastDriveMs, now), prog.stepIndex);
         prog.stepIndex = 0;
         prog.attempts = 0;
         prog.stepStartMs = now;

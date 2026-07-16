@@ -276,6 +276,7 @@ public:
     void OnPlayerMapChanged(Player* player) override
     {
         DcStrategyGate::Reconcile(player);
+        DcStrategyGate::TryAutoStart(player);
     }
 };
 

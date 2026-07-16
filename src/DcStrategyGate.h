@@ -67,6 +67,12 @@ namespace DcStrategyGate
     // throttled cadence from the world tick. This is the correctness net for the
     // reset-while-in-dungeon case described above.
     void ReconcileAllBots();
+
+    // Auto-start dungeon clear when a bot-only group enters a dungeon via LFG.
+    // Detects that all group members are bots (no real players), finds the
+    // leader tank, and dispatches "dc on" to activate autonomous clearing.
+    // Called from OnPlayerMapChanged after Reconcile() has installed strategies.
+    void TryAutoStart(Player* bot);
 }
 
 #endif  // _DC_STRATEGY_GATE_H
