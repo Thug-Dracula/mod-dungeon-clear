@@ -55,6 +55,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
@@ -174,6 +175,22 @@ bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bo
 {
     if (!bot || !context)
         return false;
+    if (DcSmartRest::Enabled(bot))
+    {
+        // Update the latch BEFORE the loot early-out, so it stays live (and
+        // the followers keep drinking toward full) even while the party loots.
+        // This gate is the latch's one update site — both memo slots (strict
+        // trigger-side, loose action-side) land here, and UpdateLatch is
+        // idempotent within a tick, so double evaluation is safe. Do NOT move
+        // the update into DcTickMemo: the loot-yield path must refresh it too.
+        bool const latched = DcSmartRest::UpdateLatch(bot, context);
+        if (requireNoLoot && context->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
+            return false;
+        SpreadGate const gate = GetSpreadGate(bot, context);
+        // Thresholds 0 = spread-only readiness; recovery is the latch's job.
+        return !latched &&
+               IsPartyReady(bot, 0.0f, 0.0f, gate.maxSpread, gate.anchor, gate.maxTankGap);
+    }
     if (requireNoLoot && context->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
         return false;
     SpreadGate const gate = GetSpreadGate(bot, context);

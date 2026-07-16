@@ -27,6 +27,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
@@ -663,6 +664,13 @@ namespace
                 bot->GetExactDist(tank) > DC_EVENT_REST_REGROUP_DIST)
                 return 0;
         }
+
+        // Smart Rest: the rest target is not a per-key setting but the party
+        // latch — while latched EVERYONE rests to full (target 100), released
+        // the trigger goes inert (target 0; between-rests suppression is the
+        // multiplier's job, so nothing fires against a 0-multiplier).
+        if (DcSettings::GetBool(bot, "SmartRest"))
+            return DcSmartRest::IsLatched(tank) ? 100 : 0;
 
         return DcSettings::GetUInt(bot, key);
     }

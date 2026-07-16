@@ -157,6 +157,17 @@ constexpr float DC_CORRIDOR_Z_BAND = 8.0f;
 constexpr float DC_TRASH_DETOUR_RATIO = 2.0f;
 constexpr float DC_TRASH_DETOUR_SLACK = 20.0f;
 
+// Smart Rest failsafes (DcSmartRest::UpdateLatch). A latched rest normally
+// releases when every bot reaches full hp/mana — but a member that CANNOT get
+// there (an AFK human who never drinks, a bot with no food when the food cheat
+// is off) must not stall the run forever, so a latch is force-released after
+// DC_SMART_REST_MAX_MS. The rearm cooldown then blocks an immediate re-latch on
+// that same member, or the party would flap latch/timeout in a tight cycle.
+// Worst case: 3-minute rest / 30-second push cycles — strictly better than the
+// legacy gate, which stalls indefinitely on the same member.
+constexpr uint32 DC_SMART_REST_MAX_MS   = 180000;
+constexpr uint32 DC_SMART_REST_REARM_MS = 30000;
+
 // Position-based stuck detection, shared by the Advance drive and the
 // door-blocked walk-in (both glide the same escort spline). If the bot is
 // supposed to be moving but its world position barely shifts for

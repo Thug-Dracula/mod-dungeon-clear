@@ -168,6 +168,58 @@ DungeonClear.RestHealthPct = 0
 DungeonClear.RestManaPct = 0
 
 #
+#    DungeonClear.SmartRest
+#        Hysteresis rest cycles. When on, the party pushes with no eating or
+#        drinking at all until ANY member falls below a role trigger
+#        (SmartRestHealthPct / SmartRestDpsManaPct / SmartRestHealerManaPct) —
+#        then the whole party stops and rests to FULL health and mana before
+#        pushing again. Fewer, longer rests instead of constant micro-rests.
+#        While on, the legacy RestHealthPct/RestManaPct targets are ignored.
+#        Overridable per run from the companion addon.
+#            0 = off (legacy rest behavior)
+#            1 = on
+#
+#        Default: 0
+#
+
+DungeonClear.SmartRest = 0
+
+#
+#    DungeonClear.SmartRestHealthPct
+#        Smart Rest only. Health % below which ANY party member (any role)
+#        triggers a full-rest stop.
+#            0 = disable the health trigger
+#
+#        Default: 50
+#
+
+DungeonClear.SmartRestHealthPct = 50
+
+#
+#    DungeonClear.SmartRestDpsManaPct
+#        Smart Rest only. Mana % below which a DPS or tank mana user triggers a
+#        full-rest stop. Tanks share this trigger: a prot paladin regains mana
+#        in combat and tops up at every healer-triggered stop anyway.
+#            0 = disable the DPS/tank mana trigger
+#
+#        Default: 10
+#
+
+DungeonClear.SmartRestDpsManaPct = 10
+
+#
+#    DungeonClear.SmartRestHealerManaPct
+#        Smart Rest only. Mana % below which a healer triggers a full-rest
+#        stop. Higher than the DPS trigger — the healer's pool is the party's
+#        safety margin.
+#            0 = disable the healer mana trigger
+#
+#        Default: 40
+#
+
+DungeonClear.SmartRestHealerManaPct = 40
+
+#
 #    DungeonClear.PartyMaxSpread
 #        Max distance (yards) the tank may lead a party member while clearing
 #        before it holds its advance and waits for everyone to catch up. Lower

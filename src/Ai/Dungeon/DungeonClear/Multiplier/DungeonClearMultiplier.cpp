@@ -12,6 +12,7 @@
 #include "Playerbots.h"
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
@@ -33,8 +34,17 @@ float DungeonClearMultiplier::GetValue(Action* action)
     // target BELOW the stock stop is honoured too. 0 = inherit, no cap.
     if (name == "food" || name == "drink")
     {
-        if (AI_VALUE(Player*, DcKey::PartyTank))
+        if (Player* tank = AI_VALUE(Player*, DcKey::PartyTank))
         {
+            // Smart Rest hysteresis: between rests eating/drinking is FULLY
+            // suppressed (the stock medium-health/high-mana triggers included)
+            // so the party keeps pushing; during a latched rest it runs
+            // uncapped so everyone tops to 100. Humans have no multiplier and
+            // can always eat/drink; while paused PartyTank is null, so stock
+            // rest resumes for the duration of the pause.
+            if (DcSettings::GetBool(bot, "SmartRest"))
+                return DcSmartRest::IsLatched(tank) ? 1.0f : 0.0f;
+
             bool const isDrink = (name == "drink");
             uint32 const target =
                 DcSettings::GetUInt(bot, isDrink ? "RestManaPct" : "RestHealthPct");

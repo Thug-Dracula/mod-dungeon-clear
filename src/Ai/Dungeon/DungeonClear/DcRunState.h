@@ -89,6 +89,16 @@ struct DcRunState
     // engaged. Was g_partyEngagedLatch.
     uint32 partyEngagedLatchMs = 0;
 
+    // === Smart Rest hysteresis latch (leader-owned, read cross-bot) ================
+    // Maintained by DcSmartRest::UpdateLatch from the leader's between-pulls gate;
+    // followers read it through the party tank (DcSmartRest::IsLatched). Combat does
+    // NOT clear it — a patrol interrupting the rest goes inert (out-of-combat
+    // triggers), then the still-set latch resumes the rest afterwards. The timeout
+    // clock deliberately spans such interruptions.
+    bool   smartRestLatched   = false;  // party is in a full-rest cycle
+    uint32 smartRestSinceMs   = 0;      // getMSTime() when latched (timeout clock)
+    uint32 smartRestRearmAtMs = 0;      // after a timeout release: no re-latch before this
+
     // Full run teardown: every session + signal field. Used on dc on / dc off /
     // death / all-cleared. (The pull preference/bool are NOT here — see the header
     // note; they are reset explicitly by ApplyPullSetting / DisableDungeonClear.)

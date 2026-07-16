@@ -56,6 +56,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -771,11 +772,22 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
     // residual escort glide so it is parked and can actually sit; once stationary
     // that call no-ops (see DcMovement::StopBot) and never interrupts the drink.
     // The standoff invariant is preserved: we only yield when Advance yields too.
-    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-    bool const lowMana = maxMana > 0 &&
-        bot->GetPowerPct(POWER_MANA) < DcPartyState::RestMinMpPct(bot);
-    bool const lowHealth = bot->GetHealthPct() < DcPartyState::RestMinHpPct(bot);
-    if (lowMana || lowHealth)
+    // Smart Rest swaps the "below my rest target" test for the party latch:
+    // a tank at e.g. 40% mana (above its low trigger, below the legacy 65)
+    // must NOT yield to a drink the multiplier now suppresses — it would stand
+    // down forever. Only a latched rest is a real drink opportunity.
+    bool lowRes;
+    if (DcSmartRest::Enabled(bot))
+        lowRes = DcSmartRest::IsLatched(bot);
+    else
+    {
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        bool const lowMana = maxMana > 0 &&
+            bot->GetPowerPct(POWER_MANA) < DcPartyState::RestMinMpPct(bot);
+        bool const lowHealth = bot->GetHealthPct() < DcPartyState::RestMinHpPct(bot);
+        lowRes = lowMana || lowHealth;
+    }
+    if (lowRes)
     {
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         ClearStall(context);

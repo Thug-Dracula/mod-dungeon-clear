@@ -56,6 +56,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
@@ -289,18 +290,33 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
             std::string const who = DcPartyState::DescribePartyLooting(bot);
             detail = who.empty() ? "Collecting loot." : (who + ".");
         }
+        // Smart Rest: the latch IS the recovery wait — read it (never update;
+        // the between-pulls gate owns updates) and name who is still short of
+        // full. The spread-only wait falls through to the next arm.
+        else if (DcSmartRest::Enabled(bot) && DcSmartRest::IsLatched(bot))
+        {
+            stateStr = "resting";
+            std::string const who = DcSmartRest::DescribeWait(bot);
+            detail = who.empty() ? "Resting the party to full." : (who + ".");
+        }
         // Status display must use the SAME spread the advance gate enforces, or
         // the tank parks at the limit while still reporting "En route" instead
         // of "Waiting on". GetSpreadGate is the one shared body (per-run
         // PartyMaxSpread override, mid-maneuver waiver, camp anchor in pull
         // mode), so the panel can never report a different wait than the gate.
+        // Under Smart Rest the hp/mana thresholds are 0 (the latch above owns
+        // recovery), leaving this arm the spread-only "out of range" waits —
+        // exactly mirroring the between-pulls gate.
         else if (DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
-                 !DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot), DcPartyState::RestMinMpPct(bot),
-                                             gate.maxSpread, gate.anchor, gate.maxTankGap))
+                 !DcPartyState::IsPartyReady(bot,
+                     DcSmartRest::Enabled(bot) ? 0.0f : DcPartyState::RestMinHpPct(bot),
+                     DcSmartRest::Enabled(bot) ? 0.0f : DcPartyState::RestMinMpPct(bot),
+                     gate.maxSpread, gate.anchor, gate.maxTankGap))
         {
             stateStr = "resting";
-            std::string const who = DcPartyState::DescribePartyNotReady(bot, DcPartyState::RestMinHpPct(bot),
-                                                                            DcPartyState::RestMinMpPct(bot),
+            float const minHp = DcSmartRest::Enabled(bot) ? 0.0f : DcPartyState::RestMinHpPct(bot);
+            float const minMp = DcSmartRest::Enabled(bot) ? 0.0f : DcPartyState::RestMinMpPct(bot);
+            std::string const who = DcPartyState::DescribePartyNotReady(bot, minHp, minMp,
                                                                             gate.maxSpread, gate.anchor,
                                                                             gate.maxTankGap);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");

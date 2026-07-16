@@ -148,4 +148,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    the instance progress counter. New step kind UseItemOnGO (cast a quest-item
 #    spell AT a positioned GO — the barrel-bomb SPELLHIT); EscortCreature gains an
 #    instance-data completion gate, a gossip-flag resume, and party mount speed-match.)
+# Util/DcSmartRestDecision.{h,cpp} + Util/DcSmartRest.{h,cpp}
+#   (Smart Rest hysteresis: pure latch kernel Decide(Inputs, members) -> Result
+#    — enter on role-based low triggers, release at full hp/mana — edge-pinned
+#    by t/TestSmartRest; DcSmartRest is the engine glue owning the DcRunState
+#    latch fields + the cross-bot IsLatched read.)
 # (this comment bumps mtime to force CMake re-glob on next build)
