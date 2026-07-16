@@ -688,8 +688,6 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     }
 
     uint32 const now = getMSTime();
-    DcApproachState& appr =
-        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
 
     if (!IsBetweenPullsReady(bot, context))
     {
