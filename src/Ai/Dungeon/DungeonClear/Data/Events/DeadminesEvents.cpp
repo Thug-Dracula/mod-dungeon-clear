@@ -5,6 +5,50 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+
+#include "GameObject.h"
+#include "InstanceScript.h"
+#include "Player.h"
+#include "Playerbots.h"
+#include "SharedDefines.h"
+
+// --- Sneed (643): dynamic spawn from Sneed's Shredder (642) ---------------
+// Sneed's Shredder is a regular creature (no instance_encounter entry).
+// When killed, Sneed (643, encounter bit 1) spawns from the wreckage as a
+// TempSummon — invisible to the spawn-ID store scan that powers the boss
+// tracker (GetCreatureBySpawnIdStore), so the live-boss detection never sees
+// him and the engage engine never targets him. The party kills the shredder,
+// Sneed attacks a DPS bot, but the tank advances toward Gilnid because the
+// boss tracker says no boss is present at bit 1. This conditional event uses
+// FindNearestCreature (grid search, finds summons) to detect and engage him.
+
+namespace
+{
+    constexpr uint32 DM_SNEED             = 643;
+    // The shredder's spawn point — Sneed spawns at the same position.
+    constexpr float DM_SHREDDER_X         = -289.453f;
+    constexpr float DM_SHREDDER_Y         = -513.009f;
+    constexpr float DM_SHREDDER_Z         = 49.6785f;
+
+    bool DmSneed(Player* bot, AiObjectContext* /*context*/)
+    {
+        // Only fire near the shredder arena. Avoids triggering from the
+        // entrance or the foundry.
+        if (bot->GetExactDist(DM_SHREDDER_X, DM_SHREDDER_Y, DM_SHREDDER_Z) > 120.0f)
+            return false;
+
+        // Sneed already dead — his encounter bit 1 is set. Let the normal
+        // flow advance to Gilnid.
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (inst && (inst->GetCompletedEncounterMask() & (1u << 1)))
+            return false;
+
+        // Grid FindNearestCreature sees a TempSummon; the spawn-ID store
+        // does not.
+        return bot->FindNearestCreature(DM_SNEED, 80.0f, /*alive*/ true) != nullptr;
+    }
+}
 
 // --- The Deadmines (map 36) — the DEFIAS CANNON, ANCHORED + PERSISTENT ---
 // The way from the goblin foundry to the pirate ship is sealed by the Iron Clad
@@ -37,6 +81,14 @@
 
 void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
 {
+    // Sneed — two-phase shredder/summon boss. Handled first (event id 2)
+    // so it fires before the cannon event wherever Sneed is alive.
+    out.push_back(
+        EventBuilder(36, 2, "Kill Sneed")
+            .Conditional(&DmSneed)
+            .KillCreatureEngage(DM_SNEED, /*count*/ 1, /*searchRadius*/ 100.0f)
+            .Build());
+
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_DOOR_OPEN_STATE   = 2;  // GO_STATE_ACTIVE_ALTERNATIVE
     constexpr uint32 DM_FIRE_CANNON_HOOK  = 2;  // ObjectiveHookRegistry id
