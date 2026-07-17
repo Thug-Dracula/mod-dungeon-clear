@@ -565,6 +565,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
         }
         if (!anchoredHopsPending)
         {
+            DcApproachState& appr =
+                context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+            uint32 const now = getMSTime();
+            if (!appr.bossHoldSinceMs)
+                appr.bossHoldSinceMs = now;
+            uint32 const holdTime = getMSTimeDiff(appr.bossHoldSinceMs, now);
+            if (holdTime >= 30000)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] holding at {} for {}ms — forcing engage",
+                         bot->GetName(), next->name, holdTime);
+                appr.bossHoldSinceMs = 0;
+                ClearStall(context);
+                SetPhase(context, "");
+                return Step::Continue;
+            }
             // Surface WHY we're holding: the at-boss trigger only pulls once the
             // party is ready and no loot is pending. When it doesn't fire, this
             // is the line that explains the otherwise-silent idle at the boss.

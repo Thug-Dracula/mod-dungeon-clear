@@ -5,6 +5,8 @@
 
 #include "DcLeaderSignal.h"
 
+#include <algorithm>
+
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -190,6 +192,7 @@ namespace
         if (!group)
             return bot->IsInCombat();  // solo: only our own combat counts
 
+        bool const selfInCombat = bot->IsInCombat();
         float const spread = DcSettings::GetFloat(bot, "PartyMaxSpread");
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
@@ -199,14 +202,33 @@ namespace
             if (member->GetMapId() != bot->GetMapId())
                 continue;
             if (!member->IsInCombat())
-                continue;
+            {
+                // Check the member's pet. A hunter pet can pull aggro
+                // independently; if the pet is fighting, treat the member
+                // as in combat for assist purposes even if the owner's
+                // combat flag is stale.
+                bool petFighting = false;
+                if (Guardian* pet = member->GetGuardianPet())
+                    petFighting = pet->IsInCombat() &&
+                        (!pet->getAttackers().empty() || pet->GetVictim());
+                if (!petFighting)
+                    continue;
+            }
             // The tank's own flag is the primary anchor (distance 0 — always in).
             if (member == bot)
                 return true;
-            // Otherwise only a BOT close enough to share the tank's fight counts —
-            // never the human master, never a far/phantom-flagged straggler.
+            // Never count the human master — their combat is their own business.
             if (!GET_PLAYERBOT_AI(member))
                 continue;
+            // When the tank is NOT in combat, ANY bot in combat on this map is
+            // a distress signal — don't gate on distance. A healer/dps taking
+            // aggro from a patrol or proximity pull needs backup regardless of
+            // how far they strayed from the tank. Only when the tank IS fighting
+            // do we scope to the tank's spread, so stray combat on the other side
+            // of the zone (phantom flags, a human's separate fight) doesn't drag
+            // the party across the dungeon.
+            if (!selfInCombat)
+                return true;
             if (bot->GetExactDist2d(member) <= spread)
                 return true;
         }
@@ -279,19 +301,25 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
     {
         std::lock_guard<std::mutex> lock(g_leaderCacheMutex);
         auto it = g_leaderCache.find(key);
-        if (it != g_leaderCache.end() &&
-            getMSTimeDiff(it->second.stampMs, now) < LEADER_CACHE_TTL_MS)
+        if (it != g_leaderCache.end())
         {
-            // Negative hit: this group/map had no eligible tank bot moments
-            // ago. Trust it for the TTL; the next restamp flips it the moment
-            // one appears.
             if (it->second.leader.IsEmpty())
-                return nullptr;
-            // Positive hit: trust it only while it still validates. A failed
-            // validation (died / left map / left group / AI gone) falls
-            // through to a fresh scan below — never a stale leader.
-            if (Player* cached = ValidateCachedLeader(reference, group, it->second.leader))
-                return cached;
+            {
+                // Negative hit: a shorter TTL so a transient blip (tank dead
+                // for a tick, strategy briefly off) doesn't block the party
+                // for the full 250ms window.
+                if (getMSTimeDiff(it->second.stampMs, now) < 50)
+                    return nullptr;
+                // Expired — re-probe below.
+            }
+            else if (getMSTimeDiff(it->second.stampMs, now) < LEADER_CACHE_TTL_MS)
+            {
+                // Positive hit: trust it only while it still validates. A
+                // failed validation (died / left map / left group / AI gone)
+                // falls through to a fresh scan below.
+                if (Player* cached = ValidateCachedLeader(reference, group, it->second.leader))
+                    return cached;
+            }
         }
     }
 
@@ -550,7 +578,19 @@ bool DcLeaderSignal::IsLeaderCampFightActive(Player* bot)
     // pinned passive at camp by hold-at-camp/stay-at-camp, and a leader-in-combat
     // while merely scouting (Idle) is handled by the drag-back maneuver, which
     // flips the phase out of Idle before any party member would assist.
-    return phase == static_cast<uint32>(DcPullPhase::Engage) && leader->IsInCombat();
+    // Require the leader to have actual combat data (victim or attackers) — not
+    // just the lingering IsInCombat() flag — so the assist trigger doesn't fire
+    // in the gap between the pull tag and the pack arriving at camp.
+    if (phase != static_cast<uint32>(DcPullPhase::Engage))
+        return false;
+    if (!leader->IsInCombat())
+        return false;
+    if (leader->GetVictim())
+        return true;
+    for (Unit* a : leader->getAttackers())
+        if (a && a->IsAlive())
+            return true;
+    return false;
 }
 bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
 {
@@ -559,7 +599,34 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
 
     Player* leader = FindLeaderTank(bot);
     if (!leader || leader == bot)
+    {
+        if (!leader)
+        {
+            // Tank is dead or missing — don't just stand there.  If any party
+            // member is in combat, assist them so DPS can peel mobs off the
+            // healer and the group can survive until the tank recovers.
+            Group* group = bot->GetGroup();
+            if (group)
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* m = ref->GetSource();
+                    if (m && m != bot && m->IsAlive() && m->IsInCombat() &&
+                        m->GetMapId() == bot->GetMapId() &&
+                        (!m->getAttackers().empty() || m->GetVictim()))
+                    {
+                        DC_PULL_DEBUG("[DC:{}] assist: no tank but party member {} in combat -> assisting",
+                                      bot->GetName(), m->GetName());
+                        return true;
+                    }
+                }
+            }
+            DC_PULL_DEBUG("[DC:{}] assist SKIP: no leader (no tank in party, no combat to join)", bot->GetName());
+        }
+        else
+            DC_PULL_DEBUG("[DC:{}] assist SKIP: no leader (self — tank doesn't self-assist)", bot->GetName());
         return false;
+    }
 
     // Maintain the leader's combat-start stamp on EVERY tick a leader is resolved
     // — before any wanted/not-wanted decision below — so the threat-lead window
@@ -574,6 +641,7 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
     if (IsLeaderCampFightActive(bot))
     {
         // Advanced-pull camp fight: the existing Engage-phase gate.
+        DC_PULL_DEBUG("[DC:{}] assist: camp fight active -> wanted", bot->GetName());
         wanted = true;
     }
     else
@@ -593,16 +661,40 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
         Position camp;
         bool passive = false;
         if (GetLeaderCampHold(bot, camp, passive) && passive)
-            return false;
+        {
+            // During passive camp hold followers normally wait at camp
+            // while the tank scouts/pulls. But if a patrol or proximity
+            // pull aggros someone at camp, the party must defend itself.
+            // Use AnyGroupMemberInCombat so the group flag alone doesn't
+            // override the hold — only actual aggro breaks the camp.
+            // (AnyGroupMemberInCombat uses IsInCombat() rather than requiring
+            // personal attacker/victim data, because getAttackers() can be
+            // empty even when actively being attacked — neutral mobs in BFD,
+            // underwater combat, transient gaps.)
+            bool const campCombat = AnyGroupMemberInCombat(bot);
+            if (!campCombat)
+            {
+                DC_PULL_DEBUG("[DC:{}] assist SKIP: passive camp hold", bot->GetName());
+                return false;
+            }
+            DC_PULL_DEBUG("[DC:{}] assist OVERRIDE: passive camp hold but party member in combat", bot->GetName());
+        }
 
         PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
         if (!leaderAI)
+        {
+            DC_PULL_DEBUG("[DC:{}] assist SKIP: no leader AI", bot->GetName());
             return false;
+        }
 
         AiObjectContext* ctx = leaderAI->GetAiObjectContext();
         if (!DcRun::Of(ctx).enabled ||
             DcRun::Of(ctx).paused)
+        {
+            DC_PULL_DEBUG("[DC:{}] assist SKIP: DC {}disabled or paused",
+                          bot->GetName(), DcRun::Of(ctx).enabled ? "" : "not ");
             return false;
+        }
 
         // General case — no camp in effect (pull mode off, a Leeroy verdict in
         // dynamic mode, boss walk-ins): the leader tank fighting ANYTHING on an
@@ -631,14 +723,17 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
         // out of combat. With the old leader-only gate this returned false here and
         // the party stayed passive; this line proves the new path now engages.
         if (groupInCombat && !leaderInCombat)
-            DC_PULL_DEBUG("[DC:{}] assist: groupmate in combat while leader reads "
+            DC_PULL_DEBUG("[DC:{}] assist: groupmate with aggro while leader reads "
                           "out-of-combat -> assisting (was the no-pull-state stall)",
                           bot->GetName());
         wanted = groupInCombat;
     }
 
     if (!wanted)
+    {
+        DC_PULL_DEBUG("[DC:{}] assist SKIP: no party combat", bot->GetName());
         return false;
+    }
 
     // Threat lead. A real group gives the tank a beat to gather the pack and build
     // AoE threat before DPS pile in; piling in instantly is both a bot-tell and a
@@ -651,14 +746,33 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
     // bypass is the key one for the "dps run to me" fix: a follower already flagged
     // in combat with the pack out of its line of sight is released ONTO the tank's
     // fight at once, instead of being stranded through the lead where stock follow-
-    // master would drift it to the human. Regroup is NOT gated here: it is
-    // positioning, not damage, and a healer running for LOS during the lead is fine.
+    // master would drift it to the human. Also bypasses if ANY party member is
+    // below the panic HP threshold while in combat — a follower at low HP needs
+    // the pack dead or peeled immediately, not after the threat lead window.
     uint32 const leadMs =
         uint32(DcSettings::GetFloat(leader, "PullPlayerReleaseDelay") * 1000.0f);
     float const panicHp = DcSettings::GetFloat(leader, "PullThreatLeadPanicHp");
-    return DungeonClearMath::ShouldReleaseFollower(
-        PlayerbotAI::IsHeal(bot), bot->IsInCombat(), combatSince, getMSTime(), leadMs,
-        leader->GetHealthPct(), panicHp);
+    bool panicMember = false;
+    if (Group* g = bot->GetGroup())
+    {
+        for (GroupReference* ref = g->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* m = ref->GetSource();
+            if (m && m->IsAlive() && m->GetMapId() == bot->GetMapId() &&
+                m->IsInCombat() && m->GetHealthPct() < panicHp)
+            {
+                panicMember = true;
+                break;
+            }
+        }
+    }
+    bool const released = panicMember ? true :
+        DungeonClearMath::ShouldReleaseFollower(
+            PlayerbotAI::IsHeal(bot), bot->IsInCombat(), combatSince, getMSTime(), leadMs,
+            leader->GetHealthPct(), panicHp);
+    if (!released)
+        DC_PULL_DEBUG("[DC:{}] assist SKIP: threat lead {}", bot->GetName(), leadMs);
+    return released;
 }
 bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
 {
@@ -668,7 +782,12 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     // done and walked off toward the next objective — the tank has no behavior to
     // rejoin: it just freezes on the Advance rest gate while the party fights. This
     // drives it back onto the fight to take threat.
-    if (!bot || bot->isDead() || bot->IsInCombat())
+    //
+    // Also fires when the tank IS already in combat but a party member is taking
+    // damage from a mob the tank doesn't have on its threat list (mob broke off /
+    // patrol aggroed the healer). The follower's gate handles the DPS/peel; this
+    // drives the tank to re-acquire the loose mob and take threat.
+    if (!bot || bot->isDead())
         return false;
 
     // Leader only. A follower's assist is owned by IsLeaderFightAssistWanted.
@@ -692,17 +811,57 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
         return false;
 
-    // The tank already sees something it can engage — let its own engage-trash /
-    // engage-boss scan (higher relevance) take it; this path is only for the fight
-    // the tank CAN'T see. "attackers" is the stock LOS-filtered list, so it is
-    // empty exactly while the pack is out of sight and non-empty the moment the
-    // tank rounds the corner, at which point this stands down.
-    if (!ctx->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty())
-        return false;
+    // When the tank is already in combat, skip only if the tank's own visible
+    // attackers are ALL the party is fighting — i.e. no mob has broken off to
+    // attack someone else. If any party member has attackers that aren't in the
+    // tank's LOS-filtered attacker list, the tank needs to peel.
+    GuidVector const& tankAttackers =
+        ctx->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get();
+    if (!tankAttackers.empty())
+    {
+        if (!bot->IsInCombat())
+            return false;  // stale attackers list but tank somehow out of combat
+        // Tank is in combat — check if any party member has attackers the
+        // tank doesn't see (mob broke off or patrol aggroed someone else).
+        bool peelNeeded = false;
+        if (Group* g = bot->GetGroup())
+        {
+            for (GroupReference* ref = g->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                    continue;
+                if (!m->IsInCombat())
+                    continue;
+                for (Unit* a : m->getAttackers())
+                {
+                    if (a && a->IsAlive() && std::find(tankAttackers.begin(),
+                        tankAttackers.end(), a->GetGUID()) == tankAttackers.end())
+                    {
+                        peelNeeded = true;
+                        break;
+                    }
+                }
+                if (peelNeeded) break;
+                // Also check the member's victim — they might be fighting something
+                // that isn't attacking the tank at all.
+                if (Unit* v = m->GetVictim())
+                    if (v->IsAlive() && std::find(tankAttackers.begin(),
+                        tankAttackers.end(), v->GetGUID()) == tankAttackers.end())
+                        peelNeeded = true;
+                if (peelNeeded) break;
+            }
+        }
+        if (!peelNeeded)
+            return false;  // tank already has everything — let standard combat handle it
+        DC_PULL_DEBUG("[DC:{}] leader assist: tank in combat but party has unseen mobs — peeling",
+                      bot->GetName());
+    }
 
-    // A groupmate is fighting but the tank is not. Latched (PartyCombatLatch) on
-    // the SAME hysteresis the followers' assist and the scout-lag gate use, so a
-    // one-tick combat gap can't bounce the tank between assisting and advancing.
+    // A groupmate is fighting but the tank is not (or has mobs the tank hasn't
+    // picked up yet). Latched (PartyCombatLatch) on the SAME hysteresis the
+    // followers' assist and the scout-lag gate use, so a one-tick combat gap
+    // can't bounce the tank between assisting and advancing.
     uint32 const latchMs =
         uint32(DcSettings::GetFloat(leader, "PartyCombatLatch") * 1000.0f);
     return IsPartyEngagedLatched(leader, latchMs);

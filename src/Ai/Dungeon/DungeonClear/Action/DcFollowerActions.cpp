@@ -767,6 +767,12 @@ namespace
             return best;
 
         // 2. Else whatever a nearby in-combat groupmate is fighting.
+        // When the leader has no combat data of its own (out of combat or
+        // between pulls), skip the distance-from-leader filter so ANY
+        // fighting groupmate's target resolves — fixing the "groupmate in
+        // combat while leader reads out-of-combat" stall.
+        bool const leaderFighting = leader && (leader->IsInCombat() ||
+            leader->GetVictim() || !leader->getAttackers().empty());
         if (Group* grp = bot->GetGroup())
         {
             float const reach = DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f;
@@ -777,11 +783,98 @@ namespace
                     continue;
                 if (m->GetMapId() != bot->GetMapId())
                     continue;
-                if (leader && m->GetExactDist2d(leader) > reach)
+                if (leaderFighting && leader && m->GetExactDist2d(leader) > reach)
                     continue;  // keep it the tank's fight, not a far straggler's
                 considerFrom(m);
             }
         }
+
+        // 3. Last resort: the leader's current victim. Steps 1 & 2 scan attackers
+        // via consider() which gates on bot->IsValidAttackTarget — that check
+        // includes LOS and elevation, so a follower on a lower floor or around a
+        // corner can't resolve the mob the tank is actively fighting. Use the
+        // leader's victim directly (bypass IsValidAttackTarget) as a movement
+        // anchor: once the follower closes distance and gains LOS, the next tick
+        // finds a valid target through steps 1 & 2 and proceeds normally.
+        if (!best && leader)
+        {
+            Unit* victim = leader->GetVictim();
+            if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId())
+                best = victim;
+        }
+
+        // 4. If the leader has no victim (AoE tanking with no auto-attack
+        // target), pick the closest attacker from the leader's attacker list
+        // instead — still bypassing IsValidAttackTarget to handle LOS/elevation.
+        if (!best && leader)
+        {
+            float bestDist2 = 0.0f;
+            for (Unit* a : leader->getAttackers())
+            {
+                if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+                    continue;
+                float const d = bot->GetExactDist2d(a);
+                if (!best || d < bestDist2)
+                {
+                    best = a;
+                    bestDist2 = d;
+                }
+            }
+        }
+
+        // 5. Leader still has no combat data (out of combat, groupmate is
+        // fighting) — try any in-combat groupmate's victim/attackers.
+        if (!best && bot->GetGroup())
+        {
+            float bestDist2 = 0.0f;
+            for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || m == leader || !m->IsAlive() || !m->IsInCombat())
+                    continue;
+                if (m->GetMapId() != bot->GetMapId())
+                    continue;
+                Unit* vic = m->GetVictim();
+                if (vic && vic->IsAlive() && vic->GetMapId() == bot->GetMapId())
+                {
+                    float const d = bot->GetExactDist2d(vic);
+                    if (!best || d < bestDist2) { best = vic; bestDist2 = d; }
+                }
+                for (Unit* a : m->getAttackers())
+                {
+                    if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+                        continue;
+                    float const d = bot->GetExactDist2d(a);
+                    if (!best || d < bestDist2) { best = a; bestDist2 = d; }
+                }
+            }
+        }
+
+        // 6. Last resort: the bot's own combat data. A rogue taking damage
+        // (in combat) with no groupmate combat data still needs a target — use
+        // the bot's own victim or the closest attacker hitting it.
+        if (!best && bot->IsInCombat())
+        {
+            if (Unit* vic = bot->GetVictim())
+            {
+                if (vic->IsAlive() && vic->GetMapId() == bot->GetMapId())
+                    best = vic;
+            }
+            if (!best)
+            {
+                float bestDist2 = 0.0f;
+                for (Unit* a : bot->getAttackers())
+                {
+                    if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+                        continue;
+                    float const d = bot->GetExactDist2d(a);
+                    if (!best || d < bestDist2) { best = a; bestDist2 = d; }
+                }
+                if (best)
+                    DC_PULL_DEBUG("[DC:{}] assist: no groupmate target, using own attacker {}", bot->GetName(), best->GetGUID().ToString());
+            }
+        }
+
         return best;
     }
 }
@@ -793,15 +886,17 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
         return false;
 
     // Resolve a REAL mob the party is fighting from the WHOLE group (see
-    // PickPartyFightTarget). No concrete hostile resolves -> STAND DOWN. We
-    // deliberately no longer fall back to "move onto the tank to gain LOS": that
-    // dragged ranged DPS up the tank's back (the reported regression) and orbited a
-    // looting tank at 0.0yd. When nothing resolves, follow-tank / the combat engine
-    // own the bot; the fight target re-resolves within a tick or two once the tank's
-    // attacker list populates.
+    // PickPartyFightTarget). Falls back to the leader's current victim if no
+    // valid attack target resolves (covers LOS/elevation gaps).
     Unit* target = PickPartyFightTarget(bot, leader);
     if (!target)
+    {
+        DC_PULL_DEBUG("[DC:{}] assist camp: no fight target (vic={} atk={})",
+                      bot->GetName(),
+                      leader->GetVictim() ? leader->GetVictim()->GetGUID().ToString().c_str() : "null",
+                      leader->getAttackers().empty() ? 0u : static_cast<uint32>(leader->getAttackers().size()));
         return false;
+    }
 
     // Seed the fight target so BOTH engines have a valid "current target": select it,
     // publish it, and open a combat window so the bot is in the fight the instant it
@@ -1134,10 +1229,36 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
         }
     }
 
-    // No concrete target and nobody resolvable to walk toward — let the rest of the
-    // driving ladder (advance / stall) run.
+    // No concrete target and nobody resolvable to walk toward — fall back to
+    // moving toward the nearest party member on this map. A member taking
+    // damage from a neutral mob may not have IsInCombat() set yet, and
+    // getAttackers() can be empty (underwater BFD). Just closing distance
+    // rounds the corner and lets the tank's own LOS-gated picker take over.
     if (!target && !nearestFighter)
-        return false;
+    {
+        Player* fallback = nullptr;
+        float fallbackDist = 0.0f;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* m = ref->GetSource();
+            if (!m || m == bot || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                continue;
+            float const d = bot->GetExactDist2d(m);
+            if (!fallback || d < fallbackDist)
+            {
+                fallback = m;
+                fallbackDist = d;
+            }
+        }
+        if (!fallback)
+            return false;
+        DC_PULL_DEBUG("[DC:{}] leader assist: no combat data — closing on {} ({:.1f}yd)",
+                       bot->GetName(), fallback->GetName(), fallbackDist);
+        DcMoveTo(fallback->GetMapId(), fallback->GetPositionX(), fallback->GetPositionY(),
+               fallback->GetPositionZ(), false, false, false, false,
+               MovementPriority::MOVEMENT_NORMAL);
+        return true;
+    }
 
     Unit* const moveTo = target ? target : static_cast<Unit*>(nearestFighter);
 

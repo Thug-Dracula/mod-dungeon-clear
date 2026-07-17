@@ -354,9 +354,12 @@ namespace DcActionShared
             if (!stale)
             {
                 ChunkedPathfinder::Result built = LongRangePathfinder::Finalize(bot, raw);
-                if (!built.reachable && !built.startFarFromPoly)
+                bool const tooShort = built.reachable && !built.complete &&
+                    built.segments.size() == 1 && built.segments.front().polyline.size() <= 3;
+                if ((!built.reachable && !built.startFarFromPoly) || tooShort)
                 {
-                    // LongRange couldn't reach the boss; run the lighter
+                    // LongRange couldn't reach the boss or returned a near-empty
+                    // corridor (navmesh gap near the target). Run the lighter
                     // anchor/bee-line/arc/spawn-graph fallback tiers on the map
                     // thread WITHOUT redoing the heavy A* we already offloaded.
                     built = StridedPathfinder::Build(bot, target.mapId, target.entry,
