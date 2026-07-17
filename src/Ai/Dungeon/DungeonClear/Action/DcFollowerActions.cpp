@@ -891,6 +891,32 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
     Unit* target = PickPartyFightTarget(bot, leader);
     if (!target)
     {
+        // Fallback: move toward the nearest in-combat party member so the
+        // follower at least closes the gap instead of standing idle.
+        // Covers underwater combat, brief attacker-list gaps, and neutral
+        // mobs where getAttackers() resolves late relative to IsInCombat().
+        if (Group* g = bot->GetGroup())
+        {
+            Player* nearest = nullptr;
+            float nearestDist = 0.0f;
+            for (GroupReference* ref = g->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || !m->IsAlive() || m->GetMapId() != bot->GetMapId() || !m->IsInCombat())
+                    continue;
+                float const d = bot->GetExactDist2d(m);
+                if (!nearest || d < nearestDist) { nearest = m; nearestDist = d; }
+            }
+            if (nearest)
+            {
+                DC_PULL_DEBUG("[DC:{}] assist camp: no fight target — closing on {} ({:.1f}yd)",
+                               bot->GetName(), nearest->GetName(), nearestDist);
+                DcMoveTo(nearest->GetMapId(), nearest->GetPositionX(), nearest->GetPositionY(),
+                       nearest->GetPositionZ(), false, false, false, false,
+                       MovementPriority::MOVEMENT_COMBAT);
+                return true;
+            }
+        }
         DC_PULL_DEBUG("[DC:{}] assist camp: no fight target (vic={} atk={})",
                       bot->GetName(),
                       leader->GetVictim() ? leader->GetVictim()->GetGUID().ToString().c_str() : "null",
