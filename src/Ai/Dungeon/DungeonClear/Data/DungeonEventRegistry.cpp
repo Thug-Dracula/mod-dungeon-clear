@@ -336,6 +336,8 @@ namespace
             RegisterZulFarrakEvents(t);
             RegisterBlackrockDepthsEvents(t);
             RegisterDeadminesEvents(t);
+            RegisterGnomereganEvents(t);
+            RegisterMaraudonEvents(t);
             RegisterWailingCavernsEvents(t);
             RegisterStratholmeEvents(t);
             RegisterUldamanEvents(t);

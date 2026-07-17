@@ -6,13 +6,61 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 
+#include "GameObject.h"
+#include "Player.h"
+#include "Playerbots.h"
+#include "SharedDefines.h"
+
 #include <unordered_map>
 
-// Maraudon (map 349) has no scripted events or roster patch — its only
-// clear-data is the wing LABELS (isolated == false: display only, not a
-// filter). This file is Maraudon's definition unit so that data lives with
-// its dungeon like every other. The TU stays linked because
-// DungeonWingRegistry's aggregator calls RegisterMaraudonWings explicitly.
+// --- Maraudon (map 349) — Portal to Inner Maraudon (Pristine Waters) ------
+// After the party clears the Purple side (Celebras the Cursed), the Portal to
+// Inner Maraudon (178404, type 22 spell caster, spell 21128) teleports the
+// party from the waterfall room into Pristine Waters. Celebras's encounter bit
+// gate ensures this fires only after he is dead. TeleportParty avoids stranding
+// followers on the far side of the portal.
+
+namespace
+{
+    constexpr uint32 MARAUDON_PORTAL          = 178404;
+    // Celebras the Cursed — DungeonEncounter bit. Teleport fires only after
+    // he is dead and the seal is open.
+    constexpr uint32 MARAUDON_CELEBRAS_ENTRY  = 12225;
+    constexpr uint32 MARAUDON_CELEBRAS_BIT    = 0;  // correct bit unknown; gate entry is safer
+
+    bool MaraudonPortal(Player* bot, AiObjectContext* /*context*/)
+    {
+        // Already on the far side (Pristine Waters / Earth Song Falls area).
+        // The portal landing is at the Pristine Waters entrance ~(386, 33, -131).
+        // If the bot is within ~100yd of those coords, skip.
+        if (bot->GetExactDist(386.27f, 33.4144f, -130.934f) < 100.0f)
+            return false;
+
+        // Only fire if Celebras is dead (his corpse is gone but the seal is open).
+        Creature* celebras = bot->FindNearestCreature(MARAUDON_CELEBRAS_ENTRY, 500.0f, false);
+        if (celebras)
+            return false;  // still alive
+
+        // The portal must exist and be usable.
+        GameObject* portal = bot->FindNearestGameObject(MARAUDON_PORTAL, 60.0f);
+        if (!portal)
+            return false;
+
+        // The tank must be close enough to trigger the portal use.
+        if (!bot->IsWithinDistInMap(portal, 50.0f))
+            return false;
+
+        return true;
+    }
+}
+
+void RegisterMaraudonEvents(std::vector<DungeonEvent>& out)
+{
+    out.push_back(EventBuilder(349, 1, "Portal to Pristine Waters")
+                      .Conditional(&MaraudonPortal)
+                      .UseGO(MARAUDON_PORTAL, 50.0f)
+                      .Build());
+}
 
 // --- wing layout (relocated from DungeonWingRegistry) --------------------
 void RegisterMaraudonWings(std::unordered_map<uint32, DungeonWingLayout>& store)
