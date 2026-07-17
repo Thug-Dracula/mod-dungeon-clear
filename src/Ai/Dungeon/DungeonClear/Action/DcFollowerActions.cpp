@@ -1281,20 +1281,27 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
         return true;
     }
 
-    // Band the approach exactly as the follower assist / regroup do: COMBAT only on
-    // the final close leg, NORMAL beyond, so on a long run back the tank stops and
-    // fights anything it pulls en route instead of plowing a mob train to the fight.
-    float const distance = bot->GetExactDist(moveTo);
-    float const attackRange = botAI->IsMelee(bot)
-        ? (bot->GetCombatReach() + moveTo->GetCombatReach() + 1.0f)
-        : (botAI->GetRange("spell") - CONTACT_DISTANCE);
-    MovementPriority const prio =
-        (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
-            ? MovementPriority::MOVEMENT_COMBAT
-            : MovementPriority::MOVEMENT_NORMAL;
+    // Movement priority: when the tank is ALREADY in combat (peeling a loose mob
+    // while fighting a pack), use MOVEMENT_COMBAT so the approach overrides the
+    // combat engine's MoveChase generator — otherwise the tank stays glued to its
+    // current target and never peels. When out of combat (running to a groupmate
+    // who pulled around a corner), NORMAL lets the tank fight anything it pulls
+    // en route so it doesn't plow a mob train to the fight.
+    MovementPriority const prio = bot->IsInCombat()
+        ? MovementPriority::MOVEMENT_COMBAT
+        : [&]() -> MovementPriority
+          {
+              float const distance2 = bot->GetExactDist(moveTo);
+              float const attackRange2 = botAI->IsMelee(bot)
+                  ? (bot->GetCombatReach() + moveTo->GetCombatReach() + 1.0f)
+                  : (botAI->GetRange("spell") - CONTACT_DISTANCE);
+              return (distance2 <= attackRange2 + DC_COMBAT_APPROACH_RANGE)
+                  ? MovementPriority::MOVEMENT_COMBAT
+                  : MovementPriority::MOVEMENT_NORMAL;
+          }();
 
     DC_PULL_TRACE("[DC:{}] leader assist: closing on party fight ({:.1f}yd, "
-                  "target={}, prio={})", bot->GetName(), distance,
+                   "target={}, prio={})", bot->GetName(), bot->GetExactDist(moveTo),
                   target ? target->GetGUID().ToString() : "groupmate",
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
