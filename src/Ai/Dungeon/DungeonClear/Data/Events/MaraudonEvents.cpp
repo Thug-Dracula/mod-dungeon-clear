@@ -17,16 +17,14 @@
 // After the party clears the Purple side (Celebras the Cursed), the Portal to
 // Inner Maraudon (178404, type 22 spell caster, spell 21128) teleports the
 // party from the waterfall room into Pristine Waters. Celebras's encounter bit
-// gate ensures this fires only after he is dead. TeleportParty avoids stranding
-// followers on the far side of the portal.
+// gate ensures this fires only after he is dead. TeleportParty is required
+// instead of UseGO because the portal casts a personal teleport spell — UseGO
+// would relocate only the tank, stranding followers on the far side.
 
 namespace
 {
     constexpr uint32 MARAUDON_PORTAL          = 178404;
-    // Celebras the Cursed — DungeonEncounter bit. Teleport fires only after
-    // he is dead and the seal is open.
     constexpr uint32 MARAUDON_CELEBRAS_ENTRY  = 12225;
-    constexpr uint32 MARAUDON_CELEBRAS_BIT    = 0;  // correct bit unknown; gate entry is safer
 
     bool MaraudonPortal(Player* bot, AiObjectContext* /*context*/)
     {
@@ -41,7 +39,7 @@ namespace
         if (celebras)
             return false;  // still alive
 
-        // The portal must exist and be usable.
+        // The portal must exist.
         GameObject* portal = bot->FindNearestGameObject(MARAUDON_PORTAL, 60.0f);
         if (!portal)
             return false;
@@ -58,7 +56,8 @@ void RegisterMaraudonEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(349, 1, "Portal to Pristine Waters")
                       .Conditional(&MaraudonPortal)
-                      .UseGO(MARAUDON_PORTAL, 50.0f)
+                      .TeleportParty(/*checkpoint@portal*/ -1382.07f, 2918.79f, 73.2073f,
+                                     /*landing in PW*/ 386.27f, 33.4144f, -130.934f)
                       .Build());
 }
 
