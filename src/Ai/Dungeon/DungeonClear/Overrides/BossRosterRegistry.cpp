@@ -34,6 +34,7 @@ namespace
             std::vector<BossRosterPatch> t;
             // Order here is table-scan order only; lookups key on mapId, so it
             // never affects behaviour.
+            RegisterBlackfathomDeepsRoster(t);
             RegisterScarletMonasteryRoster(t);
             RegisterScholomanceRoster(t);
             RegisterSunkenTempleRoster(t);

@@ -54,6 +54,7 @@ struct DungeonWingLayout;
 bool DcRoomAggroPreClearCondition(Player* bot, AiObjectContext* context);
 
 // --- event rows (one appender per dungeon) -------------------------------
+void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out);
 void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out);
 void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out);
 void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out);
@@ -79,6 +80,7 @@ void RegisterMechanarEvents(std::vector<DungeonEvent>& out);
 // PatchTable() (BossRosterRegistry.cpp). Only dungeons that patch the derived
 // roster appear here (e.g. Shadowfang Keep / Blood Furnace have events but no
 // patch, so no roster appender).
+void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t);
 void RegisterScarletMonasteryRoster(std::vector<BossRosterPatch>& t);
 void RegisterScholomanceRoster(std::vector<BossRosterPatch>& t);
 void RegisterSunkenTempleRoster(std::vector<BossRosterPatch>& t);
