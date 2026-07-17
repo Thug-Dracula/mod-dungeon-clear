@@ -89,39 +89,34 @@ namespace
     constexpr uint32 DM_GO_CANNON         = 16398;
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_ITEM_GUNPOWDER    = 5397;  // casts OPEN_LOCK spell 6250
+    constexpr uint32 DM_GO_DOOR_OPEN      = 2;     // GO_STATE_ACTIVE_ALTERNATIVE
 
     ObjectiveArriveResult FireDefiasCannon(Player* bot, AiObjectContext* /*context*/,
                                            DungeonBossInfo const& /*info*/)
     {
-        // Door already open (state != READY) -> the cannon has fired.
+        // Door already open -> the cannon has fired.
         if (GameObject* door = bot->FindNearestGameObject(DM_GO_IRON_CLAD_DOOR, 100.0f))
             if (door->GetGoState() != GO_STATE_READY)
                 return ObjectiveArriveResult::Done;
-
-        // The 2s gunpowder "Opening" cast is already running — let it complete.
-        if (bot->IsNonMeleeSpellCast(false))
-            return ObjectiveArriveResult::Running;
 
         GameObject* cannon = bot->FindNearestGameObject(DM_GO_CANNON, 40.0f);
         if (!cannon)
             return ObjectiveArriveResult::Running;  // not in range yet
 
-        // Grant the gunpowder (bots never looted the chest) and use it on the
-        // cannon: the item is the OPEN_LOCK key, so the spell hits and the
-        // cannon's SmartAI fires.
-        Item* gunpowder = bot->GetItemByEntry(DM_ITEM_GUNPOWDER);
-        if (!gunpowder)
+        // Directly open the door. The CastItemUseSpell path (grant gunpowder
+        // → use item on cannon → SmartAI spellhit → door opens) is unreliable
+        // because the 2s cast can be interrupted by movement or aggro, and
+        // the bot often gets attacked by nearby patrols while standing at the
+        // cannon. Opening the door directly bypasses the entire item/spell
+        // chain and is functionally identical — the party passes through to
+        // the ship either way.
+        if (GameObject* door = bot->FindNearestGameObject(DM_GO_IRON_CLAD_DOOR, 100.0f))
         {
-            bot->AddItem(DM_ITEM_GUNPOWDER, 1);
-            gunpowder = bot->GetItemByEntry(DM_ITEM_GUNPOWDER);
-            if (!gunpowder)
-                return ObjectiveArriveResult::Running;  // bags full this tick
+            door->SetGoState(GO_STATE_ACTIVE_ALTERNATIVE);
+            door->SetFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
         }
 
-        SpellCastTargets targets;
-        targets.SetGOTarget(cannon);
-        bot->CastItemUseSpell(gunpowder, targets, 0, 0);
-        return ObjectiveArriveResult::Running;  // door-state gate confirms it
+        return ObjectiveArriveResult::Done;
     }
 
     // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
