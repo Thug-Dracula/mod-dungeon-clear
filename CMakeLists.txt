@@ -141,6 +141,14 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    RegroupInputs) -> RegroupVerdict — "reconnect only when a follower truly can't
 #    contribute". Engine-free, edge-pinned by t/TestCombatRegroup. Drives the
 #    rewritten DungeonClearRegroupCombat{Trigger,Action}.)
+# Data/Events/GnomereganEvents.cpp
+#   (Gnomeregan, map 90: conditional UseGO events for the Workshop Door 90858
+#    and the Final Chamber 142207 — unlocks progression to Grubbis
+#    and Mekgineer Thermaplugg respectively.)
+# Data/Events/MaraudonEvents.cpp (now also has events)
+#   (Maraudon, map 349: added conditional UseGO event for the Portal to Inner
+#    Maraudon 178404 — teleports the party from the Celbras seal area to
+#    Pristine Waters after Celebras is dead, replacing the earlier wings-only.)
 # Data/Events/OldHillsbradEvents.cpp
 #   (Escape from Durnholde, map 560: Brazen ride -> bomb 5 barrels + Lt. Drake ->
 #    ONE EscortCreature step freeing Thrall and assisting him through Skarloc, the
