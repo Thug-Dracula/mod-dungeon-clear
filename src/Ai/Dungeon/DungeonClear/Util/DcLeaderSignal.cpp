@@ -231,6 +231,12 @@ namespace
                 return true;
             if (bot->GetExactDist2d(member) <= spread)
                 return true;
+            // Member is beyond spread but has attackers — this is a real
+            // distress signal (patrol pulled, proximity aggro, etc.) and
+            // should not be muted by the distance gate. The distance gate
+            // exists to ignore phantom combat flags, not actual aggro.
+            if (!member->getAttackers().empty() || member->GetVictim())
+                return true;
         }
         return false;
     }
