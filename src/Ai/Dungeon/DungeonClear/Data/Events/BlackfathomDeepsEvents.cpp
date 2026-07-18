@@ -36,11 +36,10 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     //   Fire 3: (-824.0, -170.4, -24.5)
     //   Fire 4: (-823.9, -158.5, -24.5)
     //
-    // After all 4 fires are lit and their add waves killed, the Portal of
-    // Aku'mai (GO 21117, type 0 DOOR) opens on the centre platform. The
-    // fire room is separated from Aku'mai's chamber by water — the navmesh
-    // can't path through it. TeleportParty moves the whole party to Aku'mai's
-    // inner chamber after the ClearRadius ensures the room is clear.
+    // After all 4 fires are lit, 2 Aku'mai Servants (entry 4978) spawn from
+    // the 4th fire. Kill both before teleporting the party to Aku'mai's
+    // inner chamber. The fire room is separated from Aku'mai by water — the
+    // navmesh can't path through it, so TeleportParty bypasses the gap.
     out.push_back(
         EventBuilder(48, 1, "Light the Fires of Aku'mai")
             .Anchored(/*encounterIndex*/ 1)  // after Gelihast (index 0)
@@ -53,9 +52,9 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
             .UseGO(BFD_FIRE_3, /*searchRadius*/ 10.0f)
             .MoveTo(-823.9f, -158.5f, -24.5f, /*radius*/ 5.0f)
             .UseGO(BFD_FIRE_4, /*searchRadius*/ 10.0f)
-            // Clear the fire room of any remaining adds (from the 4th fire
-            // spawn wave) before teleporting to Aku'mai's chamber.
-            .ClearRadius(-818.7f, -164.5f, -24.5f, /*radius*/ 50.0f, /*zBand*/ 10.0f)
+            // Kill the 2 Aku'mai Servants that spawn from the final fire
+            // before teleporting to the boss chamber.
+            .KillCreatureEngage(/*Aku'mai Servant*/ 4978, /*count*/ 2, /*searchRadius*/ 80.0f)
             .TeleportParty(/*checkpoint@fires*/ -823.9f, -158.5f, -24.5f,
                            /*aku'mai's room*/ -848.0f, -454.0f, -34.0f)
             .Build());
