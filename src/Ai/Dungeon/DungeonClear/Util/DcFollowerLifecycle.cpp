@@ -494,8 +494,9 @@ void DcFollowerLifecycle::ReapStrandedPassives()
         // sConfigMgr — a per-tick GetOption here re-walks the config map and
         // re-logs a missing-property warning every tick a pull is held.
         float const safetyHp = DcSettings::GetFloat(player, "PullSafetyHpPct");
-        if (player->IsInCombat() && safetyHp > 0.0f &&
-            player->GetHealthPct() < safetyHp)
+        bool const underSafetyHp = safetyHp > 0.0f && player->GetHealthPct() < safetyHp;
+        if (player->IsInCombat() &&
+            (underSafetyHp || !player->getAttackers().empty() || player->GetVictim()))
         {
             DC_PULL_INFO("[DC:{}] advanced-pull SAFETY: passive follower at {:.0f}% in "
                          "combat -> aborting pull, releasing party",
