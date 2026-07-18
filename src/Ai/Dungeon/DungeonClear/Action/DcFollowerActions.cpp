@@ -891,14 +891,14 @@ namespace
                 // groupmate's position, so we scan from the bot and verify distance
                 // to the groupmate below.
                 std::list<Creature*> nearby;
-                bot->GetCreatureListWithEntryInGrid(nearby, 0, 25.0f);
-                float closestDist = 25.0f;
+                bot->GetCreatureListWithEntryInGrid(nearby, 0, 55.0f);
+                float closestDist = 55.0f;
                 Creature* match = nullptr;
                 for (Creature* c : nearby)
                 {
                     if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !bot->IsValidAttackTarget(c))
                         continue;
-                    if (m->GetExactDist2d(c) > 15.0f)
+                    if (m->GetExactDist2d(c) > 50.0f)
                         continue;
                     float const d = bot->GetExactDist2d(c);
                     if (!match || d < closestDist)
