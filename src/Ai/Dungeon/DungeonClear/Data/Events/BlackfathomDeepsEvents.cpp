@@ -60,7 +60,7 @@ void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t)
         p.mapId = 48;
         p.add = {
             MakeObjective(OBJ(1), /*encounterIndex*/ 1, 48, "Fires of Aku'mai",
-                          /*fire room centre*/ -725.0f, 5.0f, -30.0f,
+                          /*fire room centre*/ -818.7f, -164.5f, -24.5f,
                           /*arriveRadius*/ 15.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
         };
