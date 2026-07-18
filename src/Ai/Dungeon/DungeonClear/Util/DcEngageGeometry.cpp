@@ -512,7 +512,14 @@ bool DcEngageGeometry::TankReachedRoomByPath(Player* bot, AiObjectContext* ctx,
     PathGenerator gen(bot);
     gen.CalculatePath(bx, by, bz, /*forceDest*/ false);
     if (gen.GetPathType() != PATHFIND_NORMAL)
-        return false;
+    {
+        // Navmesh may be disconnected or incomplete for this room (SM Cathedral
+        // is a notable case). Fall back to straight-line distance: if the
+        // straight-line is within the window but pathfinder fails, the tank is
+        // almost certainly in the room — the pathfinder shouldn't gate the room
+        // clear on a bot that's already at the boss door.
+        return bot->GetDistance(bx, by, bz) <= window;
+    }
     return gen.getPathLength() <= window;
 }
 
