@@ -812,9 +812,13 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     // A pull maneuver that is actively holding the party at camp / dragging owns
     // the tank's positioning — don't divert it mid-drag. (At phase Idle/Engage the
     // tank is free to rejoin a stray fight, exactly as the followers' gate allows.)
+    // However, if the tank HERSELF is being attacked (has attackers), the hold
+    // must release so she can defend herself — a tank standing still taking damage
+    // while the party watches is always wrong.
     DcPullContext const& pull =
         ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
-    if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
+    if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
+        !bot->IsInCombat() && bot->getAttackers().empty())
         return false;
 
     // When the tank is already in combat, skip only if the tank's own visible

@@ -1255,6 +1255,27 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
     float bestTargetDist = 0.0f;
     Player* nearestFighter = nullptr;
     float bestFighterDist = 0.0f;
+
+    // If the tank herself is being attacked, peel her own attackers first.
+    // The groupmate scan below skips the bot (member != bot), so the mobs
+    // actively hitting the tank would never be found.
+    if (bot->IsInCombat())
+    {
+        for (Unit* a : bot->getAttackers())
+        {
+            if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+                continue;
+            if (!bot->IsValidAttackTarget(a))
+                continue;
+            float const d = bot->GetExactDist2d(a);
+            if (!target || d < bestTargetDist)
+            {
+                target = a;
+                bestTargetDist = d;
+            }
+        }
+    }
+
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
