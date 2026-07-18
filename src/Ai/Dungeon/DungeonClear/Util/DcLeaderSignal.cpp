@@ -733,6 +733,19 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
                           "out-of-combat -> assisting (was the no-pull-state stall)",
                           bot->GetName());
         wanted = groupInCombat;
+        // Self-defense: if the latched group combat expired but this bot itself
+        // is actively being attacked (has attackers or a victim), assist should
+        // still fire. The latch feeds from the leader's perspective — after 3s
+        // without the tank fighting, it expires. A follower trailing the tank
+        // and taking aggro from a stray mob would be left standing still even
+        // while combat-flagged.
+        if (!wanted && bot->IsInCombat() &&
+            (!bot->getAttackers().empty() || bot->GetVictim()))
+        {
+            DC_PULL_DEBUG("[DC:{}] assist: self in combat with attackers -> assisting",
+                          bot->GetName());
+            wanted = true;
+        }
     }
 
     if (!wanted)
