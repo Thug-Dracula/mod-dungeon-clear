@@ -29,7 +29,6 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 BFD_FIRE_2 = 21119;
     constexpr uint32 BFD_FIRE_3 = 21120;
     constexpr uint32 BFD_FIRE_4 = 21121;
-    constexpr uint32 BFD_PORTAL = 21117;
 
     // Fire positions on the outer walkway:
     //   Fire 1: (-813.5, -158.5, -24.5)
@@ -37,10 +36,10 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     //   Fire 3: (-824.0, -170.4, -24.5)
     //   Fire 4: (-823.9, -158.5, -24.5)
     //
-    // After all 4 fires are lit, the Portal of Aku'mai (GO 21117) opens on
-    // the centre platform. The party must use it to teleport to Aku'mai's
-    // inner chamber. UseGO step with a generous search radius finds it from
-    // the outer walkway.
+    // After all 4 fires are lit, the Portal of Aku'mai (GO 21117, type 0 DOOR)
+    // opens on the centre platform. Clicking it only opens/closes the door — it
+    // does not teleport. Use TeleportParty to move the whole party to Aku'mai's
+    // inner chamber at (-848, -454, -34) where she has a static spawn.
     out.push_back(
         EventBuilder(48, 1, "Light the Fires of Aku'mai")
             .Anchored(/*encounterIndex*/ 1)  // after Gelihast (index 0)
@@ -53,9 +52,8 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
             .UseGO(BFD_FIRE_3, /*searchRadius*/ 10.0f)
             .MoveTo(-823.9f, -158.5f, -24.5f, /*radius*/ 5.0f)
             .UseGO(BFD_FIRE_4, /*searchRadius*/ 10.0f)
-            // Portal opens on the centre platform after all fires are lit.
-            // Search radius covers the whole room from any fire position.
-            .UseGO(BFD_PORTAL, /*searchRadius*/ 50.0f)
+            .TeleportParty(/*checkpoint@portal*/ -818.7f, -164.5f, -24.5f,
+                           /*aku'mai's room*/ -848.0f, -454.0f, -34.0f)
             .Build());
 }
 
@@ -68,15 +66,25 @@ void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t)
     // Add the fire room centre as an OBJECTIVE anchor between Gelihast
     // (encounterIndex 0) and Aku'mai (encounterIndex 1, which shares the
     // same bit). Boss-nav drives the tank to the objective; the event
-    // (eventId 1) lights all 4 fires, opening the portal.
+    // (eventId 1) lights all 4 fires, teleporting the party to Aku'mai.
+    //
+    // Aku'mai is auto-derived from her static spawn at encounterIndex 1,
+    // but the fires objective shares that same index. After the objective
+    // is cleared the strict-greater advance skips past Aku'mai (also key 1).
+    // Remove the auto-derived entry and re-add with orderOverride=2 so
+    // she sorts after the fires at key 1.
     {
         BossRosterPatch p;
         p.mapId = 48;
+        p.remove = { 4829 };
         p.add = {
             MakeObjective(OBJ(1), /*encounterIndex*/ 1, 48, "Fires of Aku'mai",
-                          /*on the outer walkway between the 4 braziers*/ -818.7f, -164.5f, -24.5f,
+                          /*outer walkway between the 4 braziers*/ -818.7f, -164.5f, -24.5f,
                           /*arriveRadius*/ 30.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+            MakeBoss(4829, 48, "Aku'mai",
+                     /*spawn position*/ -848.446f, -453.865f, -33.892f,
+                     /*inheritCompletionFrom*/ 4829, /*orderOverride*/ 2),
         };
         t.push_back(std::move(p));
     }
