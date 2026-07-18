@@ -875,6 +875,48 @@ namespace
             }
         }
 
+        // 7. Nothing from anyone's attacker/victim lists — the mob has aggro
+        // on a party member but hasn't dealt damage yet (still pathing in), so
+        // it never entered any getAttackers() set. Scan for the nearest hostile
+        // near the closest in-combat groupmate and target that instead.
+        if (!best && bot->GetGroup())
+        {
+            for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || !m->IsAlive() || !m->IsInCombat() || m->GetMapId() != bot->GetMapId())
+                    continue;
+                // Grid-scan all creatures within 15yd of the in-combat groupmate.
+                // entry=0 means any creature; the range check is against the
+                // groupmate's position, so we scan from the bot and verify distance
+                // to the groupmate below.
+                std::list<Creature*> nearby;
+                bot->GetCreatureListWithEntryInGrid(nearby, 0, 25.0f);
+                float closestDist = 25.0f;
+                Creature* match = nullptr;
+                for (Creature* c : nearby)
+                {
+                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !bot->IsValidAttackTarget(c))
+                        continue;
+                    if (m->GetExactDist2d(c) > 15.0f)
+                        continue;
+                    float const d = bot->GetExactDist2d(c);
+                    if (!match || d < closestDist)
+                    {
+                        match = c;
+                        closestDist = d;
+                    }
+                }
+                if (match)
+                {
+                    DC_PULL_DEBUG("[DC:{}] assist: no attacker found, scanning near in-combat groupmate -> {} ({:.1f}yd)",
+                                  bot->GetName(), match->GetGUID().ToString(), bot->GetExactDist2d(match));
+                    best = match;
+                    break;
+                }
+            }
+        }
+
         return best;
     }
 }
