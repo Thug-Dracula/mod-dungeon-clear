@@ -759,6 +759,15 @@ namespace
             for (Unit* a : src->getAttackers())
                 consider(a);
             consider(src->GetVictim());
+            // Also scan the source's pet — hunter pets pull aggro independently
+            // and the owner's attacker list may be empty while the pet is tanking.
+            if (Player* p = src->ToPlayer())
+                if (Guardian* pet = p->GetGuardianPet())
+                {
+                    for (Unit* a : pet->getAttackers())
+                        consider(a);
+                    consider(pet->GetVictim());
+                }
         };
 
         // 1. The leader's own fight takes priority (the pack it is holding).

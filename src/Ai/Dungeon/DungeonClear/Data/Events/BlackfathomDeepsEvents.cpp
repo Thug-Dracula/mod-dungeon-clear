@@ -36,10 +36,10 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     //   Fire 3: (-824.0, -170.4, -24.5)
     //   Fire 4: (-823.9, -158.5, -24.5)
     //
-    // After all 4 fires are lit, the Portal of Aku'mai (GO 21117, type 0 DOOR)
-    // opens on the centre platform. Clicking it only opens/closes the door — it
-    // does not teleport. Use TeleportParty to move the whole party to Aku'mai's
-    // inner chamber at (-848, -454, -34) where she has a static spawn.
+    // After all 4 fires are lit and their add waves killed, the Portal of
+    // Aku'mai (GO 21117, type 0 DOOR) opens. The tank paths through it to
+    // Aku'mai's inner chamber. No TeleportParty needed — the door is a
+    // walk-through after the room is clear.
     out.push_back(
         EventBuilder(48, 1, "Light the Fires of Aku'mai")
             .Anchored(/*encounterIndex*/ 1)  // after Gelihast (index 0)
@@ -52,8 +52,6 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
             .UseGO(BFD_FIRE_3, /*searchRadius*/ 10.0f)
             .MoveTo(-823.9f, -158.5f, -24.5f, /*radius*/ 5.0f)
             .UseGO(BFD_FIRE_4, /*searchRadius*/ 10.0f)
-            .TeleportParty(/*checkpoint@portal*/ -818.7f, -164.5f, -24.5f,
-                           /*aku'mai's room*/ -848.0f, -454.0f, -34.0f)
             .Build());
 }
 
