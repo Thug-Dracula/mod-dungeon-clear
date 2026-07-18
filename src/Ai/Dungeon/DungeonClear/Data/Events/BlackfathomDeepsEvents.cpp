@@ -5,6 +5,15 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+
+#include "GameObject.h"
+#include "InstanceScript.h"
+#include "Player.h"
+#include "Playerbots.h"
+#include "SharedDefines.h"
+
+#include <cmath>
 
 // --- Blackfathom Deeps (map 48) — the FOUR FIRES OF AKU'MAI --------------
 // After Gelihast is dead, the party must light all 4 Fires of Aku'mai
@@ -22,6 +31,30 @@
 // before driving the event, which cancels the embedded HopTo in a bare UseGO
 // step. MoveTo drives the approach under the Hold so the tank reaches the
 // fire, then UseGO clicks it.
+//
+// Swim tunnel: the pool room (Gelihast) and fire room are connected by a
+// water tunnel. The navmesh can't path through water, so bots that enter the
+// pool room after Gelihast is dead can't route to the fires. A conditional
+// TeleportParty fires once Gelihast is down and the tank is in the pool room,
+// bypassing the navmesh gap.
+
+namespace
+{
+    bool BfdSwimTunnel(Player* bot, AiObjectContext*)
+    {
+        if (bot->GetExactDist(-595.0f, -70.0f, -49.0f) > 80.0f)
+            return false;
+        if (bot->GetExactDist(-818.0f, -164.0f, -24.5f) < 100.0f)
+            return false;
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (!inst || !(inst->GetCompletedEncounterMask() & (1u << 0)))
+            return false;
+        GameObject* fire = bot->FindNearestGameObject(21118, 200.0f);
+        if (!fire || fire->GetGoState() != GO_STATE_READY)
+            return false;
+        return true;
+    }
+}
 
 void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
 {
@@ -29,6 +62,14 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 BFD_FIRE_2 = 21119;
     constexpr uint32 BFD_FIRE_3 = 21120;
     constexpr uint32 BFD_FIRE_4 = 21121;
+
+    // Teleport across the swim tunnel navmesh break.
+    out.push_back(
+        EventBuilder(48, 2, "Swim tunnel to the fire room")
+            .Conditional(&BfdSwimTunnel)
+            .TeleportParty(-595.0f, -70.0f, -49.0f,
+                           -818.7f, -164.5f, -24.5f)
+            .Build());
 
     // Fire positions on the outer walkway:
     //   Fire 1: (-813.5, -158.5, -24.5)
