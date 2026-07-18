@@ -10,20 +10,18 @@
 // After Gelihast is dead, the party must light all 4 Fires of Aku'mai
 // (GO 21118-21121) in the circular fire room around the Aku'mai portal.
 // Each fire is a clickable GameObject; clicking it sets the corresponding
-// encounter data bit (TYPE_FIRE1-4). When all 4 are lit, the Aku'mai portal
-// (GO 21117) opens and the party can proceed to the final encounter.
+// encounter data bit (TYPE_FIRE1-4) and summons a wave of adds. When all 4
+// are lit, the Aku'mai portal (GO 21117) opens and the party can proceed.
 //
-// This event is ANCHORED to an objective in the fire room (after Gelihast's
-// encounter index), so boss-nav drives the tank there. The steps walk to
-// each fire and click it. Simple non-persistent: no combat interrupts the
-// clicks since the trash is already clear.
-
-#include "GameObject.h"
-#include "InstanceScript.h"
-#include "Player.h"
-#include "Playerbots.h"
-#include "SharedDefines.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+// PERSISTENT: each fire lighting summons adds — combat pauses the non-
+// combat engine mid-event. Persistence keeps the step progress across the
+// combat gap so the next fire fires after the adds are cleared, instead of
+// rewinding to step 0.
+//
+// MoveTo before each UseGO: the DcObjectiveArriveAction calls StopBot(Hold)
+// before driving the event, which cancels the embedded HopTo in a bare UseGO
+// step. MoveTo drives the approach under the Hold so the tank reaches the
+// fire, then UseGO clicks it.
 
 void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
 {
@@ -32,16 +30,23 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 BFD_FIRE_3 = 21120;
     constexpr uint32 BFD_FIRE_4 = 21121;
 
-    // One event with four UseGO steps — one per fire. The bot walks to each
-    // and clicks it. The search radius is generous so the GO finder locks
-    // onto the correct fire from anywhere in the circular room.
+    // Fire positions on the outer walkway:
+    //   Fire 1: (-813.5, -158.5, -24.5)
+    //   Fire 2: (-813.6, -170.5, -24.5)
+    //   Fire 3: (-824.0, -170.4, -24.5)
+    //   Fire 4: (-823.9, -158.5, -24.5)
     out.push_back(
         EventBuilder(48, 1, "Light the Fires of Aku'mai")
             .Anchored(/*encounterIndex*/ 1)  // after Gelihast (index 0)
-            .UseGO(BFD_FIRE_1, /*searchRadius*/ 40.0f)
-            .UseGO(BFD_FIRE_2, /*searchRadius*/ 40.0f)
-            .UseGO(BFD_FIRE_3, /*searchRadius*/ 40.0f)
-            .UseGO(BFD_FIRE_4, /*searchRadius*/ 40.0f)
+            .Persistent()
+            .MoveTo(-813.5f, -158.5f, -24.5f, /*radius*/ 5.0f)
+            .UseGO(BFD_FIRE_1, /*searchRadius*/ 10.0f)
+            .MoveTo(-813.6f, -170.5f, -24.5f, /*radius*/ 5.0f)
+            .UseGO(BFD_FIRE_2, /*searchRadius*/ 10.0f)
+            .MoveTo(-824.0f, -170.4f, -24.5f, /*radius*/ 5.0f)
+            .UseGO(BFD_FIRE_3, /*searchRadius*/ 10.0f)
+            .MoveTo(-823.9f, -158.5f, -24.5f, /*radius*/ 5.0f)
+            .UseGO(BFD_FIRE_4, /*searchRadius*/ 10.0f)
             .Build());
 }
 
@@ -60,8 +65,8 @@ void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t)
         p.mapId = 48;
         p.add = {
             MakeObjective(OBJ(1), /*encounterIndex*/ 1, 48, "Fires of Aku'mai",
-                          /*fire room centre*/ -818.7f, -164.5f, -24.5f,
-                          /*arriveRadius*/ 15.0f,
+                          /*on the outer walkway between the 4 braziers*/ -818.7f, -164.5f, -24.5f,
+                          /*arriveRadius*/ 30.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
         };
         t.push_back(std::move(p));
