@@ -140,7 +140,24 @@ namespace
             return false;  // wait until the first boss (Rethilgore) is down
         if (!door || door->GetGoState() != GO_STATE_READY)
             return false;  // no door found, or already open
-        return prisoner != nullptr;
+
+        if (!prisoner)
+        {
+            // Prisoner is dead (AoE / patrol aggro during the courtyard fight) —
+            // the door can never be opened the normal way. Open it directly so
+            // the run isn't permanently blocked.
+            if (door && door->GetGoState() == GO_STATE_READY)
+            {
+                door->SetGoState(GO_STATE_ACTIVE);
+                door->SetFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] SFK courtyard: prisoner {} dead, opening door directly",
+                         bot->GetName(), who);
+            }
+            return false;
+        }
+
+        return true;
     }
 
     bool SfkCourtyardAlliance(Player* bot, AiObjectContext* /*context*/)
