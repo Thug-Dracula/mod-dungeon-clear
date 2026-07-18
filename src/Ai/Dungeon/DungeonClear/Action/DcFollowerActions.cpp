@@ -896,7 +896,7 @@ namespace
                 Creature* match = nullptr;
                 for (Creature* c : nearby)
                 {
-                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !bot->IsValidAttackTarget(c))
+                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat() || !bot->IsValidAttackTarget(c))
                         continue;
                     if (m->GetExactDist2d(c) > 50.0f)
                         continue;
