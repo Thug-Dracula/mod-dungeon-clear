@@ -89,6 +89,41 @@ namespace DcEventDoorRegistry
             case 175618:  // Iron Gate
             case 175619:  // Door
             case 175620:  // Iron Gate
+            // Shadowfang Keep — interior traversal doors (map 33)
+            case 18972:   // Sorcerer's Gate (between Fenrus and Arugal)
+            // Scholomance — interior traversal doors (map 289)
+            case 175968:  // Hoard Door
+            // Stratholme — interior traversal doors (map 329)
+            case 175967:  // The Bastion Door (live side, Dathrohan's chamber)
+            // Scarlet Monastery — interior traversal doors (map 189)
+            case 101850:  // Cathedral Door
+            case 101851:  // Armory Door
+            case 101854:  // Herod's Door
+            case 19835:   // Great Hall Doors
+            case 104591:  // Chapel Door (Mograine/Whitemane room)
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Doors that are lock-free but have SmartAI or other flags preventing Use()
+    // from working. When the bot is entitled to open via IsLockFreeClickable but
+    // normal Use() fails, force-open via SetGoState as a fallback.
+    inline bool IsForceOpenDoor(uint32 goEntry)
+    {
+        switch (goEntry)
+        {
+            case 175368:  // Stratholme — Service Entrance Gate (lockId=0,
+                          // SmartGameObjectAI with no scripts intercepts Use)
+            case 175967:  // Stratholme — Bastion Door (lockId=0, flags=34
+                          // GO_FLAG_LOCKED prevents Use() from opening)
+            case 175968:  // Scholomance — Hoard Door (lockId=0, flags=34)
+            case 18971:   // Shadowfang Keep — Arugal's Lair (lockId=85,
+                          // event door, empty lock template)
+            case 18972:   // Shadowfang Keep — Sorcerer's Gate (lockId=0)
+            case 90858:   // Gnomeregan — Workshop Door (lockId=92, needs key)
+            case 142207:  // Gnomeregan — Final Chamber Door (lockId=86, needs key)
                 return true;
             default:
                 return false;

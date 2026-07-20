@@ -5,6 +5,8 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Player.h"
+#include "Playerbots.h"
 
 // --- ZulFarrak (map 209) — the TEMPLE (pyramid) event --------------------
 // The scripted set-piece between Witch Doctor Zum'rah and the final boss Chief
@@ -147,8 +149,8 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       //    interrupted mid-descent. SkipIfTargetMissing: if Weegli
                       //    died the boss is unreachable, but don't deadlock — skip
                       //    and still take Bly (the human can re-open / `dc skip`).
-                      .Gossip(ZF_WEEGLI, /*option*/ 0, /*searchRadius*/ 40.0f)
-                          .Timeout(ZF_NPC_TIMEOUT).WaitTargetStill().SkipIfTargetMissing()
+                       .Gossip(ZF_WEEGLI, /*option*/ 0, /*searchRadius*/ 80.0f)
+                           .Timeout(ZF_NPC_TIMEOUT).WaitTargetStill()
                       .Wait(ZF_WEEGLI_LEAD_MS)
                       // 5. Human — starts the fight; killing Bly ends the event.
                       //    WaitTargetStill so we don't provoke Bly mid-descent;
@@ -174,6 +176,29 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       .WaitForSpawn(ZF_GAHZRILLA, /*alive*/ true)
                           .Timeout(ZF_GAHZRILLA_SPAWN_TIMEOUT)
                       .KillCreatureEngage(ZF_GAHZRILLA, /*count*/ 1, /*searchRadius*/ 100.0f)
+                      .Build());
+
+    // Conditional event: activate Witch Doctor Zum'rah via areatrigger 962.
+    // Zum'rah starts neutral and only becomes hostile when a player crosses
+    // the areatrigger near his cauldron. Bots may skip the areatrigger check
+    // during movement, so fire it explicitly when the tank arrives.
+    out.push_back(EventBuilder(209, 3, "Witch Doctor Zum'rah (faction trigger)")
+                      .Conditional([](Player* bot, AiObjectContext*) -> bool
+                      {
+                          // Only fire when the tank is near the areatrigger coords
+                          if (bot->GetMapId() != 209)
+                              return false;
+                          if (!PlayerbotAI::IsTank(bot))
+                              return false;
+                          float dist = bot->GetExactDist(1909.27f, 1015.11f, 11.52f);
+                          if (dist > 12.0f)
+                              return false;
+                          // Zum'rah must still be alive and neutral
+                          Creature* zumrah = bot->FindNearestCreature(7271, 30.0f);
+                          return zumrah && zumrah->GetFaction() != 37;
+                      })
+                      .Persistent()
+                      .Custom(5)  // hookId 5 -> TriggerZumrahAreatrigger
                       .Build());
 }
 

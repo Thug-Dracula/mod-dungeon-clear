@@ -233,6 +233,28 @@ namespace
         return ObjectiveArriveResult::Running;  // the loot-state latch above confirms it
     }
 
+    // --- Zul'Farrak Witch Doctor Zum'rah: TriggerZumrahAreatrigger (hook id 5) -
+    // Zum'rah (7271) starts neutral (faction 35) and only becomes hostile when
+    // the party crosses areatrigger 962 near his cauldron. Bots' movement may
+    // skip the areatrigger check, so we fire it explicitly when the tank arrives.
+    constexpr uint32 ZF_ZUMRAH_TRIGGER = 962;
+
+    ObjectiveArriveResult TriggerZumrahAreatrigger(Player* bot, AiObjectContext* /*context*/,
+                                                    DungeonBossInfo const& /*info*/)
+    {
+        // Check if Zum'rah is already hostile (faction 37 = Sandfury trolls).
+        // If so, the trigger already fired — no-op.
+        Creature* zumrah = bot->FindNearestCreature(7271, 30.0f);
+        if (!zumrah || zumrah->GetFaction() == 37)
+            return ObjectiveArriveResult::Done;
+
+        WorldPacket p(CMSG_AREATRIGGER);
+        p << uint32(ZF_ZUMRAH_TRIGGER);
+        p.rpos(0);
+        bot->GetSession()->HandleAreaTriggerOpcode(p);
+        return ObjectiveArriveResult::Done;
+    }
+
     // hookId -> behaviour. To give an objective on-arrival behaviour, add a row
     // here and reference its id from a BossRosterRegistry objective (onArriveHook)
     // or a Custom event step (DungeonEventRegistry).
@@ -243,6 +265,7 @@ namespace
             { 2, &FireDefiasCannon },        // Deadmines — fire the cannon, open the door
             { 3, &GrantIncendiaryBombs },    // Old Hillsbrad — pack of bombs (unlocks Brazen)
             { 4, &GrantCacheKeyAndLoot },    // The Mechanar — Cache of the Legion key + loot
+            { 5, &TriggerZumrahAreatrigger },// Zul'Farrak — fire areatrigger 962 for Zum'rah
         };
         return kHooks;
     }

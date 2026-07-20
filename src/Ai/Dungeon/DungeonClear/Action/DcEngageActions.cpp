@@ -1950,6 +1950,19 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             }
         }
 
+        // Can't open it ourselves — but some lock-free doors with SmartAI
+        // (e.g. Stratholme Service Entrance Gate 175368) need force-opening
+        // via SetGoState since Use() is intercepted by the AI.
+        if (door && (door->GetEntry() == 175368 || DcEventDoorRegistry::IsForceOpenDoor(door->GetEntry())))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] door-blocked: force-opening {} via SetGoState",
+                     bot->GetName(), door->GetGUID().ToString());
+            door->SetGoState(GO_STATE_ACTIVE);
+            ClearStall(context);
+            return true;
+        }
+
         // Can't open it ourselves — or timed out working a door we thought we
         // could — auto-pause and force the navigation dead.
         // Set the flag once on transition: the door-blocked trigger gates on

@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -100,6 +101,34 @@ namespace
         for (Position const& p : trail)
             window.emplace_back(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
         return DcMovement::SplinePath(botAI, window);
+    }
+
+    // ── Per-instance target-claim tracker ──────────────────────────────
+    // Prevents all DPS from dogpiling the same mob.  Each PickPartyFightTarget
+    // call claims its chosen victim; subsequent callers in the same 100ms window
+    // (≈ one game-tick) prefer unclaimed targets over claimed ones.
+    std::map<uint32, std::set<ObjectGuid>> s_claimedTargets;
+    std::map<uint32, uint32> s_lastClaimClearMs;
+
+    void ClearStaleClaims(uint32 instanceId)
+    {
+        uint32& last = s_lastClaimClearMs[instanceId];
+        if (getMSTimeDiff(last, getMSTime()) > 100)
+        {
+            s_claimedTargets[instanceId].clear();
+            last = getMSTime();
+        }
+    }
+
+    bool IsTargetClaimed(uint32 instanceId, ObjectGuid const& guid)
+    {
+        auto it = s_claimedTargets.find(instanceId);
+        return it != s_claimedTargets.end() && it->second.count(guid) > 0;
+    }
+
+    void ClaimTarget(uint32 instanceId, ObjectGuid const& guid)
+    {
+        s_claimedTargets[instanceId].insert(guid);
     }
 }
 
@@ -905,7 +934,7 @@ namespace
                 Creature* match = nullptr;
                 for (Creature* c : nearby)
                 {
-                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat() || !bot->IsValidAttackTarget(c))
+                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat())
                         continue;
                     if (m->GetExactDist2d(c) > 50.0f)
                         continue;
@@ -923,6 +952,99 @@ namespace
                     best = match;
                     break;
                 }
+            }
+        }
+
+        // 8. Scan from the fighting groupmate's position instead of the bot's.
+        // The bot may be at a remote camp >100yd from combat, so its grid cells
+        // won't have any creatures loaded. The in-combat groupmate is closer to
+        // the action, so scan from them and find LOS-blocked or otherwise-invalid
+        // targets that Steps 1-7 missed.
+        if (!best && bot->GetGroup())
+        {
+            for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || m == bot || !m->IsAlive() || !m->IsInCombat() || m->GetMapId() != bot->GetMapId())
+                    continue;
+                std::list<Creature*> nearby;
+                m->GetCreatureListWithEntryInGrid(nearby, 0, 60.0f);
+                Creature* match = nullptr;
+                float closestDist = 100.0f;
+                for (Creature* c : nearby)
+                {
+                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat())
+                        continue;
+                    if (c->GetExactDist2d(m) > 55.0f)
+                        continue;
+                    float const d = bot->GetExactDist2d(c);
+                    if (!match || d < closestDist)
+                    {
+                        match = c;
+                        closestDist = d;
+                    }
+                }
+                if (match)
+                {
+                    DC_PULL_DEBUG("[DC:{}] assist: no valid attack target, using hostile {} near {} ({:.1f}yd from bot)",
+                                  bot->GetName(), match->GetGUID().ToString(), m->GetName(), bot->GetExactDist2d(match));
+                    best = match;
+                    break;
+                }
+            }
+        }
+
+        // Item 4: Target dedup — spread DPS across available mobs instead of
+        // dogpiling the nearest one.  If the closest candidate was already
+        // claimed by another bot in this tick cycle, try to find an unclaimed
+        // alternative near the same groupmate.
+        if (best && bot->GetMap() && bot->GetMap()->IsDungeon())
+        {
+            if (InstanceMap* im = bot->GetMap()->ToInstanceMap())
+            {
+                uint32 const instId = im->GetInstanceId();
+                ClearStaleClaims(instId);
+                if (IsTargetClaimed(instId, best->GetGUID()))
+                {
+                    // Find any unclaimed combat-hostile near the same groupmate
+                    if (Group* g = bot->GetGroup())
+                    {
+                        for (GroupReference* ref = g->GetFirstMember(); ref; ref = ref->next())
+                        {
+                            Player* m = ref->GetSource();
+                            if (!m || m == bot || !m->IsAlive() || !m->IsInCombat() || m->GetMapId() != bot->GetMapId())
+                                continue;
+                            std::list<Creature*> nearby;
+                            m->GetCreatureListWithEntryInGrid(nearby, 0, 60.0f);
+                            Creature* alt = nullptr;
+                            float altDist = 0.0f;
+                            for (Creature* c : nearby)
+                            {
+                                if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat())
+                                    continue;
+                                if (c->GetGUID() == best->GetGUID())
+                                    continue;
+                                if (c->GetExactDist2d(m) > 55.0f)
+                                    continue;
+                                float const d = bot->GetExactDist2d(c);
+                                if (!IsTargetClaimed(instId, c->GetGUID()))
+                                {
+                                    alt = c;
+                                    break;
+                                }
+                                if (!alt || d < altDist) { alt = c; altDist = d; }
+                            }
+                            if (alt)
+                            {
+                                DC_PULL_DEBUG("[DC:{}] assist: target {} already claimed, redistributing to {}",
+                                              bot->GetName(), best->GetGUID().ToString(), alt->GetGUID().ToString());
+                                best = alt;
+                                break;
+                            }
+                        }
+                    }
+                }
+                ClaimTarget(instId, best->GetGUID());
             }
         }
 
@@ -960,8 +1082,37 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
             }
             if (nearest)
             {
-                DC_PULL_DEBUG("[DC:{}] assist camp: no fight target — closing on {} ({:.1f}yd)",
-                               bot->GetName(), nearest->GetName(), nearestDist);
+                // Try to find ANY in-combat creature near the groupmate and
+                // seed it as a target, so the bot enters combat engine
+                // immediately instead of walking toward combat in non-combat
+                // mode.
+                std::list<Creature*> nearby;
+                nearest->GetCreatureListWithEntryInGrid(nearby, 0, 60.0f);
+                Creature* seedTarget = nullptr;
+                float seedDist = 0.0f;
+                for (Creature* c : nearby)
+                {
+                    if (!c || !c->IsAlive() || c->IsFriendlyTo(bot) || !c->IsInCombat())
+                        continue;
+                    float const d = bot->GetExactDist2d(c);
+                    if (!seedTarget || d < seedDist) { seedTarget = c; seedDist = d; }
+                }
+                if (seedTarget)
+                {
+                    DC_PULL_DEBUG("[DC:{}] assist camp: seeded {} near {} ({:.1f}yd) — closing, flipped to combat",
+                                  bot->GetName(), seedTarget->GetGUID().ToString(),
+                                  nearest->GetName(), seedDist);
+                    bot->SetSelection(seedTarget->GetGUID());
+                    context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(seedTarget);
+                    if (!bot->IsInCombat())
+                        bot->SetInCombatWith(seedTarget);
+                    botAI->ChangeEngine(BOT_STATE_COMBAT);
+                }
+                else
+                {
+                    DC_PULL_DEBUG("[DC:{}] assist camp: no fight target — closing on {} ({:.1f}yd)",
+                                  bot->GetName(), nearest->GetName(), nearestDist);
+                }
                 DcMoveTo(nearest->GetMapId(), nearest->GetPositionX(), nearest->GetPositionY(),
                        nearest->GetPositionZ(), false, false, false, false,
                        MovementPriority::MOVEMENT_COMBAT);

@@ -704,6 +704,18 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     }
 
     uint32 const now = getMSTime();
+    uint32 const FORCE_GRACE_MS = 4000;
+
+    // Grace window: after a force-advance, give the tank uninterrupted movement
+    // for 4 seconds before re-checking party readiness. Without this, the force
+    // resets the timer and the next tick re-enters rest — the tank only moves
+    // ~7yd per 20s cycle, stalling large maps like BRD.
+    if (appr.forceAdvanceSinceMs &&
+        getMSTimeDiff(appr.forceAdvanceSinceMs, now) < FORCE_GRACE_MS)
+    {
+        return Step::Continue;
+    }
+    appr.forceAdvanceSinceMs = 0;
 
     if (!IsBetweenPullsReady(bot, context))
     {
@@ -717,6 +729,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                      "[DC:{}] advance forcing: party not ready for {}ms — advancing anyway",
                      bot->GetName(), elapsed);
             appr.notReadySinceMs = 0;
+            appr.forceAdvanceSinceMs = now;
             return Step::Continue;
         }
         LOG_DEBUG("playerbots.dungeonclear",
@@ -1550,6 +1563,10 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] advance: no next boss (all dead/skipped) -> stalling",
                  bot->GetName());
+        // Signal BotDungeonQueue that the run is complete, so it can evict
+        // the group for maps without DBC encounter entries (all vanilla
+        // dungeons). The value stores the timestamp of completion.
+        sRandomPlayerbotMgr.SetValue(bot->GetGUID().GetCounter(), "dc_run_complete", getMSTime());
         StallDungeonClear(botAI,
             "Can't find a next boss: all remaining bosses are marked dead or skipped — try 'dc bosses' to inspect.");
         return false;

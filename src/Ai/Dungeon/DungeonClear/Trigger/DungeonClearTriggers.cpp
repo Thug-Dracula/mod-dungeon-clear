@@ -21,6 +21,7 @@
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -531,10 +532,24 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     // false again the moment the event latches / the door opens, so this only
     // yields for the narrow window the event is actually live. Same answer the
     // event-due trigger uses, so the two never disagree.
+    //
+    // HOWEVER, don't stand down when the blocking door is a plain clickable
+    // traversal gate (IsLockFreeClickable): the event may be a room-aggro pre-clear
+    // that needs the door opened first to reach its targets. Only defer to events
+    // for doors that are script/event-opened (not in IsLockFreeClickable).
     if (DungeonEventRegistry::HasEvents(map->GetId()) &&
         DcLeaderSignal::IsDungeonClearLeader(bot) &&
         DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()) != nullptr)
-        return false;
+    {
+        ObjectGuid const blocker = AI_VALUE(ObjectGuid, DcKey::BlockingDoor);
+        if (!blocker.IsEmpty())
+        {
+            GameObject* go = botAI->GetGameObject(blocker);
+            if (go && DcEventDoorRegistry::IsLockFreeClickable(go->GetEntry()))
+                return true;  // clickable door — fire trigger anyway
+        }
+        return false;  // event-driven door — stand down
+    }
 
     // Non-empty GUID means the blocking-door value found a closed door
     // within the corridor. Empty means clear path. Polled at 500ms by the
@@ -994,7 +1009,7 @@ namespace
     {
         auto const& refs = bot->GetCombatManager().GetPvECombatRefs();
         if (refs.empty())
-            return true;  // no unit to blame -> opaque/forced combat, leave it alone
+            return false;  // no unit to blame + no attackers/victim = stale phantom flag, clear it
 
         Map* const map = bot->GetMap();
         for (auto const& kv : refs)

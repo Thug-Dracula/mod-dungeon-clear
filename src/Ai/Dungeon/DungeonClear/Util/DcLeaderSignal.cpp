@@ -827,11 +827,14 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     // tank is free to rejoin a stray fight, exactly as the followers' gate allows.)
     // However, if the tank HERSELF is being attacked (has attackers), the hold
     // must release so she can defend herself — a tank standing still taking damage
-    // while the party watches is always wrong.
+    // while the party watches is always wrong. Also release if ANY party member is
+    // in combat — a patrol/healer-aggro shouldn't go unanswered just because the
+    // tank was between pulls.
     DcPullContext const& pull =
         ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
-        !bot->IsInCombat() && bot->getAttackers().empty())
+        !bot->IsInCombat() && bot->getAttackers().empty() &&
+        !AnyGroupMemberInCombat(bot))
         return false;
 
     // When the tank is already in combat, skip only if the tank's own visible
@@ -842,8 +845,9 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
         ctx->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get();
     if (!tankAttackers.empty())
     {
-        if (!bot->IsInCombat())
-            return false;  // stale attackers list but tank somehow out of combat
+        // Stale attackers but tank out of combat — still assist if party is fighting
+        if (!bot->IsInCombat() && !AnyGroupMemberInCombat(bot))
+            return false;
         // Tank is in combat — check if any party member has attackers the
         // tank doesn't see (mob broke off or patrol aggroed someone else).
         bool peelNeeded = false;
