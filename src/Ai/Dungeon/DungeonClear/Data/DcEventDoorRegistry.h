@@ -98,9 +98,12 @@ namespace DcEventDoorRegistry
             // Scarlet Monastery — interior traversal doors (map 189)
             case 101850:  // Cathedral Door
             case 101851:  // Armory Door
-            case 101854:  // Herod's Door
             case 19835:   // Great Hall Doors
             case 104591:  // Chapel Door (Mograine/Whitemane room)
+            // Deadmines — interior traversal doors (map 36)
+            case 16399:   // Foundry Door
+            case 16400:   // Mast Room Door
+            case 13965:   // Factory Door
                 return true;
             default:
                 return false;
@@ -118,12 +121,15 @@ namespace DcEventDoorRegistry
                           // SmartGameObjectAI with no scripts intercepts Use)
             case 175967:  // Stratholme — Bastion Door (lockId=0, flags=34
                           // GO_FLAG_LOCKED prevents Use() from opening)
+            case 176194:  // Stratholme — Hall of the High Command (flags=34)
             case 175968:  // Scholomance — Hoard Door (lockId=0, flags=34)
             case 18971:   // Shadowfang Keep — Arugal's Lair (lockId=85,
                           // event door, empty lock template)
             case 18972:   // Shadowfang Keep — Sorcerer's Gate (lockId=0)
             case 90858:   // Gnomeregan — Workshop Door (lockId=92, needs key)
             case 142207:  // Gnomeregan — Final Chamber Door (lockId=86, needs key)
+            case 146084:  // Zul'Farrak — Ukorz Door (backup: force-open if Weegli fails)
+            case 101854:  // Scarlet Monastery — Herod's Door (requires Scarlet Key)
                 return true;
             default:
                 return false;
